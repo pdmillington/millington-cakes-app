@@ -55,8 +55,8 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     sys.exit(1)
 
 # Paths to JSON source files — adjust if running from a different directory
-RECIPES_FILE     = Path("recipes.json")
-CONSUMABLES_FILE = Path("consumables.json")
+RECIPES_FILE     = Path("data/recipes.json")
+CONSUMABLES_FILE = Path("data/consumables.json")
 
 
 # =============================================================================
@@ -228,19 +228,11 @@ def migrate_recipes(sb: Client, recipes: list, ingredient_map: dict) -> None:
             ing_name_lower = ing_name_clean.lower()
 
             if ing_name_lower in KNOWN_SUB_RECIPE_NAMES:
-                # This is a sub-recipe reference — store without ingredient_id
-                # The app will allow the user to link it to the correct recipe
-                line = {
-                    "recipe_id":      recipe_id,
-                    "ingredient_id":  None,
-                    "sub_recipe_id":  None,   # Needs manual linkage in app
-                    "amount":         float(amount),
-                    "sort_order":     sort_order,
-                }
                 sub_recipe_warnings.append(
                     f"  ⚠  '{name}' → sub-recipe '{ing_name_clean}' "
-                    f"needs linking in the app"
+                    f"(amount: {amount}g) — add manually via the app"
                 )
+                continue  # Skip inserting this line for now
             else:
                 ing_id = ingredient_map.get(ing_name_clean)
                 if not ing_id:
