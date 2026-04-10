@@ -72,7 +72,7 @@ def sidebar() -> str:
 def screen_calculator():
     st.title("Cost calculator")
     st.caption("Calculate ingredient, labour and packaging costs for any cake")
-    st.info("Coming soon — ingredients screen first.")
+    st.info("Coming soon — consumables screen delivered.")
 
 
 # -----------------------------------------------------------------------------
