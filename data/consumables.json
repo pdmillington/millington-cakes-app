@@ -1,0 +1,93 @@
+[
+    {
+        "name": "bandeja redonda grande",
+        "provider": "Makro",
+        "unit": 100.0,
+        "vat": "0.21",
+        "price": 21.989999771118164
+    },
+    {
+        "name": "lamina acetato",
+        "provider": "Makro",
+        "unit": 30.0,
+        "vat": "0.21",
+        "price": 5.26140022277832
+    },
+    {
+        "name": "manga pasteleras",
+        "provider": "Makro",
+        "unit": 100.0,
+        "vat": "0.21",
+        "price": 19.75
+    },
+    {
+        "name": "papel de horno",
+        "provider": "Makro",
+        "unit": 500.0,
+        "vat": "0.21",
+        "price": 38.86800003051758
+    },
+    {
+        "name": "papel film",
+        "provider": "Makro",
+        "unit": 500.0,
+        "vat": "0.21",
+        "price": 9.02970027923584
+    },
+    {
+        "name": "plastico cookies",
+        "provider": "Makro",
+        "unit": 100.0,
+        "vat": "0.21",
+        "price": 3.0889999866485596
+    },
+    {
+        "name": "capsulas oro redondas",
+        "provider": "Gonzalez y Gonzalez",
+        "unit": 1000.0,
+        "vat": "0.21",
+        "price": 26.239999771118164
+    },
+    {
+        "name": "caja blanca 30 cm",
+        "provider": "Casa Karibay",
+        "unit": 10.0,
+        "vat": "0.21",
+        "price": 23.600000381469727
+    },
+    {
+        "name": "base tarta redonda 30cm",
+        "provider": "Casa Karibay",
+        "unit": 10.0,
+        "vat": "0.21",
+        "price": 11.600000381469727
+    },
+    {
+        "name": "base tarta redonda 35cm",
+        "provider": "Casa Karibay",
+        "unit": 1.0,
+        "vat": "0.21",
+        "price": 1.3200000524520874
+    },
+    {
+        "name": "caja para tartas 35cm",
+        "provider": "Casa Karibay",
+        "unit": 1.0,
+        "vat": "0.21",
+        "price": 2.2699999809265137
+    },
+    {
+        "name": "pegatines millington",
+        "provider": "Mochu digital",
+        "unit": 100.0,
+        "vat": "0.21",
+        "price": 101.0
+    },
+    {
+        "name": "caja tarta estandar",
+        "provider": "Makro",
+        "unit": 50.0,
+        "vat": "0.21",
+        "price": 39.790000915527344
+    }
+]
