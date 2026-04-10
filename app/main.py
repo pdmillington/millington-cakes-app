@@ -14,6 +14,7 @@
 
 import streamlit as st
 import db
+from screen_recipes import screen_recipes
 
 # -----------------------------------------------------------------------------
 # Page config — must be the first Streamlit call in the file
@@ -455,16 +456,6 @@ def _add_consumable_form():
             })
             st.success(f"Added: {name}")
             st.rerun()
-
-
-# -----------------------------------------------------------------------------
-# Screen: Recipes (placeholder)
-# -----------------------------------------------------------------------------
-
-def screen_recipes():
-    st.title("Recipes")
-    st.caption("Manage reference recipes and their ingredients")
-    st.info("Coming soon.")
 
 
 # -----------------------------------------------------------------------------
