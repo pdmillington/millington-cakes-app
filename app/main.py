@@ -214,7 +214,7 @@ def _ingredient_row(ing: dict):
                 "pack_price_ex_vat": price or None,
                 "vat_rate":          vat,
             })
-            st.success(f"Saved: {name}", icon="✓")
+            st.success(f"Saved: {name}", icon="✅")
             st.rerun()
 
 
