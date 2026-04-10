@@ -12,3 +12,6 @@ supabase>=2.4.0
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Name checking
+rapidfuzz>=3.6.0

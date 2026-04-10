@@ -15,15 +15,41 @@ import os
 import streamlit as st
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from rapidfuzz import process, fuzz
 
 load_dotenv()
 
-# Private helper
+# Helpers
 
 def _normalise_name(name: str) -> str:
     """Strip leading/trailing whitespace and collapse internal spaces."""
     import re
     return re.sub(r'\s+', ' ', name).strip()
+
+def find_similar_names(name: str, existing_names: list[str], 
+                        threshold: int = 85) -> list[tuple[str, int]]:
+    """
+    Return existing names that are suspiciously similar to the proposed name.
+    Uses token sort ratio which handles word order differences, e.g.
+    'Chocolate Negro 70%' vs '70% Chocolate Negro' would still match.
+    Returns a list of (name, score) tuples above the threshold,
+    sorted by score descending.
+    """
+    name_normalised = _normalise_name(name)
+    if not name_normalised:
+        return []
+    results = process.extract(
+        name_normalised,
+        existing_names,
+        scorer=fuzz.token_sort_ratio,
+        limit=3,
+    )
+    # Filter out exact matches (the name itself if editing) and low scores
+    return [
+        (match, score)
+        for match, score, _ in results
+        if score >= threshold and match.lower() != name_normalised.lower()
+    ]
 
 # -----------------------------------------------------------------------------
 # Connection

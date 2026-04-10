@@ -191,6 +191,20 @@ def _ingredient_row(ing: dict):
             st.markdown("—")
     with c8:
         if st.button("💾", key=f"{col_id}_save", help="Save changes"):
+            # Check if the edited name clashes with a different existing ingredient
+            if name != ing["name"]:
+                existing_names = [
+                    i["name"] for i in db.get_ingredients() 
+                    if i["id"] != ing["id"]
+                ]
+                similar = db.find_similar_names(name, existing_names)
+                if similar:
+                    matches = ", ".join(f"'{m}'" for m, _ in similar)
+                    st.warning(
+                        f"⚠️ Edited name is similar to: {matches} — "
+                        "save cancelled. Check for duplicates first."
+                    )
+                    st.stop()
             db.save_ingredient({
                 "id":                ing["id"],
                 "name":              name,
@@ -205,7 +219,7 @@ def _ingredient_row(ing: dict):
 
 
 def _add_ingredient_form():
-    """Form for adding a brand new ingredient."""
+    """Form for adding a brand new ingredient with fuzzy duplicate detection."""
     c1, c2, c3, c4, c5, c6 = st.columns([3, 2, 1.2, 1, 1.2, 1])
 
     with c1:
@@ -225,13 +239,39 @@ def _add_ingredient_form():
                                 format="%.4f", key="new_ing_price")
     with c6:
         vat = st.selectbox("VAT", [0.0, 0.04, 0.10, 0.21],
-                           index=2,  # default 10%
+                           index=2,
                            format_func=lambda x: f"{int(x*100)}%",
                            key="new_ing_vat")
+
+    # Fuzzy match check — runs as soon as a name is typed
+    if name:
+        existing_names = [i["name"] for i in db.get_ingredients()]
+        similar = db.find_similar_names(name, existing_names)
+        if similar:
+            st.warning(
+                "⚠️ Similar ingredient name(s) already exist — "
+                "check this is not a duplicate or spelling mistake:"
+            )
+            for match, score in similar:
+                st.markdown(f"&nbsp;&nbsp;&nbsp;`{match}` &nbsp;({score}% similar)")
+            # Require explicit confirmation before allowing save
+            confirmed = st.checkbox(
+                "This is genuinely a different ingredient — save anyway",
+                key="new_ing_confirmed"
+            )
+        else:
+            confirmed = True
+    else:
+        confirmed = False
 
     if st.button("Add ingredient", type="primary"):
         if not name:
             st.error("Name is required.")
+        elif not confirmed:
+            st.error(
+                "Please confirm this is a different ingredient "
+                "from the similar ones listed above."
+            )
         else:
             db.save_ingredient({
                 "name":              name,
