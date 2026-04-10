@@ -112,6 +112,7 @@ multiples — no numeric size codes needed.
                     use_container_width=True,
                     type="primary" if active else "secondary"
                 ):
+                    _clear_recipe_editor_state()
                     st.session_state.selected_recipe_id = r["id"]
                     st.rerun()
 
@@ -126,11 +127,13 @@ multiples — no numeric size codes needed.
                     use_container_width=True,
                     type="primary" if active else "secondary"
                 ):
+                    _clear_recipe_editor_state()
                     st.session_state.selected_recipe_id = r["id"]
                     st.rerun()
 
         st.divider()
         if st.button("➕ New recipe", use_container_width=True):
+            _clear_recipe_editor_state()
             st.session_state.selected_recipe_id = "new"
             st.rerun()
 
@@ -413,6 +416,7 @@ multiples — no numeric size codes needed.
                     if state_key in st.session_state:
                         del st.session_state[state_key]
 
+                    _clear_recipe_editor_state()
                     st.session_state.selected_recipe_id = saved["id"]
                     st.success(f"Saved: {name}", icon="✅")
                     st.rerun()
@@ -436,6 +440,23 @@ def _empty_line() -> dict:
         "amount":          0.0,
         "cost_per_unit":   None,
     }
+
+def _clear_recipe_editor_state():
+    """
+    Remove all recipe editor widget state from the session so that
+    when a new recipe is selected the widgets render fresh values
+    rather than retaining the previous recipe's inputs.
+    """
+    keys_to_clear = [
+        k for k in st.session_state
+        if k.startswith("rec_")
+        or k.startswith("lines_")
+        or k.startswith("line_ing_")
+        or k.startswith("line_amt_")
+        or k.startswith("line_del_")
+    ]
+    for k in keys_to_clear:
+        del st.session_state[k]
 
 
 def _validate_recipe(
