@@ -1,0 +1,1411 @@
+[
+    {
+        "name": "Roscon",
+        "cake_size": 1.0,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Harina gran fuerza",
+                540.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                150.0
+            ],
+            [
+                "Agua de Azahar",
+                60.0
+            ],
+            [
+                "Azucar blanco ",
+                150.0
+            ],
+            [
+                "Leche president",
+                165.0
+            ],
+            [
+                "Huevos ",
+                2.0
+            ],
+            [
+                "Almendras en lamina",
+                50.0
+            ],
+            [
+                "Sal fina ",
+                5.0
+            ],
+            [
+                "Limones",
+                5.0
+            ]
+        ]
+    },
+    {
+        "name": "Chocolate Crocanti",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Harina floja ",
+                60.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                400.0
+            ],
+            [
+                "Chocolate con leche 34,9%",
+                350.0
+            ],
+            [
+                "Chocolate Negro 70% ",
+                170.0
+            ],
+            [
+                "Leche president",
+                125.0
+            ],
+            [
+                "Azucar blanco ",
+                60.0
+            ],
+            [
+                "Almendra en polvo",
+                50.0
+            ],
+            [
+                "Huevos ",
+                8.0
+            ],
+            [
+                "Cacao en polvo",
+                10.0
+            ],
+            [
+                "Sal fina ",
+                2.0
+            ]
+        ]
+    },
+    {
+        "name": "Lemon Pie",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Azucar glas Azucarera",
+                245.0
+            ],
+            [
+                "Azucar blanco ",
+                150.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                126.0
+            ],
+            [
+                "Harina floja ",
+                118.0
+            ],
+            [
+                "Almendra en polvo",
+                15.0
+            ],
+            [
+                "Huevos ",
+                7.0
+            ],
+            [
+                "Limones",
+                3.0
+            ],
+            [
+                "Sal fina ",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Roscon2",
+        "cake_size": 20.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Azucar glas Azucarera",
+                150.0
+            ],
+            [
+                "Canela en rama",
+                300.0
+            ],
+            [
+                "Bread",
+                250.0
+            ]
+        ]
+    },
+    {
+        "name": "Caramel Cheesecake",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Mascarpone",
+                300.0
+            ],
+            [
+                "Queso de untar blanco",
+                325.0
+            ],
+            [
+                "Azucar moreno ",
+                255.0
+            ],
+            [
+                "Azucar blanco ",
+                50.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                200.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                150.0
+            ],
+            [
+                "Harina floja ",
+                150.0
+            ],
+            [
+                "Miel pura",
+                40.0
+            ],
+            [
+                "Nueces de pec\u00e1n pelada",
+                30.0
+            ],
+            [
+                "Huevos ",
+                3.0
+            ],
+            [
+                "Vainilla rama ",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Chocolate Coulant",
+        "cake_size": 20.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Chocolate Negro 70% ",
+                300.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                240.0
+            ],
+            [
+                "Azucar blanco ",
+                150.0
+            ],
+            [
+                "Harina floja ",
+                30.0
+            ],
+            [
+                "Huevos ",
+                7.0
+            ]
+        ]
+    },
+    {
+        "name": "Chocolate Extravaganza",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Nata para montar (38%mg) ",
+                555.0
+            ],
+            [
+                "Chocolate Negro 70% ",
+                320.0
+            ],
+            [
+                "Leche president",
+                125.0
+            ],
+            [
+                "Harina floja ",
+                110.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                60.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                45.0
+            ],
+            [
+                "Azucar blanco ",
+                60.0
+            ],
+            [
+                "Cacao en polvo",
+                25.0
+            ],
+            [
+                "Almendra en polvo",
+                15.0
+            ],
+            [
+                "Sal fina ",
+                2.0
+            ],
+            [
+                "Avellana tostada",
+                35.0
+            ],
+            [
+                "Chocolate Blanco 28% ",
+                20.0
+            ],
+            [
+                "Yema de huevo pasteurizada ",
+                45.0
+            ],
+            [
+                "Limas",
+                2.0
+            ]
+        ]
+    },
+    {
+        "name": "Carrot Cake",
+        "cake_size": 20.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Zanahoria",
+                225.0
+            ],
+            [
+                "Crema de queso ",
+                230.0
+            ],
+            [
+                "Harina floja ",
+                130.0
+            ],
+            [
+                "Azucar blanco ",
+                100.0
+            ],
+            [
+                "Azucar moreno ",
+                120.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                120.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                100.0
+            ],
+            [
+                "Canela",
+                3.0
+            ],
+            [
+                "Coco Rallado",
+                25.0
+            ],
+            [
+                "Aceite Girasol",
+                120.0
+            ],
+            [
+                "Levadura quimica",
+                8.0
+            ],
+            [
+                "Nueces",
+                100.0
+            ],
+            [
+                "Huevos ",
+                3.0
+            ],
+            [
+                "Naranja",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Fraisier",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Fresas",
+                450.0
+            ],
+            [
+                "Leche president",
+                375.0
+            ],
+            [
+                "Azucar blanco ",
+                230.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                200.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                195.0
+            ],
+            [
+                "Yema de huevo pasteurizada ",
+                70.0
+            ],
+            [
+                "Huevos ",
+                2.0
+            ],
+            [
+                "Harina floja ",
+                60.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                60.0
+            ],
+            [
+                "Pistacho tostado",
+                20.0
+            ],
+            [
+                "Maizena ",
+                35.0
+            ],
+            [
+                "Licor de cassis",
+                10.0
+            ],
+            [
+                "Vainilla rama ",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Lotus Cake",
+        "cake_size": 26.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Galletas Lotus",
+                500.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                140.0
+            ],
+            [
+                "Crema de queso ",
+                900.0
+            ],
+            [
+                "Azucar panela",
+                150.0
+            ],
+            [
+                "Maizena ",
+                15.0
+            ],
+            [
+                "Crema de Lotus",
+                450.0
+            ],
+            [
+                "Cr\u00e8me fraiche",
+                80.0
+            ],
+            [
+                "Huevos ",
+                6.0
+            ]
+        ]
+    },
+    {
+        "name": "Cookies",
+        "cake_size": 20.0,
+        "size_type": "Portions",
+        "ingredients": [
+            [
+                "Harina floja ",
+                155.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                85.0
+            ],
+            [
+                "Azucar moreno ",
+                75.0
+            ],
+            [
+                "Azucar panela",
+                75.0
+            ],
+            [
+                "Huevos ",
+                2.0
+            ],
+            [
+                "Chocolate Blanco 28% ",
+                45.0
+            ],
+            [
+                "Chocolate Negro 64% ",
+                45.0
+            ],
+            [
+                "Chocolate tableta",
+                45.0
+            ],
+            [
+                "Sal fina ",
+                4.0
+            ],
+            [
+                "Bicarbonato",
+                2.0
+            ],
+            [
+                "Levadura quimica",
+                2.0
+            ]
+        ]
+    },
+    {
+        "name": "Brownie",
+        "cake_size": 1.0,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Chocolate Negro 64% ",
+                185.0
+            ],
+            [
+                "Chocolate Blanco 28% ",
+                50.0
+            ],
+            [
+                "Chocolate con leche 34,9%",
+                50.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                185.0
+            ],
+            [
+                "Huevos ",
+                3.0
+            ],
+            [
+                "Azucar moreno ",
+                100.0
+            ],
+            [
+                "Azucar blanco ",
+                175.0
+            ],
+            [
+                "Harina floja ",
+                85.0
+            ],
+            [
+                "Cacao en polvo",
+                40.0
+            ]
+        ]
+    },
+    {
+        "name": "Lemon Travel Cake",
+        "cake_size": 0.5699999928474426,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Harina floja ",
+                135.0
+            ],
+            [
+                "Azucar blanco ",
+                215.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                75.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                75.0
+            ],
+            [
+                "Huevos ",
+                3.0
+            ],
+            [
+                "Levadura quimica",
+                3.0
+            ]
+        ]
+    },
+    {
+        "name": "Brioche - canela",
+        "cake_size": 0.3499999940395355,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Harina gran fuerza",
+                180.0
+            ],
+            [
+                "Azucar blanco ",
+                33.0
+            ],
+            [
+                "levadura de panaderia",
+                3.0
+            ],
+            [
+                "Sal fina ",
+                2.0
+            ],
+            [
+                "Leche president",
+                75.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                50.0
+            ],
+            [
+                "Huevos ",
+                1.0
+            ],
+            [
+                "Azucar blanco ",
+                50.0
+            ],
+            [
+                "Canela",
+                8.0
+            ]
+        ]
+    },
+    {
+        "name": "Brioche - chocolate",
+        "cake_size": 0.3499999940395355,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Harina gran fuerza",
+                180.0
+            ],
+            [
+                "Azucar blanco ",
+                33.0
+            ],
+            [
+                "levadura de panaderia",
+                3.0
+            ],
+            [
+                "Sal fina ",
+                2.0
+            ],
+            [
+                "Leche president",
+                75.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                50.0
+            ],
+            [
+                "Huevos ",
+                1.0
+            ],
+            [
+                "Chocolate con leche 34,9%",
+                75.0
+            ]
+        ]
+    },
+    {
+        "name": "Hojaldre Manzana Mentidero",
+        "cake_size": 24.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Puff Pastry",
+                300.0
+            ],
+            [
+                "Manzanas",
+                4.0
+            ],
+            [
+                "Azucar moreno ",
+                50.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                50.0
+            ],
+            [
+                "Almendra en polvo",
+                15.0
+            ],
+            [
+                "Almendras en lamina",
+                15.0
+            ],
+            [
+                "Vainilla rama ",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Torija Mentidero",
+        "cake_size": 16.0,
+        "size_type": "Portions",
+        "ingredients": [
+            [
+                "Leche president",
+                1250.0
+            ],
+            [
+                "Aceite Girasol",
+                600.0
+            ],
+            [
+                "Bread",
+                250.0
+            ],
+            [
+                "Azucar blanco ",
+                200.0
+            ],
+            [
+                "Azucar moreno ",
+                100.0
+            ],
+            [
+                "Canela",
+                105.0
+            ],
+            [
+                "Huevos ",
+                2.0
+            ],
+            [
+                "Limones",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Tarta Abuela Mentidero",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Leche president",
+                1000.0
+            ],
+            [
+                "Galletas Maria ",
+                400.0
+            ],
+            [
+                "Chocolate Negro 70% ",
+                200.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                200.0
+            ],
+            [
+                "Azucar blanco ",
+                150.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                35.0
+            ],
+            [
+                "Maizena ",
+                65.0
+            ],
+            [
+                "Huevos ",
+                7.0
+            ]
+        ]
+    },
+    {
+        "name": "Lime Pie",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Harina floja ",
+                118.0
+            ],
+            [
+                "Sal fina ",
+                1.0
+            ],
+            [
+                "Almendra en polvo",
+                15.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                115.0
+            ],
+            [
+                "Huevos ",
+                6.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                60.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                90.0
+            ],
+            [
+                "Gelatina hojas ",
+                4.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                300.0
+            ],
+            [
+                "Limas",
+                10.000001907348633
+            ]
+        ]
+    },
+    {
+        "name": "Mousse chocolate 1",
+        "cake_size": 6.0,
+        "size_type": "Portions",
+        "ingredients": [
+            [
+                "Nata para montar (38%mg) ",
+                430.0
+            ],
+            [
+                "Chocolate Negro 64% ",
+                150.0
+            ]
+        ]
+    },
+    {
+        "name": "Mousse chocolate 2",
+        "cake_size": 10.0,
+        "size_type": "Portions",
+        "ingredients": [
+            [
+                "Chocolate Negro 64% ",
+                330.0
+            ],
+            [
+                "Leche president",
+                125.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                345.0
+            ],
+            [
+                "Huevos ",
+                1.0
+            ],
+            [
+                "Azucar blanco ",
+                40.0
+            ]
+        ]
+    },
+    {
+        "name": "Pavlova",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Azucar blanco ",
+                250.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                25.0
+            ],
+            [
+                "Huevos ",
+                4.0
+            ],
+            [
+                "Sal fina ",
+                12.0
+            ]
+        ]
+    },
+    {
+        "name": "Tarta Tatin Mentidero",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Puff Pastry",
+                300.0
+            ],
+            [
+                "Azucar blanco ",
+                300.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                115.0
+            ],
+            [
+                "Manzanas",
+                6.0
+            ],
+            [
+                "Vainilla rama ",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Pavlova con nata",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Azucar blanco ",
+                250.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                25.0
+            ],
+            [
+                "Huevos ",
+                4.0
+            ],
+            [
+                "Huevos ",
+                12.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                250.0
+            ]
+        ]
+    },
+    {
+        "name": "Sablee pastry",
+        "cake_size": 1.0,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Harina floja ",
+                235.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                90.0
+            ],
+            [
+                "Almendra en polvo",
+                30.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                120.0
+            ],
+            [
+                "Huevos ",
+                1.0
+            ],
+            [
+                "Sal fina ",
+                2.0
+            ]
+        ]
+    },
+    {
+        "name": "Mousse dulce de leche",
+        "cake_size": 0.4000000059604645,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "dulce de leche",
+                200.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                100.0
+            ],
+            [
+                "Crema de queso ",
+                100.0
+            ],
+            [
+                "Gelatina hojas ",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Mascarpone topping",
+        "cake_size": 0.6600000262260437,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Nata para montar (38%mg) ",
+                350.0
+            ],
+            [
+                "Crema de queso ",
+                250.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                60.0
+            ]
+        ]
+    },
+    {
+        "name": "Tartaleta dulce de leche",
+        "cake_size": 6.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "sablee pastry dough",
+                10.0
+            ],
+            [
+                "mousse de dulce de leche",
+                55.0
+            ],
+            [
+                "mascarpone topping",
+                25.0
+            ]
+        ]
+    },
+    {
+        "name": "Milhojas",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Leche president",
+                375.0
+            ],
+            [
+                "Azucar blanco ",
+                120.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                75.0
+            ],
+            [
+                "Yema de huevo pasteurizada ",
+                60.0
+            ],
+            [
+                "Maizena ",
+                35.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                85.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                300.0
+            ],
+            [
+                "Vainilla rama ",
+                1.0
+            ],
+            [
+                "Frambuesas frescas tarrina ",
+                45.0
+            ],
+            [
+                "Puff Pastry",
+                750.0
+            ]
+        ]
+    },
+    {
+        "name": "Milhojas Mentidero",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Leche president",
+                375.0
+            ],
+            [
+                "Azucar blanco ",
+                120.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                75.0
+            ],
+            [
+                "Yema de huevo pasteurizada ",
+                60.0
+            ],
+            [
+                "Maizena ",
+                35.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                85.0
+            ],
+            [
+                "Puff Pastry",
+                500.0
+            ]
+        ]
+    },
+    {
+        "name": "Coffee and Walnut",
+        "cake_size": 20.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "Nueces",
+                75.0
+            ],
+            [
+                "Azucar blanco ",
+                225.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                350.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                400.0
+            ],
+            [
+                "Harina floja ",
+                200.0
+            ],
+            [
+                "Huevos ",
+                4.0
+            ],
+            [
+                "Bicarbonato",
+                5.0
+            ],
+            [
+                "Leche president",
+                15.0
+            ],
+            [
+                "Levadura quimica",
+                10.0
+            ]
+        ]
+    },
+    {
+        "name": "Coulis mango",
+        "cake_size": 0.5,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "pure de mango",
+                400.0
+            ],
+            [
+                "Azucar blanco ",
+                80.0
+            ],
+            [
+                "Maizena ",
+                16.0
+            ],
+            [
+                "Gelatina hojas ",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Cremoso mango",
+        "cake_size": 0.5,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "pure de mango",
+                150.0
+            ],
+            [
+                "Huevos ",
+                5.0
+            ],
+            [
+                "Azucar blanco ",
+                45.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                60.0
+            ],
+            [
+                "Gelatina hojas ",
+                2.0
+            ]
+        ]
+    },
+    {
+        "name": "Masa Bizcocho",
+        "cake_size": 0.2800000011920929,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Huevos ",
+                3.0
+            ],
+            [
+                "Azucar blanco ",
+                50.0
+            ],
+            [
+                "Almendra en polvo",
+                25.0
+            ],
+            [
+                "Azucar glas Azucarera",
+                25.0
+            ],
+            [
+                "Harina floja ",
+                13.0
+            ],
+            [
+                "Almendras en lamina",
+                15.0
+            ]
+        ]
+    },
+    {
+        "name": "Mousse Mazapan",
+        "cake_size": 0.5,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Leche president",
+                155.0
+            ],
+            [
+                "Vainilla rama ",
+                1.0
+            ],
+            [
+                "Mazapan almendra (65/35%) ",
+                65.0
+            ],
+            [
+                "Huevos ",
+                2.0
+            ],
+            [
+                "Azucar blanco ",
+                30.0
+            ],
+            [
+                "Gelatina hojas ",
+                4.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                165.0
+            ]
+        ]
+    },
+    {
+        "name": "Entremet Almendra y Mango",
+        "cake_size": 8.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "coulis mango",
+                15.0
+            ],
+            [
+                "cremoso de mango",
+                20.0
+            ],
+            [
+                "masa bizcocho",
+                30.0
+            ],
+            [
+                "mousse mazapan",
+                30.0
+            ]
+        ]
+    },
+    {
+        "name": "Scones",
+        "cake_size": 1.0,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "harina (self raising)",
+                560.0
+            ],
+            [
+                "levadura de panaderia",
+                7.5
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                150.0
+            ],
+            [
+                "Azucar blanco ",
+                60.0
+            ],
+            [
+                "Leche president",
+                275.0
+            ],
+            [
+                "Limones",
+                1.0
+            ],
+            [
+                "Huevos ",
+                1.0
+            ]
+        ]
+    },
+    {
+        "name": "Caramel Cheesecake - new recipe",
+        "cake_size": 22.0,
+        "size_type": "Diameter in cm",
+        "ingredients": [
+            [
+                "galletas mantequilla",
+                225.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                50.0
+            ],
+            [
+                "Mascarpone",
+                250.0
+            ],
+            [
+                "Crema de queso ",
+                275.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                70.0
+            ],
+            [
+                "Azucar panela",
+                250.0
+            ],
+            [
+                "Miel pura",
+                30.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                125.0
+            ],
+            [
+                "Huevos ",
+                3.0
+            ],
+            [
+                "vanilla paste",
+                10.0
+            ]
+        ]
+    },
+    {
+        "name": "Cheesecake Bientirada",
+        "cake_size": 2000.0,
+        "size_type": "Weight in kg",
+        "ingredients": [
+            [
+                "Galletas Maria ",
+                200.0
+            ],
+            [
+                "Mantequilla sin sal (82%mg)",
+                60.0
+            ],
+            [
+                "Crema de queso ",
+                645.0
+            ],
+            [
+                "Nata para montar (38%mg) ",
+                500.0
+            ],
+            [
+                "Clara de huevo pasteurizada ",
+                210.0
+            ],
+            [
+                "Yema de huevo pasteurizada ",
+                210.0
+            ],
+            [
+                "Azucar blanco ",
+                240.0
+            ]
+        ]
+    }
+]

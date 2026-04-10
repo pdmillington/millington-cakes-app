@@ -1,0 +1,632 @@
+[
+    {
+        "name": "Almendras en lamina",
+        "provider": "Harbest",
+        "unit": 3000.0,
+        "vat": 0.0,
+        "price": 23.85
+    },
+    {
+        "name": "Agua de Azahar",
+        "provider": "Farmacia",
+        "unit": 500.0,
+        "vat": 0.1,
+        "price": 9.855
+    },
+    {
+        "name": "Almendra en polvo",
+        "provider": "HARBEST",
+        "unit": 10000.0,
+        "vat": 0.1,
+        "price": 55.2
+    },
+    {
+        "name": "Harina gran fuerza",
+        "provider": "Casa Ruiz",
+        "unit": 25000.0,
+        "vat": 0.0,
+        "price": 65.0
+    },
+    {
+        "name": "Arandano fresco",
+        "provider": "HARBEST",
+        "unit": 150.0,
+        "vat": 0.1,
+        "price": 2.57
+    },
+    {
+        "name": "Avellana tostada",
+        "provider": "HARBEST",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 18.29
+    },
+    {
+        "name": "Azucar blanco ",
+        "provider": "GYG",
+        "unit": 25000.0,
+        "vat": 0.1,
+        "price": 33.75
+    },
+    {
+        "name": "Azucar glas Azucarera",
+        "provider": "GyG",
+        "unit": 25000.0,
+        "vat": 0.21,
+        "price": 44.69
+    },
+    {
+        "name": "Azucar panela",
+        "provider": "MAKRO",
+        "unit": 500.0,
+        "vat": 0.0,
+        "price": 1.95
+    },
+    {
+        "name": "Azucar moreno ",
+        "provider": "GyG",
+        "unit": 25000.0,
+        "vat": 0.1,
+        "price": 40.47
+    },
+    {
+        "name": "Bicarbonato",
+        "provider": "MAKRO",
+        "unit": 1150.0,
+        "vat": 0.1,
+        "price": 2.29
+    },
+    {
+        "name": "Cacao en polvo",
+        "provider": "GyG",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 11.48
+    },
+    {
+        "name": "Chocolate Blanco 28% ",
+        "provider": "GyG",
+        "unit": 2500.0,
+        "vat": 0.21,
+        "price": 29.09
+    },
+    {
+        "name": "Chocolate Negro 64% ",
+        "provider": "GyG",
+        "unit": 10000.0,
+        "vat": 0.1,
+        "price": 72.23
+    },
+    {
+        "name": "Chocolate Negro 70% ",
+        "provider": "Valor",
+        "unit": 300.0,
+        "vat": 0.1,
+        "price": 3.375
+    },
+    {
+        "name": "Chocolate tableta",
+        "provider": "MAKRO",
+        "unit": 625.0,
+        "vat": 0.1,
+        "price": 5.99
+    },
+    {
+        "name": "Chocolate con leche 34,9%",
+        "provider": "GyG",
+        "unit": 10000.0,
+        "vat": 0.1,
+        "price": 84.26
+    },
+    {
+        "name": "Clara de huevo pasteurizada ",
+        "provider": "Makro Chef",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 3.456
+    },
+    {
+        "name": "Colorante polvo oro",
+        "provider": "Sosa",
+        "unit": 30.0,
+        "vat": 0.21,
+        "price": 10.823
+    },
+    {
+        "name": "Colorantepolvo verde ",
+        "provider": "Sosa",
+        "unit": 30.0,
+        "vat": 0.21,
+        "price": 4.5662
+    },
+    {
+        "name": "Crema de queso ",
+        "provider": "GyG",
+        "unit": 5000.0,
+        "vat": 0.1,
+        "price": 38.41
+    },
+    {
+        "name": "Frambuesas frescas tarrina ",
+        "provider": "HARBEST",
+        "unit": 150.0,
+        "vat": 0.0,
+        "price": 2.35
+    },
+    {
+        "name": "Fresas",
+        "provider": "HARBEST",
+        "unit": 1000.0,
+        "vat": 0.0,
+        "price": 5.55
+    },
+    {
+        "name": "Frutas del bosque congelado",
+        "provider": "Makro Chef",
+        "unit": 1000.0,
+        "vat": 0.0,
+        "price": 3.48
+    },
+    {
+        "name": "Galletas Digestive ",
+        "provider": "Makro Chef",
+        "unit": 400.0,
+        "vat": 0.1,
+        "price": 0.9810000000000001
+    },
+    {
+        "name": "Galletas Maria ",
+        "provider": "Makro Chef",
+        "unit": 2400.0,
+        "vat": 0.1,
+        "price": 4.95
+    },
+    {
+        "name": "Gelatina hojas ",
+        "provider": "Vainhe",
+        "unit": 17.0,
+        "vat": 0.21,
+        "price": 1.7301
+    },
+    {
+        "name": "Glucosa liquida ",
+        "provider": "Sosa  ",
+        "unit": 1500.0,
+        "vat": 0.21,
+        "price": 6.0435
+    },
+    {
+        "name": "Harina floja ",
+        "provider": "GyG",
+        "unit": 25000.0,
+        "vat": 0.0,
+        "price": 18.9
+    },
+    {
+        "name": "Huevos ",
+        "provider": "HARBEST",
+        "unit": 30.0,
+        "vat": 0.0,
+        "price": 6.15
+    },
+    {
+        "name": "Leche president",
+        "provider": "GyG",
+        "unit": 6000.0,
+        "vat": 0.0,
+        "price": 5.68
+    },
+    {
+        "name": "Levadura quimica",
+        "provider": "Makro",
+        "unit": 900.0,
+        "vat": 0.1,
+        "price": 5.35
+    },
+    {
+        "name": "Licor de cassis",
+        "provider": "Makro",
+        "unit": 700.0,
+        "vat": 0.21,
+        "price": 8.85
+    },
+    {
+        "name": "Limones",
+        "provider": "HARBEST",
+        "unit": 8.0,
+        "vat": 0.0,
+        "price": 2.25
+    },
+    {
+        "name": "Maizena ",
+        "provider": "MAKRO",
+        "unit": 2500.0,
+        "vat": 0.05,
+        "price": 13.99
+    },
+    {
+        "name": "Manteca de Cacao BARRY ",
+        "provider": "Amazon",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 26.991
+    },
+    {
+        "name": "Mantequilla sin sal (82%mg)",
+        "provider": "GyG",
+        "unit": 10000.0,
+        "vat": 0.1,
+        "price": 66.24
+    },
+    {
+        "name": "Mascarpone",
+        "provider": "Makro",
+        "unit": 2000.0,
+        "vat": 0.0,
+        "price": 21.15
+    },
+    {
+        "name": "Mazapan almendra (65/35%) ",
+        "provider": "Sosa (online)",
+        "unit": 1750.0,
+        "vat": 0.1,
+        "price": 13.95
+    },
+    {
+        "name": "Miel pura",
+        "provider": "GyG",
+        "unit": 5000.0,
+        "vat": 0.1,
+        "price": 32.87
+    },
+    {
+        "name": "Nata para montar (38%mg) ",
+        "provider": "GyG",
+        "unit": 1000.0,
+        "vat": 0.0,
+        "price": 3.81
+    },
+    {
+        "name": "Nueces de pec\u00e1n pelada",
+        "provider": "HARBEST",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 14.99
+    },
+    {
+        "name": "paillete feuilletine",
+        "provider": "Sosa (online)",
+        "unit": 500.0,
+        "vat": 0.05,
+        "price": 21.4035
+    },
+    {
+        "name": "Pectina amarilla ",
+        "provider": "Makro Chef",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 16.821
+    },
+    {
+        "name": "Pistacho tostado",
+        "provider": "HARBEST",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 26.89
+    },
+    {
+        "name": "praline",
+        "provider": "Makro",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 7.911
+    },
+    {
+        "name": "Pure coco PONTHIER ",
+        "provider": "Makro",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 7.416
+    },
+    {
+        "name": "Pure de frambuesa PONTHIER ",
+        "provider": "Mercadona",
+        "unit": 1000.0,
+        "vat": 0.0,
+        "price": 4.63
+    },
+    {
+        "name": "Pure de mango PONTHIER ",
+        "provider": "Makro",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 9.050000190734863
+    },
+    {
+        "name": "Queso de untar blanco",
+        "provider": "Amazon",
+        "unit": 5000.0,
+        "vat": 0.1,
+        "price": 34.2
+    },
+    {
+        "name": "Sal fina ",
+        "provider": "MAKRO",
+        "unit": 500.0,
+        "vat": 0.1,
+        "price": 0.65
+    },
+    {
+        "name": "Vainilla rama ",
+        "provider": "Amazon",
+        "unit": 15.0,
+        "vat": 0.1,
+        "price": 24.09
+    },
+    {
+        "name": "Xantana goma",
+        "provider": NaN,
+        "unit": 2500.0,
+        "vat": 0.1,
+        "price": 31.5
+    },
+    {
+        "name": "Yema de huevo pasteurizada ",
+        "provider": "HARBEST",
+        "unit": 1000.0,
+        "vat": NaN,
+        "price": 7.96
+    },
+    {
+        "name": "Aceite Girasol",
+        "provider": "MAKRO",
+        "unit": 25000.0,
+        "vat": 0.05,
+        "price": 32.647619047619045
+    },
+    {
+        "name": "Coco Rallado",
+        "provider": "MAKRO",
+        "unit": 100.0,
+        "vat": 0.0,
+        "price": 5.39
+    },
+    {
+        "name": "Canela",
+        "provider": "MAKRO",
+        "unit": 405.0,
+        "vat": 0.1,
+        "price": 7.554545454545455
+    },
+    {
+        "name": "Zanahoria",
+        "provider": "MAKRO",
+        "unit": 2000.0,
+        "vat": 0.0,
+        "price": 2.15
+    },
+    {
+        "name": "Naranja",
+        "provider": "MAKRO",
+        "unit": 10.0,
+        "vat": 0.0,
+        "price": 2.95
+    },
+    {
+        "name": "Nueces",
+        "provider": "MAKRO",
+        "unit": 1000.0,
+        "vat": 0.0,
+        "price": 10.29
+    },
+    {
+        "name": "Albumina",
+        "provider": NaN,
+        "unit": 125.0,
+        "vat": 0.1,
+        "price": 7.263636363636364
+    },
+    {
+        "name": "Pasta de pistacho",
+        "provider": "Amazon",
+        "unit": 190.0,
+        "vat": 0.1,
+        "price": 15.363636363636362
+    },
+    {
+        "name": "Pure de fruta de la passion",
+        "provider": "MAKRO",
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 10.0
+    },
+    {
+        "name": "Crema de Lotus",
+        "provider": NaN,
+        "unit": 1600.0,
+        "vat": 0.1,
+        "price": 12.354545454545454
+    },
+    {
+        "name": "Galletas Lotus",
+        "provider": NaN,
+        "unit": 750.0,
+        "vat": 0.1,
+        "price": 9.454545454545453
+    },
+    {
+        "name": "Cr\u00e8me fraiche",
+        "provider": NaN,
+        "unit": 500.0,
+        "vat": 0.1,
+        "price": 3.8545454545454545
+    },
+    {
+        "name": "levadura de panaderia",
+        "provider": NaN,
+        "unit": 27.5,
+        "vat": 0.1,
+        "price": 1.8545454545454545
+    },
+    {
+        "name": "Galletas Oreo",
+        "provider": NaN,
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 9.09090909090909
+    },
+    {
+        "name": "Base Milhojas",
+        "provider": NaN,
+        "unit": 1.0,
+        "vat": 0.1,
+        "price": 2.0
+    },
+    {
+        "name": "Vinagre",
+        "provider": NaN,
+        "unit": 1000.0,
+        "vat": 0.1,
+        "price": 0.65
+    },
+    {
+        "name": "Manzanas",
+        "provider": NaN,
+        "unit": 4.0,
+        "vat": 0.0,
+        "price": 2.0
+    },
+    {
+        "name": "Puff Pastry",
+        "provider": "SelfMade",
+        "unit": 1000.0,
+        "vat": 0.0,
+        "price": 4.65
+    },
+    {
+        "name": "Bread",
+        "provider": NaN,
+        "unit": 250.0,
+        "vat": 0.0,
+        "price": 0.49
+    },
+    {
+        "name": "Canela en rama",
+        "provider": "Makro",
+        "unit": 70.0,
+        "vat": 0.1,
+        "price": 9.55
+    },
+    {
+        "name": "sablee pastry dough",
+        "provider": "Self Made",
+        "unit": 1000.0,
+        "vat": "0",
+        "price": 1.600000023841858
+    },
+    {
+        "name": "dulce de leche",
+        "provider": "Makro",
+        "unit": 1000.0,
+        "vat": "0.21",
+        "price": 5.849999904632568
+    },
+    {
+        "name": "mascarpone topping",
+        "provider": "Self made",
+        "unit": 1000.0,
+        "vat": "0",
+        "price": 5.150000095367432
+    },
+    {
+        "name": "mousse de dulce de leche",
+        "provider": "Self made",
+        "unit": 1000.0,
+        "vat": "0",
+        "price": 6.099999904632568
+    },
+    {
+        "name": "Limas",
+        "provider": "HARBEST",
+        "unit": 33.0,
+        "vat": "0",
+        "price": 9.55
+    },
+    {
+        "name": "pure de mango",
+        "provider": "Makro",
+        "unit": 1000.0,
+        "vat": "0.1",
+        "price": 9.050000190734863
+    },
+    {
+        "name": "coulis mango",
+        "provider": "Homemade",
+        "unit": 500.0,
+        "vat": "0.1",
+        "price": 4.5
+    },
+    {
+        "name": "cremoso de mango",
+        "provider": "Homemade",
+        "unit": 500.0,
+        "vat": "0.1",
+        "price": 4.0
+    },
+    {
+        "name": "masa bizcocho",
+        "provider": "Homemade",
+        "unit": 500.0,
+        "vat": "0.1",
+        "price": 2.5
+    },
+    {
+        "name": "masa bizcocho",
+        "provider": "Homemade",
+        "unit": 500.0,
+        "vat": "0.1",
+        "price": 2.5
+    },
+    {
+        "name": "mousse mazapan",
+        "provider": "Homemade",
+        "unit": 500.0,
+        "vat": "0.1",
+        "price": 4.5
+    },
+    {
+        "name": "mousse mazapan",
+        "provider": "Homemade",
+        "unit": 500.0,
+        "vat": "0.1",
+        "price": 4.5
+    },
+    {
+        "name": "harina (self raising)",
+        "provider": "Makro",
+        "unit": 1000.0,
+        "vat": "0",
+        "price": 1.0499999523162842
+    },
+    {
+        "name": "vanilla paste",
+        "provider": "Makro",
+        "unit": 270.0,
+        "vat": "0.1",
+        "price": 22.0
+    },
+    {
+        "name": "vanilla paste",
+        "provider": "Makro",
+        "unit": 270.0,
+        "vat": "0.1",
+        "price": 22.0
+    },
+    {
+        "name": "galletas mantequilla",
+        "provider": "Makro",
+        "unit": 125.0,
+        "vat": "0.1",
+        "price": 1.5499999523162842
+    }
+]

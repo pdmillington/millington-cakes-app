@@ -1,0 +1,14 @@
+# =============================================================================
+# Millington Cakes Pricing App — Python dependencies
+# Streamlit Community Cloud installs these automatically on deployment.
+# To install locally: pip install -r requirements.txt
+# =============================================================================
+
+# Core application
+streamlit>=1.35.0
+
+# Database
+supabase>=2.4.0
+
+# Utilities
+python-dotenv>=1.0.0

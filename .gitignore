@@ -1,0 +1,46 @@
+# =============================================================================
+# Millington Cakes Pricing App — .gitignore
+# =============================================================================
+
+# Credentials — NEVER commit these
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter (if ever used for data analysis)
+.ipynb_checkpoints/
+*.ipynb
+
+# Spreadsheets — kept locally for reference, not needed in repo
+*.xlsx
+*.xls
+
+# Old application files — superseded by the new app
+CakePricer.py
+start2.py
+RecipeGUI.py
+CostCalculatorGUI.py
+
+# Streamlit local cache
+.streamlit/secrets.toml
