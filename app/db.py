@@ -18,6 +18,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Private helper
+
+def _normalise_name(name: str) -> str:
+    """Strip leading/trailing whitespace and collapse internal spaces."""
+    import re
+    return re.sub(r'\s+', ' ', name).strip()
 
 # -----------------------------------------------------------------------------
 # Connection
@@ -60,6 +66,7 @@ def get_ingredients() -> list[dict]:
 def save_ingredient(record: dict) -> dict:
     """Insert or update an ingredient. Computes cost_per_unit before saving."""
     sb = get_client()
+    record["name"] = _normalise_name(record.get("name", ""))
     record = _compute_ingredient_cost(record)
     if record.get("id"):
         result = sb.table("ingredients").update(record).eq("id", record["id"]).execute()
@@ -84,6 +91,7 @@ def _compute_ingredient_cost(record: dict) -> dict:
     return record
 
 
+
 # -----------------------------------------------------------------------------
 # Consumables
 # -----------------------------------------------------------------------------
@@ -97,6 +105,7 @@ def get_consumables() -> list[dict]:
 def save_consumable(record: dict) -> dict:
     """Insert or update a consumable. Computes cost_per_unit before saving."""
     sb = get_client()
+    record["name"] = _normalise_name(record.get("name", ""))
     record = _compute_consumable_cost(record)
     if record.get("id"):
         result = sb.table("consumables").update(record).eq("id", record["id"]).execute()
