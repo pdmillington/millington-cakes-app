@@ -157,6 +157,13 @@ multiples — no numeric size codes needed.
 
         p = selected_id  # short prefix for keys
 
+        # DEBUG — remove once switching is confirmed working
+        st.write("selected_id:", selected_id)
+        st.write("Session state field keys:", {
+            k: v for k, v in st.session_state.items() 
+            if k.startswith("field_")
+        })
+
         c1, c2 = st.columns(2)
         with c1:
             name = st.text_input("Recipe name", key=f"field_name_{p}")
