@@ -172,7 +172,7 @@ multiples — no numeric size codes needed.
             name = st.text_input(
                 "Recipe name",
                 value=recipe.get("name", ""),
-                key="rec_name"
+                key=f"rec_name_{selected_id}"
             )
         with c2:
             # Cake code selector — version conflict check built in
@@ -185,7 +185,7 @@ multiples — no numeric size codes needed.
             code_idx    = code_labels.index(current_code_label) \
                 if current_code_label in code_labels else 0
             selected_code_label = st.selectbox(
-                "Cake code", code_labels, index=code_idx, key="rec_code"
+                "Cake code", code_labels, index=code_idx, key=f"rec_code_{selected_id}"
             )
             selected_code_id = code_options.get(selected_code_label)
 
@@ -194,7 +194,7 @@ multiples — no numeric size codes needed.
             version = st.text_input(
                 "Version",
                 value=recipe.get("version", "01"),
-                key="rec_version",
+                key=f"rec_version_{selected_id}",
                 help="Two digits: 01, 02 etc. Increment only when the "
                      "recipe formulation meaningfully changes."
             )
@@ -203,7 +203,7 @@ multiples — no numeric size codes needed.
             size_idx    = size_types.index(recipe["size_type"]) \
                 if recipe.get("size_type") in size_types else 0
             size_type   = st.selectbox(
-                "Size type", size_types, index=size_idx, key="rec_size_type"
+                "Size type", size_types, index=size_idx, key=f"rec_size_type_{selected_id}"
             )
 
         # Reference dimensions — show only fields relevant to size type
@@ -214,13 +214,13 @@ multiples — no numeric size codes needed.
                 ref_diameter = st.number_input(
                     "Diameter (cm)",
                     value=float(recipe.get("ref_diameter_cm") or 0),
-                    min_value=0.0, key="rec_diameter"
+                    min_value=0.0, key=f"rec_diameter_{selected_id}"
                 )
             with d2:
                 ref_height = st.number_input(
                     "Height (cm) ★",
                     value=float(recipe.get("ref_height_cm") or 0),
-                    min_value=0.0, key="rec_height",
+                    min_value=0.0, key=f"rec_height_{selected_id}",
                     help="Required for accurate volume-based scaling. "
                          "Measure the finished cake height."
                 )
@@ -231,7 +231,7 @@ multiples — no numeric size codes needed.
             ref_weight = st.number_input(
                 "Weight (kg)",
                 value=float(recipe.get("ref_weight_kg") or 0),
-                min_value=0.0, key="rec_weight"
+                min_value=0.0, key=f"rec_weight_{selected_id}"
             )
             ref_diameter = ref_height = ref_portions = None
 
@@ -239,14 +239,14 @@ multiples — no numeric size codes needed.
             ref_portions = st.number_input(
                 "Portions",
                 value=int(recipe.get("ref_portions") or 0),
-                min_value=0, key="rec_portions"
+                min_value=0, key=f"rec_portions_{selected_id}"
             )
             ref_diameter = ref_height = ref_weight = None
 
         notes = st.text_area(
             "Notes",
             value=recipe.get("notes") or "",
-            key="rec_notes",
+            key=f"rec_notes_{selected_id}",
             height=60,
             placeholder="Optional — storage instructions, allergen notes, etc."
         )
