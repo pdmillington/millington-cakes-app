@@ -101,8 +101,6 @@ multiples — no numeric size codes needed.
                     use_container_width=True,
                     type="primary" if selected_id == r["id"] else "secondary"
                 ):
-                    # Load recipe and write all field values into session state
-                    # NOW, before st.rerun(), so widgets render correctly
                     _load_recipe(r["id"], code_options)
 
         if unassigned:
@@ -130,7 +128,6 @@ multiples — no numeric size codes needed.
 
         is_new = selected_id == "new"
 
-        # Load recipe data for reference (for ingredient lines and saving)
         if is_new:
             recipe = {}
             lines  = []
@@ -152,32 +149,35 @@ multiples — no numeric size codes needed.
             )
 
         # ── Recipe details ────────────────────────────────────────────────────
-        # All widgets use stable keys. Values were written into session state
-        # by _load_recipe() in the button handler — Streamlit reads them from
-        # there and displays correctly regardless of previous widget history.
+        # Each widget key includes selected_id so switching recipes creates
+        # entirely new widgets — Streamlit cannot reuse stale internal state.
+        # Values are pre-loaded into session state by _load_recipe() in the
+        # button handler before st.rerun(), guaranteeing correct display.
         st.markdown("#### Recipe details")
+
+        p = selected_id  # short prefix for keys
 
         c1, c2 = st.columns(2)
         with c1:
-            name = st.text_input("Recipe name", key="field_name")
+            name = st.text_input("Recipe name", key=f"field_name_{p}")
         with c2:
             code_labels = ["— no code assigned —"] + list(code_options.keys())
             selected_code_label = st.selectbox(
-                "Cake code", code_labels, key="field_code"
+                "Cake code", code_labels, key=f"field_code_{p}"
             )
             selected_code_id = code_options.get(selected_code_label)
 
         c3, c4 = st.columns(2)
         with c3:
             version = st.text_input(
-                "Version", key="field_version",
+                "Version", key=f"field_version_{p}",
                 help="Two digits: 01, 02 etc. Increment only when the "
                      "recipe formulation meaningfully changes."
             )
         with c4:
             size_type = st.selectbox(
                 "Size type", ["diameter", "weight", "portions"],
-                key="field_size_type"
+                key=f"field_size_type_{p}"
             )
 
         st.markdown("**Reference dimensions**")
@@ -185,29 +185,33 @@ multiples — no numeric size codes needed.
             d1, d2 = st.columns(2)
             with d1:
                 ref_diameter = st.number_input(
-                    "Diameter (cm)", min_value=0.0, key="field_diameter"
+                    "Diameter (cm)", min_value=0.0,
+                    key=f"field_diameter_{p}"
                 )
             with d2:
                 ref_height = st.number_input(
-                    "Height (cm) ★", min_value=0.0, key="field_height",
+                    "Height (cm) ★", min_value=0.0,
+                    key=f"field_height_{p}",
                     help="Required for accurate volume-based scaling."
                 )
             ref_weight = ref_portions = None
 
         elif size_type == "weight":
             ref_weight = st.number_input(
-                "Weight (kg)", min_value=0.0, key="field_weight"
+                "Weight (kg)", min_value=0.0,
+                key=f"field_weight_{p}"
             )
             ref_diameter = ref_height = ref_portions = None
 
         else:
             ref_portions = st.number_input(
-                "Portions", min_value=0, key="field_portions"
+                "Portions", min_value=0,
+                key=f"field_portions_{p}"
             )
             ref_diameter = ref_height = ref_weight = None
 
         notes = st.text_area(
-            "Notes", key="field_notes", height=60,
+            "Notes", key=f"field_notes_{p}", height=60,
             placeholder="Optional — storage instructions, allergen notes, etc."
         )
 
@@ -286,7 +290,6 @@ multiples — no numeric size codes needed.
                                  help="Remove this ingredient"):
                         remove_idx = idx
 
-            # Keep session state in sync with what the widgets show
             st.session_state[lines_key][idx] = {
                 "ingredient_id":   ing_options.get(selected_ing),
                 "ingredient_name": selected_ing
@@ -299,7 +302,6 @@ multiples — no numeric size codes needed.
             del st.session_state[lines_key][remove_idx]
             st.rerun()
 
-        # Add empty row when last row is filled
         last = working_lines[-1] if working_lines else {}
         if last.get("ingredient_name") and \
                 last["ingredient_name"] != "— select ingredient —":
@@ -352,13 +354,11 @@ multiples — no numeric size codes needed.
                     ]
                     db.replace_recipe_lines(saved["id"], clean_lines)
                     st.success(f"Saved: {name}", icon="✅")
-                    # Reload the saved recipe to reflect any changes
                     _load_recipe(saved["id"], code_options)
 
         with col_cancel:
             if not is_new and st.button("Cancel changes",
                                         use_container_width=True):
-                # Reload from DB to discard unsaved edits
                 _load_recipe(selected_id, code_options)
 
 
@@ -368,13 +368,17 @@ multiples — no numeric size codes needed.
 
 def _load_recipe(recipe_id: str, code_options: dict):
     """
-    Load a recipe and write all its field values directly into session state,
-    then trigger a rerun. This matches the pattern used in the test script
-    that confirmed this approach works reliably in Streamlit:
-    values are set BEFORE st.rerun() so widgets render correctly on the
-    next pass without relying on the value= parameter.
+    Switch to a recipe. Clears all field and line state, writes new recipe
+    values into session state keyed by recipe_id, then reruns.
+
+    Using recipe_id-suffixed keys means each recipe gets entirely new
+    widget instances — Streamlit cannot carry over stale internal state
+    from a previous recipe because the keys have never existed before.
+
+    Values are set HERE, before st.rerun(), so widgets render correctly
+    on the next pass without relying on the value= parameter.
     """
-    # Clear all existing field and line state
+    # Clear all existing editor state
     keys_to_clear = [
         k for k in st.session_state
         if k.startswith("field_")
@@ -387,40 +391,38 @@ def _load_recipe(recipe_id: str, code_options: dict):
         del st.session_state[k]
 
     st.session_state.selected_recipe_id = recipe_id
+    p = recipe_id  # key prefix
 
     if recipe_id == "new":
-        # Blank form for a new recipe
-        st.session_state["field_name"]      = ""
-        st.session_state["field_code"]      = "— no code assigned —"
-        st.session_state["field_version"]   = "01"
-        st.session_state["field_size_type"] = "diameter"
-        st.session_state["field_diameter"]  = 0.0
-        st.session_state["field_height"]    = 0.0
-        st.session_state["field_weight"]    = 0.0
-        st.session_state["field_portions"]  = 0
-        st.session_state["field_notes"]     = ""
+        st.session_state[f"field_name_{p}"]      = ""
+        st.session_state[f"field_code_{p}"]      = "— no code assigned —"
+        st.session_state[f"field_version_{p}"]   = "01"
+        st.session_state[f"field_size_type_{p}"] = "diameter"
+        st.session_state[f"field_diameter_{p}"]  = 0.0
+        st.session_state[f"field_height_{p}"]    = 0.0
+        st.session_state[f"field_weight_{p}"]    = 0.0
+        st.session_state[f"field_portions_{p}"]  = 0
+        st.session_state[f"field_notes_{p}"]     = ""
     else:
         recipe = db.get_recipe(recipe_id)
 
-        # Name and version
-        st.session_state["field_name"]    = recipe.get("name", "")
-        st.session_state["field_version"] = recipe.get("version", "01")
-        st.session_state["field_notes"]   = recipe.get("notes") or ""
+        st.session_state[f"field_name_{p}"]    = recipe.get("name", "")
+        st.session_state[f"field_version_{p}"] = recipe.get("version", "01")
+        st.session_state[f"field_notes_{p}"]   = recipe.get("notes") or ""
 
-        # Cake code — selectbox stores the label string, not the UUID
+        # Cake code — selectbox needs the label string, not the UUID
         code_by_id         = {v: k for k, v in code_options.items()}
         current_code_label = code_by_id.get(
             recipe.get("cake_code_id"), "— no code assigned —"
         )
-        st.session_state["field_code"] = current_code_label
+        st.session_state[f"field_code_{p}"] = current_code_label
 
-        # Size type and dimensions
         size_type = recipe.get("size_type", "diameter")
-        st.session_state["field_size_type"] = size_type
-        st.session_state["field_diameter"]  = float(recipe.get("ref_diameter_cm") or 0)
-        st.session_state["field_height"]    = float(recipe.get("ref_height_cm") or 0)
-        st.session_state["field_weight"]    = float(recipe.get("ref_weight_kg") or 0)
-        st.session_state["field_portions"]  = int(recipe.get("ref_portions") or 0)
+        st.session_state[f"field_size_type_{p}"] = size_type
+        st.session_state[f"field_diameter_{p}"]  = float(recipe.get("ref_diameter_cm") or 0)
+        st.session_state[f"field_height_{p}"]    = float(recipe.get("ref_height_cm") or 0)
+        st.session_state[f"field_weight_{p}"]    = float(recipe.get("ref_weight_kg") or 0)
+        st.session_state[f"field_portions_{p}"]  = int(recipe.get("ref_portions") or 0)
 
     st.rerun()
 
