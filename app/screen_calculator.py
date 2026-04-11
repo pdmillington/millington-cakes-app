@@ -13,7 +13,7 @@
 
 import streamlit as st
 from math import pi
-import db
+import database as db
 
 
 def screen_calculator():

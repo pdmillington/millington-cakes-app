@@ -1,6 +1,6 @@
 # screen_recipes.py
 import streamlit as st
-import db
+import database as db
 
 
 def screen_recipes():

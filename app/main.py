@@ -13,7 +13,7 @@
 # =============================================================================
 
 import streamlit as st
-import db
+import database as db
 from screen_recipes import screen_recipes
 from screen_calculator import screen_calculator
 
