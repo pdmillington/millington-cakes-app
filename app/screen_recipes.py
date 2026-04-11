@@ -244,6 +244,36 @@ multiples — no numeric size codes needed.
                     help="Oven time for the whole batch"
                 )
 
+        with st.expander("📦 Format availability"):
+            st.caption("Enable smaller formats for this recipe in the calculator.")
+            has_individual = st.checkbox(
+                "Available as Individual (~100g)",
+                key=f"field_has_individual_{p}"
+            )
+            if has_individual:
+                individual_weight = st.number_input(
+                    "Individual weight (g)",
+                    min_value=1.0,
+                    key=f"field_individual_weight_{p}",
+                    help="Typical weight per individual portion"
+                )
+            else:
+                individual_weight = None
+        
+            has_bocado = st.checkbox(
+                "Available as Bocado (~30g)",
+                key=f"field_has_bocado_{p}"
+            )
+            if has_bocado:
+                bocado_weight = st.number_input(
+                    "Bocado weight (g)",
+                    min_value=1.0,
+                    key=f"field_bocado_weight_{p}",
+                    help="Typical weight per bocado piece"
+                )
+            else:
+                bocado_weight = None
+
         # ── Ingredient lines ──────────────────────────────────────────────────
         st.markdown("#### Ingredients")
         st.caption(
@@ -378,6 +408,10 @@ multiples — no numeric size codes needed.
                         "ref_batch_size": ref_batch_size or None,
                         "ref_prep_hours": ref_prep_hours or None,
                         "ref_oven_hours": ref_oven_hours or None,
+                        "has_individual":     has_individual,
+                        "has_bocado":         has_bocado,
+                        "individual_weight_g": individual_weight,
+                        "bocado_weight_g":    bocado_weight,
                     })
                     clean_lines = [
                         {"ingredient_id": l["ingredient_id"], "amount": l["amount"]}
@@ -438,6 +472,10 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_batch_size_{p}"] = 20
         st.session_state[f"field_prep_hours_{p}"] = 1.0
         st.session_state[f"field_oven_hours_{p}"] = 1.0
+        st.session_state[f"field_has_individual_{p}"] = False
+        st.session_state[f"field_individual_weight_{p}"] = 100.0
+        st.session_state[f"field_has_bocado_{p}"] = False
+        st.session_state[f"field_bocado_weight_{p}"] = 30.0
     else:
         recipe = db.get_recipe(recipe_id)
 
@@ -461,6 +499,10 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_batch_size_{p}"] = int(recipe.get("ref_batch_size") or 20)
         st.session_state[f"field_prep_hours_{p}"] = float(recipe.get("ref_prep_hours") or 1.0)
         st.session_state[f"field_oven_hours_{p}"] = float(recipe.get("ref_oven_hours") or 1.0)
+        st.session_state[f"field_has_individual_{p}"] = bool(recipe.get("has_individual"))
+        st.session_state[f"field_individual_weight_{p}"] = float(recipe.get("individual_weight_g") or 100)
+        st.session_state[f"field_has_bocado_{p}"] = bool(recipe.get("has_bocado"))
+        st.session_state[f"field_bocado_weight_{p}"] = float(recipe.get("bocado_weight_g") or 30)
 
     st.rerun()
 
