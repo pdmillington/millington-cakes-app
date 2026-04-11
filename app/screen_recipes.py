@@ -435,9 +435,9 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_weight_{p}"]    = 0.0
         st.session_state[f"field_portions_{p}"]  = 0
         st.session_state[f"field_notes_{p}"]     = ""
-        st.session_state[f"field_batch_size_{p}"] = 0
-        st.session_state[f"field_prep_hours_{p}"] = 0.0
-        st.session_state[f"field_oven_hours_{p}"] = 0.0
+        st.session_state[f"field_batch_size_{p}"] = 20
+        st.session_state[f"field_prep_hours_{p}"] = 1.0
+        st.session_state[f"field_oven_hours_{p}"] = 1.0
     else:
         recipe = db.get_recipe(recipe_id)
 
@@ -458,9 +458,9 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_height_{p}"]    = float(recipe.get("ref_height_cm") or 0)
         st.session_state[f"field_weight_{p}"]    = float(recipe.get("ref_weight_kg") or 0)
         st.session_state[f"field_portions_{p}"]  = int(recipe.get("ref_portions") or 0)
-        st.session_state[f"field_batch_size_{p}"] = int(recipe.get("ref_batch_size") or 0)
-        st.session_state[f"field_prep_hours_{p}"] = float(recipe.get("ref_prep_hours") or 0)
-        st.session_state[f"field_oven_hours_{p}"] = float(recipe.get("ref_oven_hours") or 0)
+        st.session_state[f"field_batch_size_{p}"] = int(recipe.get("ref_batch_size") or 20)
+        st.session_state[f"field_prep_hours_{p}"] = float(recipe.get("ref_prep_hours") or 1.0)
+        st.session_state[f"field_oven_hours_{p}"] = float(recipe.get("ref_oven_hours") or 1.0)
 
     st.rerun()
 
