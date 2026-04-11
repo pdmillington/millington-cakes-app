@@ -68,10 +68,14 @@ multiples — no numeric size codes needed.
     recipes     = db.get_recipes()
     cake_codes  = db.get_cake_codes()
     ingredients = db.get_ingredients()
+    settings    = db.get_settings()
 
     code_options = {f"{cc['code']} — {cc['name']}": cc['id'] for cc in cake_codes}
     code_by_id   = {cc['id']: cc['code'] for cc in cake_codes}
     ing_options  = {i['name']: i['id'] for i in ingredients}
+
+    ws_batch_ind = int(settings.get("ws_batch_individual") or 100)
+    ws_batch_boc = int(settings.get("ws_batch_bocado") or 250)
 
     # ── Recipe list ───────────────────────────────────────────────────────────
     with col_list:
@@ -209,60 +213,16 @@ multiples — no numeric size codes needed.
             placeholder="Optional — storage instructions, allergen notes, etc."
         )
 
-        # ── Labour reference times ────────────────────────────────────────────
-        with st.expander("⏱ Labour reference times"):
+        # ── Formats & labour ──────────────────────────────────────────────────
+        with st.expander("📦 Formats & labour times"):
             st.caption(
-                "Large format: how long does a batch of 20 take? "
-                "Small formats: how long does a batch of 100 individuals "
-                "or 250 bocados take? Used as defaults in the calculator."
+                "Enable smaller formats and set production batch times. "
+                "The calculator uses these to derive per-unit labour costs."
             )
-            st.markdown("**Large format (reference batch of 20)**")
-            lb1, lb2, lb3 = st.columns(3)
-            with lb1:
-                ref_batch_size = st.number_input(
-                    "Batch size", min_value=0,
-                    key=f"field_batch_size_{p}",
-                    help="Number of cakes in your reference production run"
-                )
-            with lb2:
-                ref_prep_hours = st.number_input(
-                    "Prep hours", min_value=0.0,
-                    key=f"field_prep_hours_{p}",
-                    help="Active prep time for the whole batch"
-                )
-            with lb3:
-                ref_oven_hours = st.number_input(
-                    "Oven hours", min_value=0.0,
-                    key=f"field_oven_hours_{p}",
-                    help="Oven time for the whole batch"
-                )
 
-            st.markdown(
-                "**Small formats** (Individual: batch of 100 · "
-                "Bocado: batch of 250)"
-            )
-            sb1, sb2 = st.columns(2)
-            with sb1:
-                small_prep_hours = st.number_input(
-                    "Prep hours (small batch)", min_value=0.0,
-                    key=f"field_small_prep_{p}",
-                    help="Prep time for 100 individuals or 250 bocados"
-                )
-            with sb2:
-                small_oven_hours = st.number_input(
-                    "Oven hours (small batch)", min_value=0.0,
-                    key=f"field_small_oven_{p}",
-                    help="Oven time for 100 individuals or 250 bocados"
-                )
-
-        # ── Format availability ───────────────────────────────────────────────
-        with st.expander("📦 Format availability"):
-            st.caption(
-                "Enable smaller formats for this recipe in the calculator. "
-                "Small format labour times must be set above."
-            )
+            # ── Format availability ───────────────────────────────────────────
             has_individual = st.checkbox(
-                "Available as Individual (~100g)",
+                "Available as Individual",
                 key=f"field_has_individual_{p}"
             )
             if has_individual:
@@ -275,7 +235,7 @@ multiples — no numeric size codes needed.
                 individual_weight = None
 
             has_bocado = st.checkbox(
-                "Available as Bocado (~30g)",
+                "Available as Bocado",
                 key=f"field_has_bocado_{p}"
             )
             if has_bocado:
@@ -286,6 +246,80 @@ multiples — no numeric size codes needed.
                 )
             else:
                 bocado_weight = None
+
+            # ── Labour table ──────────────────────────────────────────────────
+            st.markdown("**Labour reference times**")
+
+            # Header
+            lh0, lh1, lh2, lh3 = st.columns([1.2, 0.8, 1, 1])
+            lh0.markdown("**Format**")
+            lh1.markdown("**Batch**")
+            lh2.markdown("**Prep hrs**")
+            lh3.markdown("**Oven hrs**")
+
+            # Standard row — always shown
+            ls0, ls1, ls2, ls3 = st.columns([1.2, 0.8, 1, 1])
+            ls0.markdown("Standard")
+            with ls1:
+                ref_batch_size = st.number_input(
+                    "batch_std", min_value=0,
+                    label_visibility="collapsed",
+                    key=f"field_batch_size_{p}"
+                )
+            with ls2:
+                ref_prep_hours = st.number_input(
+                    "prep_std", min_value=0.0, step=0.25,
+                    label_visibility="collapsed",
+                    key=f"field_prep_hours_{p}"
+                )
+            with ls3:
+                ref_oven_hours = st.number_input(
+                    "oven_std", min_value=0.0, step=0.25,
+                    label_visibility="collapsed",
+                    key=f"field_oven_hours_{p}"
+                )
+
+            # Individual row — only if has_individual ticked
+            if has_individual:
+                li0, li1, li2, li3 = st.columns([1.2, 0.8, 1, 1])
+                li0.markdown("Individual")
+                li1.markdown(f"`{ws_batch_ind}`")
+                with li2:
+                    small_prep_hours = st.number_input(
+                        "prep_ind", min_value=0.0, step=0.25,
+                        label_visibility="collapsed",
+                        key=f"field_small_prep_{p}"
+                    )
+                with li3:
+                    small_oven_hours = st.number_input(
+                        "oven_ind", min_value=0.0, step=0.25,
+                        label_visibility="collapsed",
+                        key=f"field_small_oven_{p}"
+                    )
+            else:
+                small_prep_hours = 0.0
+                small_oven_hours = 0.0
+
+            # Bocado row — only if has_bocado ticked
+            if has_bocado:
+                lb0, lb1, lb2, lb3 = st.columns([1.2, 0.8, 1, 1])
+                lb0.markdown("Bocado")
+                lb1.markdown(f"`{ws_batch_boc}`")
+                with lb2:
+                    bocado_prep_hours = st.number_input(
+                        "prep_boc", min_value=0.0, step=0.25,
+                        label_visibility="collapsed",
+                        key=f"field_bocado_prep_{p}"
+                    )
+                with lb3:
+                    bocado_oven_hours = st.number_input(
+                        "oven_boc", min_value=0.0, step=0.25,
+                        label_visibility="collapsed",
+                        key=f"field_bocado_oven_{p}"
+                    )
+            else:
+                bocado_prep_hours = 0.0
+                bocado_oven_hours = 0.0
 
         # ── Ingredient lines ──────────────────────────────────────────────────
         st.markdown("#### Ingredients")
@@ -404,25 +438,27 @@ multiples — no numeric size codes needed.
                     st.error(error)
                 else:
                     saved = db.save_recipe({
-                        "id":                   None if is_new else selected_id,
-                        "name":                 name,
-                        "cake_code_id":         selected_code_id,
-                        "version":              version.strip().zfill(2),
-                        "size_type":            size_type,
-                        "ref_diameter_cm":      ref_diameter,
-                        "ref_height_cm":        ref_height,
-                        "ref_weight_kg":        ref_weight,
-                        "ref_portions":         ref_portions,
-                        "notes":                notes or None,
-                        "ref_batch_size":       ref_batch_size or None,
-                        "ref_prep_hours":       ref_prep_hours or None,
-                        "ref_oven_hours":       ref_oven_hours or None,
+                        "id":                     None if is_new else selected_id,
+                        "name":                   name,
+                        "cake_code_id":           selected_code_id,
+                        "version":                version.strip().zfill(2),
+                        "size_type":              size_type,
+                        "ref_diameter_cm":        ref_diameter,
+                        "ref_height_cm":          ref_height,
+                        "ref_weight_kg":          ref_weight,
+                        "ref_portions":           ref_portions,
+                        "notes":                  notes or None,
+                        "ref_batch_size":         ref_batch_size or None,
+                        "ref_prep_hours":         ref_prep_hours or None,
+                        "ref_oven_hours":         ref_oven_hours or None,
+                        "has_individual":         has_individual,
+                        "has_bocado":             has_bocado,
+                        "individual_weight_g":    individual_weight,
+                        "bocado_weight_g":        bocado_weight,
                         "small_batch_prep_hours": small_prep_hours or None,
                         "small_batch_oven_hours": small_oven_hours or None,
-                        "has_individual":       has_individual,
-                        "has_bocado":           has_bocado,
-                        "individual_weight_g":  individual_weight,
-                        "bocado_weight_g":      bocado_weight,
+                        "bocado_batch_prep_hours": bocado_prep_hours or None,
+                        "bocado_batch_oven_hours": bocado_oven_hours or None,
                     })
                     clean_lines = [
                         {"ingredient_id": l["ingredient_id"],
@@ -465,24 +501,26 @@ def _load_recipe(recipe_id: str, code_options: dict):
     p = recipe_id
 
     if recipe_id == "new":
-        st.session_state[f"field_name_{p}"]              = ""
-        st.session_state[f"field_code_{p}"]              = "— no code assigned —"
-        st.session_state[f"field_version_{p}"]           = "01"
-        st.session_state[f"field_size_type_{p}"]         = "diameter"
-        st.session_state[f"field_diameter_{p}"]          = 0.0
-        st.session_state[f"field_height_{p}"]            = 0.0
-        st.session_state[f"field_weight_{p}"]            = 0.0
-        st.session_state[f"field_portions_{p}"]          = 0
-        st.session_state[f"field_notes_{p}"]             = ""
-        st.session_state[f"field_batch_size_{p}"]        = 20
-        st.session_state[f"field_prep_hours_{p}"]        = 1.0
-        st.session_state[f"field_oven_hours_{p}"]        = 1.0
-        st.session_state[f"field_small_prep_{p}"]        = 0.0
-        st.session_state[f"field_small_oven_{p}"]        = 0.0
-        st.session_state[f"field_has_individual_{p}"]    = False
-        st.session_state[f"field_individual_weight_{p}"] = 100.0
-        st.session_state[f"field_has_bocado_{p}"]        = False
-        st.session_state[f"field_bocado_weight_{p}"]     = 30.0
+        st.session_state[f"field_name_{p}"]               = ""
+        st.session_state[f"field_code_{p}"]               = "— no code assigned —"
+        st.session_state[f"field_version_{p}"]            = "01"
+        st.session_state[f"field_size_type_{p}"]          = "diameter"
+        st.session_state[f"field_diameter_{p}"]           = 0.0
+        st.session_state[f"field_height_{p}"]             = 0.0
+        st.session_state[f"field_weight_{p}"]             = 0.0
+        st.session_state[f"field_portions_{p}"]           = 0
+        st.session_state[f"field_notes_{p}"]              = ""
+        st.session_state[f"field_batch_size_{p}"]         = 20
+        st.session_state[f"field_prep_hours_{p}"]         = 1.0
+        st.session_state[f"field_oven_hours_{p}"]         = 1.0
+        st.session_state[f"field_has_individual_{p}"]     = False
+        st.session_state[f"field_individual_weight_{p}"]  = 100.0
+        st.session_state[f"field_small_prep_{p}"]         = 0.0
+        st.session_state[f"field_small_oven_{p}"]         = 0.0
+        st.session_state[f"field_has_bocado_{p}"]         = False
+        st.session_state[f"field_bocado_weight_{p}"]      = 30.0
+        st.session_state[f"field_bocado_prep_{p}"]        = 0.0
+        st.session_state[f"field_bocado_oven_{p}"]        = 0.0
     else:
         recipe = db.get_recipe(recipe_id)
 
@@ -506,12 +544,14 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_batch_size_{p}"]        = int(recipe.get("ref_batch_size") or 20)
         st.session_state[f"field_prep_hours_{p}"]        = float(recipe.get("ref_prep_hours") or 1.0)
         st.session_state[f"field_oven_hours_{p}"]        = float(recipe.get("ref_oven_hours") or 1.0)
-        st.session_state[f"field_small_prep_{p}"]        = float(recipe.get("small_batch_prep_hours") or 0.0)
-        st.session_state[f"field_small_oven_{p}"]        = float(recipe.get("small_batch_oven_hours") or 0.0)
         st.session_state[f"field_has_individual_{p}"]    = bool(recipe.get("has_individual"))
         st.session_state[f"field_individual_weight_{p}"] = float(recipe.get("individual_weight_g") or 100)
+        st.session_state[f"field_small_prep_{p}"]        = float(recipe.get("small_batch_prep_hours") or 0.0)
+        st.session_state[f"field_small_oven_{p}"]        = float(recipe.get("small_batch_oven_hours") or 0.0)
         st.session_state[f"field_has_bocado_{p}"]        = bool(recipe.get("has_bocado"))
         st.session_state[f"field_bocado_weight_{p}"]     = float(recipe.get("bocado_weight_g") or 30)
+        st.session_state[f"field_bocado_prep_{p}"]       = float(recipe.get("bocado_batch_prep_hours") or 0.0)
+        st.session_state[f"field_bocado_oven_{p}"]       = float(recipe.get("bocado_batch_oven_hours") or 0.0)
 
     st.rerun()
 
