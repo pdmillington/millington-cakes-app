@@ -1,6 +1,6 @@
 # screen_settings.py
 import streamlit as st
-import database as db
+import millington_db as db
 
 
 def screen_settings():

@@ -18,7 +18,7 @@
 # =============================================================================
 
 import streamlit as st
-import database as db
+import millington_db as db
 
 
 # Unit conversion to base units (g for weight, ml for volume)

@@ -13,7 +13,7 @@
 # =============================================================================
 
 import streamlit as st
-import database as db
+import millington_db as db
 from screen_recipes import screen_recipes
 from screen_calculator import screen_calculator
 from screen_settings import screen_settings
