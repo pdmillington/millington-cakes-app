@@ -61,17 +61,20 @@ def screen_calculator():
     ref_prep_hours = float(recipe.get("ref_prep_hours") or 1.0)
     ref_oven_hours = float(recipe.get("ref_oven_hours") or 1.0)
 
-    # Pre-compute reference weight in grams for Individual/Bocado scaling
-    # For diameter recipes: approximate from volume using density 0.35 g/cm³
-    # For weight recipes: direct conversion
-    # For portion recipes: assume ref_portions × avg portion weight 150g
-    if size_type == "diameter":
-        h = ref_height if ref_height else 5.0
-        ref_weight_g = pi * (ref_diameter / 2) ** 2 * h * 0.35
-    elif size_type == "weight":
-        ref_weight_g = ref_weight_kg * 1000
+    # Estimate finished weight from ingredient sum
+    # Only needed if recipe has Individual or Bocado formats
+    if has_individual or has_bocado:
+        _lines_for_weight = db.get_recipe_lines(recipe["id"])
+        _weight_result    = db.estimate_recipe_weight(
+            _lines_for_weight, ingredients
+        )
+        ref_weight_g  = _weight_result["weight_g"]
+        _weight_notes = _weight_result["notes"]
+        _weight_excl  = _weight_result["excluded"]
     else:
-        ref_weight_g = ref_portions * 150.0
+        ref_weight_g  = 0.0
+        _weight_notes = []
+        _weight_excl  = []
 
     # ── Section 2: Channel ────────────────────────────────────────────────────
     st.markdown("### 2 — Price channel")
@@ -169,6 +172,16 @@ def screen_calculator():
             f"reference cake ≈ {ref_weight_g:.0f}g — "
             f"scale: **{scale:.4f}×**"
         )
+        if _weight_notes or _weight_excl:
+            with st.expander("Weight estimate detail"):
+                st.caption(f"Estimated recipe weight: {ref_weight_g:.0f}g")
+                for note in _weight_notes:
+                    st.caption(f"  {note}")
+                if _weight_excl:
+                    st.warning(
+                        f"Excluded (unknown unit weight): "
+                        f"{', '.join(_weight_excl)}"
+                    )
 
     else:  # Bocado
         tier       = tier_map.get("BO", {})
@@ -182,6 +195,16 @@ def screen_calculator():
             f"reference cake ≈ {ref_weight_g:.0f}g — "
             f"scale: **{scale:.4f}×**"
         )
+        if _weight_notes or _weight_excl:
+            with st.expander("Weight estimate detail"):
+                st.caption(f"Estimated recipe weight: {ref_weight_g:.0f}g")
+                for note in _weight_notes:
+                    st.caption(f"  {note}")
+                if _weight_excl:
+                    st.warning(
+                        f"Excluded (unknown unit weight): "
+                        f"{', '.join(_weight_excl)}"
+                    )
 
     st.divider()
 
