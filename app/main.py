@@ -16,6 +16,7 @@ import streamlit as st
 import database as db
 from screen_recipes import screen_recipes
 from screen_calculator import screen_calculator
+from screen_settings import screen_settings
 
 # -----------------------------------------------------------------------------
 # Page config — must be the first Streamlit call in the file
@@ -460,16 +461,6 @@ def _add_consumable_form():
 def screen_packaging():
     st.title("Packaging presets")
     st.caption("Saved combinations used in the cost calculator")
-    st.info("Coming soon.")
-
-
-# -----------------------------------------------------------------------------
-# Screen: Settings (placeholder)
-# -----------------------------------------------------------------------------
-
-def screen_settings():
-    st.title("Settings")
-    st.caption("Business-wide defaults used in calculations")
     st.info("Coming soon.")
 
 
