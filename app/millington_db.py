@@ -175,7 +175,8 @@ def save_ingredient(record: dict) -> dict:
     record["name"] = _normalise_name(record.get("name", ""))
     record = _compute_ingredient_cost(record)
     if record.get("id"):
-        result = sb.table("ingredients").update(record).eq("id", record["id"]).select().execute()
+        sb.table("ingredients").update(record).eq("id", record["id"]).execute()
+        result = sb.table("ingredients").select("*").eq("id", record["id"]).execute()
     else:
         result = sb.table("ingredients").insert(record).execute()
     return result.data[0] if result.data else {}
@@ -235,7 +236,8 @@ def save_consumable(record: dict) -> dict:
     record["name"] = _normalise_name(record.get("name", ""))
     record = _compute_consumable_cost(record)
     if record.get("id"):
-        result = sb.table("consumables").update(record).eq("id", record["id"]).select().execute()
+        sb.table("consumables").update(record).eq("id", record["id"]).execute()
+        result = sb.table("consumables").select("*").eq("id", record["id"]).execute()
     else:
         result = sb.table("consumables").insert(record).execute()
     return result.data[0] if result.data else {}
@@ -276,7 +278,8 @@ def get_recipe(recipe_id: str) -> dict:
 def save_recipe(record: dict) -> dict:
     sb = get_client()
     if record.get("id"):
-        result = sb.table("recipes").update(record).eq("id", record["id"]).select().execute()
+        sb.table("recipes").update(record).eq("id", record["id"]).execute()
+        result = sb.table("recipes").select("*").eq("id", record["id"]).execute()
     else:
         result = sb.table("recipes").insert(record).execute()
     return result.data[0] if result.data else {}
@@ -319,13 +322,8 @@ def get_recipe_lines(recipe_id: str) -> list[dict]:
 def save_recipe_line(record: dict) -> dict:
     sb = get_client()
     if record.get("id"):
-        result = (
-            sb.table("recipe_ingredient_lines")
-            .update(record)
-            .eq("id", record["id"])
-            .select()
-            .execute()
-        )
+        sb.table("recipe_ingredient_lines").update(record).eq("id", record["id"]).execute()
+        result = sb.table("recipe_ingredient_lines").select("*").eq("id", record["id"]).execute()
     else:
         result = sb.table("recipe_ingredient_lines").insert(record).execute()
     return result.data[0] if result.data else {}
@@ -394,7 +392,8 @@ def get_skus() -> list[dict]:
 def save_sku(record: dict) -> dict:
     sb = get_client()
     if record.get("id"):
-        result = sb.table("skus").update(record).eq("id", record["id"]).select().execute()
+        sb.table("skus").update(record).eq("id", record["id"]).execute()
+        result = sb.table("skus").select("*").eq("id", record["id"]).execute()
     else:
         result = sb.table("skus").insert(record).execute()
     return result.data[0] if result.data else {}
@@ -453,13 +452,8 @@ def get_settings() -> dict:
 def save_settings(record: dict) -> dict:
     sb = get_client()
     if record.get("id"):
-        result = (
-            sb.table("settings")
-            .update(record)
-            .eq("id", record["id"])
-            .select()
-            .execute()
-        )
+        sb.table("settings").update(record).eq("id", record["id"]).execute()
+        result = sb.table("settings").select("*").eq("id", record["id"]).execute()
     else:
         result = sb.table("settings").insert(record).execute()
     return result.data[0] if result.data else {}
