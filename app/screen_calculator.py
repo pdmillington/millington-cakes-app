@@ -33,7 +33,7 @@ def screen_calculator():
     ws_batch_boc    = int(settings.get("ws_batch_bocado") or 250)
     rt_batch_large  = int(settings.get("rt_batch_large") or 1)
     rt_batch_ind    = int(settings.get("rt_batch_individual") or 4)
-    rt_batch_boc    = int(settings.get("rt_batch_bocado") or 10)
+    rt_batch_boc    = int(settings.get("rt_batch_bocado") or 25)
     ind_weight_g    = float(settings.get("individual_weight_g") or 100)
     boc_weight_g    = float(settings.get("bocado_weight_g") or 30)
 
@@ -57,20 +57,28 @@ def screen_calculator():
     has_bocado     = bool(recipe.get("has_bocado"))
     ind_weight     = float(recipe.get("individual_weight_g") or ind_weight_g)
     boc_weight     = float(recipe.get("bocado_weight_g") or boc_weight_g)
+
+    # Large format labour reference
     ref_batch_size = float(recipe.get("ref_batch_size") or 20)
     ref_prep_hours = float(recipe.get("ref_prep_hours") or 1.0)
     ref_oven_hours = float(recipe.get("ref_oven_hours") or 1.0)
 
-    # Estimate finished weight from ingredient sum
-    # Only needed if recipe has Individual or Bocado formats
+    # Small format labour reference
+    # These are times for 100 individuals or 250 bocados
+    small_prep_hours = float(recipe.get("small_batch_prep_hours") or 0.0)
+    small_oven_hours = float(recipe.get("small_batch_oven_hours") or 0.0)
+
+    # Reference batch sizes for small formats
+    ind_ref_batch = ws_batch_ind   # 100
+    boc_ref_batch = ws_batch_boc   # 250
+
+    # Pre-compute reference weight in grams for Individual/Bocado scaling
     if has_individual or has_bocado:
         _lines_for_weight = db.get_recipe_lines(recipe["id"])
-        _weight_result    = db.estimate_recipe_weight(
-            _lines_for_weight
-        )
-        ref_weight_g  = _weight_result["weight_g"]
-        _weight_notes = _weight_result["notes"]
-        _weight_excl  = _weight_result["excluded"]
+        _weight_result    = db.estimate_recipe_weight(_lines_for_weight)
+        ref_weight_g      = _weight_result["weight_g"]
+        _weight_notes     = _weight_result["notes"]
+        _weight_excl      = _weight_result["excluded"]
     else:
         ref_weight_g  = 0.0
         _weight_notes = []
@@ -103,12 +111,17 @@ def screen_calculator():
             "Format", formats, horizontal=True, key="calc_format"
         )
 
-    # ── Determine scale, batch, intensity and margin from format + channel ────
+    # ── Determine parameters from format + channel ────────────────────────────
     if selected_format == "Standard":
         tier       = tier_map.get("LA", {})
         intensity  = float(tier.get("labour_intensity") or 1.0)
         batch_size = ws_batch_large if channel == "Wholesale" else rt_batch_large
         margin     = ws_margin if channel == "Wholesale" else rt_margin_large
+
+        # These are the labour reference times for standard format
+        labour_ref_prep  = ref_prep_hours
+        labour_ref_oven  = ref_oven_hours
+        labour_ref_batch = ref_batch_size
 
         if size_type == "diameter":
             st.markdown("**Size**")
@@ -150,7 +163,7 @@ def screen_calculator():
             st.info(f"Weight scaling: {target_weight:.2f} / "
                     f"{ref_weight_kg:.2f} = **{scale:.3f}×**")
 
-        else:  # portions
+        else:
             target_portions = st.number_input(
                 "Portions", min_value=1,
                 value=ref_portions, key="calc_portions"
@@ -165,12 +178,19 @@ def screen_calculator():
         intensity  = float(tier.get("labour_intensity") or 1.5)
         batch_size = ws_batch_ind if channel == "Wholesale" else rt_batch_ind
         margin     = ws_margin if channel == "Wholesale" else rt_margin_ind
-        scale              = ind_weight / ref_weight_g
+
+        # Use small format labour reference (100 individuals)
+        labour_ref_prep  = small_prep_hours if small_prep_hours else ref_prep_hours
+        labour_ref_oven  = small_oven_hours if small_oven_hours else ref_oven_hours
+        labour_ref_batch = ind_ref_batch  # 100
+
+        scale              = ind_weight / ref_weight_g if ref_weight_g else 0
         size_labour_factor = 1.0
+
         st.info(
             f"Individual: {ind_weight:.0f}g portion — "
             f"reference cake ≈ {ref_weight_g:.0f}g — "
-            f"scale: **{scale:.4f}×**"
+            f"ingredient scale: **{scale:.4f}×**"
         )
         if _weight_notes or _weight_excl:
             with st.expander("Weight estimate detail"):
@@ -182,18 +202,32 @@ def screen_calculator():
                         f"Excluded (unknown unit weight): "
                         f"{', '.join(_weight_excl)}"
                     )
+        if not small_prep_hours:
+            st.warning(
+                "⚠️ No small format labour times set — "
+                "using large format times as fallback. "
+                "Add small batch prep/oven hours in the recipe editor "
+                "for accurate individual pricing."
+            )
 
     else:  # Bocado
         tier       = tier_map.get("BO", {})
         intensity  = float(tier.get("labour_intensity") or 2.5)
         batch_size = ws_batch_boc if channel == "Wholesale" else rt_batch_boc
         margin     = ws_margin if channel == "Wholesale" else rt_margin_boc
-        scale              = boc_weight / ref_weight_g
+
+        # Use small format labour reference (250 bocados)
+        labour_ref_prep  = small_prep_hours if small_prep_hours else ref_prep_hours
+        labour_ref_oven  = small_oven_hours if small_oven_hours else ref_oven_hours
+        labour_ref_batch = boc_ref_batch  # 250
+
+        scale              = boc_weight / ref_weight_g if ref_weight_g else 0
         size_labour_factor = 1.0
+
         st.info(
             f"Bocado: {boc_weight:.0f}g — "
             f"reference cake ≈ {ref_weight_g:.0f}g — "
-            f"scale: **{scale:.4f}×**"
+            f"ingredient scale: **{scale:.4f}×**"
         )
         if _weight_notes or _weight_excl:
             with st.expander("Weight estimate detail"):
@@ -205,6 +239,13 @@ def screen_calculator():
                         f"Excluded (unknown unit weight): "
                         f"{', '.join(_weight_excl)}"
                     )
+        if not small_prep_hours:
+            st.warning(
+                "⚠️ No small format labour times set — "
+                "using large format times as fallback. "
+                "Add small batch prep/oven hours in the recipe editor "
+                "for accurate bocado pricing."
+            )
 
     st.divider()
 
@@ -298,26 +339,31 @@ def screen_calculator():
                 missing_prices.append(ing_name)
 
         # ── Labour cost per unit ──────────────────────────────────────────────
-        # Total time for a batch of `batch_size` scales as power law
-        # from the reference batch time.
-        # Per-unit cost = total batch time / batch_size
+        # Formula:
+        #   Total batch time scales as power law from the reference batch.
+        #   Per-unit cost = total batch time / batch_size
         #
-        # qty_factor = (batch_size / ref_batch_size)^power / batch_size
+        #   qty_factor = (batch_size / ref_batch)^power / batch_size
         #
-        # Wholesale (batch_size=20, ref=20):
-        #   (20/20)^0.7 / 20 = 1.0/20 = 0.05hr/cake
-        # Retail (batch_size=1, ref=20):
-        #   (1/20)^0.7 / 1  = 0.096hr/cake
+        # For standard wholesale (batch=20, ref=20):
+        #   (20/20)^0.7 / 20 = 1/20 = 0.05hr/cake
+        #
+        # For individual wholesale (batch=100, ref=100):
+        #   (100/100)^0.7 / 100 = 1/100 = 0.01hr/individual
+        #
+        # For individual retail (batch=4, ref=100):
+        #   (4/100)^0.7 / 4 = 0.193/4 = 0.048hr/individual
 
-        if ref_batch_size > 0:
+        if labour_ref_batch > 0:
             qty_factor = (
-                (batch_size / ref_batch_size) ** labour_power
+                (batch_size / labour_ref_batch) ** labour_power
             ) / batch_size
         else:
             qty_factor = 1.0 / max(batch_size, 1)
 
-        prep_per_unit = ref_prep_hours * qty_factor * size_labour_factor * intensity
-        oven_per_unit = ref_oven_hours * qty_factor
+        prep_per_unit = (labour_ref_prep * qty_factor
+                         * size_labour_factor * intensity)
+        oven_per_unit = labour_ref_oven * qty_factor
 
         labour_cost = prep_per_unit * labour_rate
         oven_cost   = oven_per_unit * oven_rate
@@ -358,7 +404,6 @@ def screen_calculator():
                 "Ingredient cost is understated."
             )
 
-        # Headline per-unit metrics
         col_a, col_b = st.columns(2)
         with col_a:
             st.metric("Cost per cake", f"€ {cost_per_unit:.2f}")
@@ -370,7 +415,6 @@ def screen_calculator():
                 help=f"Cost × {margin:.1f}× margin"
             )
 
-        # Cost breakdown
         st.markdown("**Cost breakdown**")
         col_c, col_d, col_e, col_f = st.columns(4)
         col_c.metric("Ingredients", f"€ {ingredient_cost:.4f}")
@@ -378,7 +422,6 @@ def screen_calculator():
         col_e.metric("Oven",        f"€ {oven_cost:.4f}")
         col_f.metric("Packaging",   f"€ {packaging_cost:.4f}")
 
-        # Order total if quantity > 1
         if order_qty > 1:
             st.divider()
             st.markdown(f"**Total for {order_qty} unit(s)**")
@@ -386,30 +429,29 @@ def screen_calculator():
             col_g.metric("Total cost",  f"€ {cost_per_unit * order_qty:.2f}")
             col_h.metric("Total price", f"€ {price_per_unit * order_qty:.2f}")
 
-        # Labour detail — for sense-checking
         with st.expander("Labour calculation detail"):
             st.markdown(f"""
-**Reference:** {ref_batch_size:.0f} cakes — 
-{ref_prep_hours:.1f}h prep · {ref_oven_hours:.1f}h oven
+**Format:** {selected_format} · **Channel:** {channel}
 
-**Pricing assumption ({channel}):** batch of {batch_size} cakes
+**Labour reference:** {labour_ref_batch:.0f} cakes — 
+{labour_ref_prep:.2f}h prep · {labour_ref_oven:.2f}h oven
+
+**Pricing batch:** {batch_size} cakes
 
 **Formula:** (batch / ref_batch)^power / batch × intensity × size_factor
 
-- Quantity factor: ({batch_size} / {ref_batch_size:.0f})^{labour_power} 
+- qty_factor: ({batch_size} / {labour_ref_batch:.0f})^{labour_power} 
   / {batch_size} = **{qty_factor:.5f}**
 - Size labour factor: **{size_labour_factor:.3f}**
 - Tier intensity: **{intensity:.1f}×**
-- Prep per cake: {ref_prep_hours:.2f} × {qty_factor:.5f} × 
+- Prep per unit: {labour_ref_prep:.2f} × {qty_factor:.5f} × 
   {size_labour_factor:.3f} × {intensity:.1f} = **{prep_per_unit:.5f}h**
-- Oven per cake: {ref_oven_hours:.2f} × {qty_factor:.5f} = 
+- Oven per unit: {labour_ref_oven:.2f} × {qty_factor:.5f} = 
   **{oven_per_unit:.5f}h**
-- Labour cost: {prep_per_unit:.5f}h × €{labour_rate:.2f} = 
-  **€ {labour_cost:.4f}**
-- Oven cost: {oven_per_unit:.5f}h × €{oven_rate:.2f} = 
-  **€ {oven_cost:.4f}**
+- Labour: {prep_per_unit:.5f}h × €{labour_rate:.2f} = **€ {labour_cost:.4f}**
+- Oven: {oven_per_unit:.5f}h × €{oven_rate:.2f} = **€ {oven_cost:.4f}**
 - Margin: **{margin:.1f}×** ({channel})
-- Ingredient scale factor: **{scale:.5f}×**
+- Ingredient scale: **{scale:.5f}×**
             """)
 
         st.caption(
