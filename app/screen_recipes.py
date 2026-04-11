@@ -215,6 +215,35 @@ multiples — no numeric size codes needed.
             placeholder="Optional — storage instructions, allergen notes, etc."
         )
 
+        # ── Labour reference times ────────────────────────────────────────────────
+        with st.expander("⏱ Labour reference times (optional)"):
+            st.caption(
+                "Enter how long a reference batch takes. "
+                "The calculator uses these as defaults, editable per session."
+            )
+            lt1, lt2, lt3 = st.columns(3)
+            with lt1:
+                ref_batch_size = st.number_input(
+                    "Reference batch size",
+                    min_value=0,
+                    key=f"field_batch_size_{p}",
+                    help="How many cakes in your reference production run"
+                )
+            with lt2:
+                ref_prep_hours = st.number_input(
+                    "Prep hours (batch)",
+                    min_value=0.0,
+                    key=f"field_prep_hours_{p}",
+                    help="Active prep time for the whole batch"
+                )
+            with lt3:
+                ref_oven_hours = st.number_input(
+                    "Oven hours (batch)",
+                    min_value=0.0,
+                    key=f"field_oven_hours_{p}",
+                    help="Oven time for the whole batch"
+                )
+
         # ── Ingredient lines ──────────────────────────────────────────────────
         st.markdown("#### Ingredients")
         st.caption(
@@ -346,6 +375,9 @@ multiples — no numeric size codes needed.
                         "ref_weight_kg":   ref_weight,
                         "ref_portions":    ref_portions,
                         "notes":           notes or None,
+                        "ref_batch_size": ref_batch_size or None,
+                        "ref_prep_hours": ref_prep_hours or None,
+                        "ref_oven_hours": ref_oven_hours or None,
                     })
                     clean_lines = [
                         {"ingredient_id": l["ingredient_id"], "amount": l["amount"]}
@@ -403,6 +435,9 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_weight_{p}"]    = 0.0
         st.session_state[f"field_portions_{p}"]  = 0
         st.session_state[f"field_notes_{p}"]     = ""
+        st.session_state[f"field_batch_size_{p}"] = 0
+        st.session_state[f"field_prep_hours_{p}"] = 0.0
+        st.session_state[f"field_oven_hours_{p}"] = 0.0
     else:
         recipe = db.get_recipe(recipe_id)
 
@@ -423,6 +458,9 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_height_{p}"]    = float(recipe.get("ref_height_cm") or 0)
         st.session_state[f"field_weight_{p}"]    = float(recipe.get("ref_weight_kg") or 0)
         st.session_state[f"field_portions_{p}"]  = int(recipe.get("ref_portions") or 0)
+        st.session_state[f"field_batch_size_{p}"] = int(recipe.get("ref_batch_size") or 0)
+        st.session_state[f"field_prep_hours_{p}"] = float(recipe.get("ref_prep_hours") or 0)
+        st.session_state[f"field_oven_hours_{p}"] = float(recipe.get("ref_oven_hours") or 0)
 
     st.rerun()
 
