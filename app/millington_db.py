@@ -72,31 +72,23 @@ _UNIT_IGNORE = {
 }
 
 
-def estimate_recipe_weight(lines: list[dict], ingredients: list[dict]) -> dict:
+def estimate_recipe_weight(lines: list[dict]) -> dict:
     """
     Estimate the finished weight of a recipe in grams by summing
     ingredient amounts.
 
-    Rules:
-      - Ingredients in g or ml: add amount directly (1ml ≈ 1g)
-      - Ingredients in kg or l: convert to grams first
-      - Unit ingredients with known weight: multiply by _UNIT_WEIGHTS_G
-      - Unit ingredients in _UNIT_IGNORE: skip silently
-      - All other unit ingredients: exclude and flag for the caller
+    Recipe amounts are ALWAYS in grams or units — pack_unit on the
+    ingredient record describes the purchase pack and is irrelevant here.
 
-    Returns a dict:
-      {
-        "weight_g": float,        # estimated total weight in grams
-        "excluded": list[str],    # unit ingredients with unknown weight
-        "notes":    list[str],    # human-readable notes for display
-      }
+    Rules:
+      - All numeric amounts: add directly as grams
+      - Unit ingredients with known weight (eggs, apples): multiply
+      - Unit ingredients in _UNIT_IGNORE: skip silently
+      - All other unit ingredients: exclude and flag
     """
-    ing_map  = {i["name"]: i for i in ingredients}
     total_g  = 0.0
     excluded = []
     notes    = []
-
-    _UNIT_TO_G = {"g": 1.0, "kg": 1000.0, "ml": 1.0, "l": 1000.0}
 
     for line in lines:
         ing_name = (line.get("ingredient_name") or "").strip()
@@ -105,44 +97,39 @@ def estimate_recipe_weight(lines: list[dict], ingredients: list[dict]) -> dict:
         if not ing_name or amount <= 0:
             continue
 
-        ing      = ing_map.get(ing_name, {})
-        pack_unit = (ing.get("pack_unit") or "g").lower()
+        name_lower = ing_name.lower()
 
-        if pack_unit in _UNIT_TO_G:
-            # Weight or volume ingredient — convert to grams
-            total_g += amount * _UNIT_TO_G[pack_unit]
+        # Check if this is a known unit ingredient
+        matched_weight = next(
+            (w for key, w in _UNIT_WEIGHTS_G.items()
+             if key in name_lower),
+            None
+        )
 
-        elif pack_unit == "units":
-            # Unit ingredient — look up known weight
-            name_lower = ing_name.lower()
-
-            # Check known weights (partial match on key)
-            matched_weight = next(
-                (w for key, w in _UNIT_WEIGHTS_G.items()
-                 if key in name_lower),
-                None
+        if matched_weight is not None:
+            # Unit ingredient with known weight — e.g. eggs
+            grams = amount * matched_weight
+            total_g += grams
+            notes.append(
+                f"{ing_name}: {amount:.0f} × "
+                f"{matched_weight:.0f}g = {grams:.0f}g"
             )
-
-            if matched_weight is not None:
-                grams = amount * matched_weight
-                total_g += grams
-                notes.append(
-                    f"{ing_name}: {amount:.0f} × {matched_weight:.0f}g "
-                    f"= {grams:.0f}g"
-                )
-            elif any(key in name_lower for key in _UNIT_IGNORE):
-                # Silently skip — juice/zest only, weight not meaningful
-                pass
-            else:
-                # Unknown unit ingredient — exclude and flag
-                excluded.append(ing_name)
+        elif any(key in name_lower for key in _UNIT_IGNORE):
+            # Known unit ingredients to ignore (lemons, limes etc.)
+            pass
+        elif amount < 20:
+            # Small amounts likely to be unit-based (e.g. 1 vanilla pod,
+            # 4 gelatine sheets) — flag rather than add raw
+            excluded.append(f"{ing_name} ({amount:.0f})")
+        else:
+            # Treat as grams directly
+            total_g += amount
 
     return {
         "weight_g": round(total_g, 1),
         "excluded": excluded,
         "notes":    notes,
     }
-
 
 # -----------------------------------------------------------------------------
 # Connection

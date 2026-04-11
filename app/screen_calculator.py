@@ -66,7 +66,7 @@ def screen_calculator():
     if has_individual or has_bocado:
         _lines_for_weight = db.get_recipe_lines(recipe["id"])
         _weight_result    = db.estimate_recipe_weight(
-            _lines_for_weight, ingredients
+            _lines_for_weight
         )
         ref_weight_g  = _weight_result["weight_g"]
         _weight_notes = _weight_result["notes"]
