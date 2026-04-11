@@ -15,6 +15,7 @@
 import streamlit as st
 import db
 from screen_recipes import screen_recipes
+from screen_calculator import screen_calculator
 
 # -----------------------------------------------------------------------------
 # Page config — must be the first Streamlit call in the file
@@ -64,16 +65,6 @@ def sidebar() -> str:
             st.session_state.screen = "settings"
 
     return st.session_state.get("screen", "calculator")
-
-
-# -----------------------------------------------------------------------------
-# Screen: Cost calculator (placeholder — built in next step)
-# -----------------------------------------------------------------------------
-
-def screen_calculator():
-    st.title("Cost calculator")
-    st.caption("Calculate ingredient, labour and packaging costs for any cake")
-    st.info("Coming soon — consumables screen delivered.")
 
 
 # -----------------------------------------------------------------------------
