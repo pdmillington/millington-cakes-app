@@ -106,12 +106,33 @@ def delete_ingredient(ingredient_id: str) -> None:
     sb.table("ingredients").delete().eq("id", ingredient_id).execute()
 
 
+# Conversion factors to base units (g for weight, ml for volume)
+_UNIT_TO_BASE = {
+    "g":     1.0,
+    "kg":    1000.0,
+    "ml":    1.0,
+    "l":     1000.0,
+    "units": 1.0,   # units stay as units — recipe amounts are also in units
+}
+
 def _compute_ingredient_cost(record: dict) -> dict:
-    """Compute cost_per_unit from pack_price_ex_vat and pack_size."""
+    """
+    Compute cost_per_unit from pack_price_ex_vat and pack_size.
+    Always normalises to cost per base unit:
+      - weight ingredients → cost per gram
+      - volume ingredients → cost per ml
+      - unit ingredients   → cost per unit
+    This ensures recipe amounts (always in grams, ml or units)
+    multiply correctly regardless of how the pack size was entered.
+    """
     try:
-        price = float(record.get("pack_price_ex_vat") or 0)
-        size  = float(record.get("pack_size") or 0)
-        record["cost_per_unit"] = round(price / size, 6) if size > 0 else None
+        price     = float(record.get("pack_price_ex_vat") or 0)
+        size      = float(record.get("pack_size") or 0)
+        unit      = record.get("pack_unit") or "g"
+        # Convert pack size to base units before dividing
+        factor    = _UNIT_TO_BASE.get(unit, 1.0)
+        base_size = size * factor
+        record["cost_per_unit"] = round(price / base_size, 6) if base_size > 0 else None
     except (TypeError, ValueError):
         record["cost_per_unit"] = None
     return record

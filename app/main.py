@@ -178,7 +178,8 @@ def _ingredient_row(ing: dict):
         # Compute and display cost per unit live
         cost = round(price / pack_size, 6) if pack_size > 0 and price > 0 else None
         if cost:
-            st.markdown(f"`€ {cost:.5f} / {unit}`")
+            base_unit = "g" if unit in ("g", "kg") else "ml" if unit in ("ml", "l") else unit
+            st.markdown(f"`€ {cost:.5f} / {base_unit}`")
         else:
             st.markdown("—")
     with c8:
