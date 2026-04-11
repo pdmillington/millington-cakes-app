@@ -1,28 +1,7 @@
 # screen_calculator.py
-# =============================================================================
-# Cost calculator — daily-use tool, mobile-first single column layout.
-#
-# Pricing logic:
-#   Wholesale — always 20 cake batch, 2× margin
-#   Retail    — 1 cake batch, 3× margin (large), 3.5× (individual), 4× (bocado)
-#
-# Ingredient scaling:
-#   Diameter recipes — by volume (r² × h ratio)
-#   Weight/portion   — by weight or portion ratio
-#   Individual/Bocado — by weight (individual_weight_g / ref_weight_equivalent)
-#
-# Labour scaling:
-#   Power law: (order_qty / batch_size) ^ labour_power
-#   Size factor: target_diameter / ref_diameter (diameter recipes only)
-#   Intensity: from size tier table
-# =============================================================================
-
 import streamlit as st
+from math import pi
 import millington_db as db
-
-
-# Unit conversion to base units (g for weight, ml for volume)
-_UNIT_TO_BASE = {"g": 1.0, "kg": 1000.0, "ml": 1.0, "l": 1000.0, "units": 1.0}
 
 
 def screen_calculator():
@@ -37,12 +16,12 @@ def screen_calculator():
     consumables = db.get_consumables()
     ingredients = db.get_ingredients()
 
-    recipe_map  = {r["name"]: r for r in recipes}
-    tier_map    = {t["code"]: t for t in size_tiers}
-    ing_map     = {i["name"]: i for i in ingredients}
+    recipe_map = {r["name"]: r for r in recipes}
+    tier_map   = {t["code"]: t for t in size_tiers}
+    ing_map    = {i["name"]: i for i in ingredients}
 
     # Settings
-    default_labour  = float(settings.get("default_labour_rate") or 20.0)
+    default_labour  = float(settings.get("default_labour_rate") or 30.0)
     default_oven    = float(settings.get("default_oven_rate") or 2.0)
     labour_power    = float(settings.get("labour_power") or 0.7)
     ws_margin       = float(settings.get("ws_margin") or 2.0)
@@ -62,38 +41,44 @@ def screen_calculator():
     st.markdown("### 1 — Recipe")
 
     recipe_names = sorted([r["name"] for r in recipes])
-    selected_name = st.selectbox(
-        "Recipe", recipe_names, key="calc_recipe"
-    )
+    selected_name = st.selectbox("Recipe", recipe_names, key="calc_recipe")
     recipe = recipe_map.get(selected_name, {})
 
     if not recipe:
         st.info("Select a recipe to continue.")
         return
 
-    size_type    = recipe.get("size_type", "diameter")
-    ref_diameter = float(recipe.get("ref_diameter_cm") or 22)
-    ref_height   = float(recipe.get("ref_height_cm") or 0)
-    ref_weight   = float(recipe.get("ref_weight_kg") or 1)
-    ref_portions = int(recipe.get("ref_portions") or 1)
+    size_type      = recipe.get("size_type", "diameter")
+    ref_diameter   = float(recipe.get("ref_diameter_cm") or 22)
+    ref_height     = float(recipe.get("ref_height_cm") or 0)
+    ref_weight_kg  = float(recipe.get("ref_weight_kg") or 1)
+    ref_portions   = int(recipe.get("ref_portions") or 1)
     has_individual = bool(recipe.get("has_individual"))
     has_bocado     = bool(recipe.get("has_bocado"))
     ind_weight     = float(recipe.get("individual_weight_g") or ind_weight_g)
     boc_weight     = float(recipe.get("bocado_weight_g") or boc_weight_g)
-
-    # Labour reference times
     ref_batch_size = float(recipe.get("ref_batch_size") or 20)
     ref_prep_hours = float(recipe.get("ref_prep_hours") or 1.0)
     ref_oven_hours = float(recipe.get("ref_oven_hours") or 1.0)
+
+    # Pre-compute reference weight in grams for Individual/Bocado scaling
+    # For diameter recipes: approximate from volume using density 0.35 g/cm³
+    # For weight recipes: direct conversion
+    # For portion recipes: assume ref_portions × avg portion weight 150g
+    if size_type == "diameter":
+        h = ref_height if ref_height else 5.0
+        ref_weight_g = pi * (ref_diameter / 2) ** 2 * h * 0.35
+    elif size_type == "weight":
+        ref_weight_g = ref_weight_kg * 1000
+    else:
+        ref_weight_g = ref_portions * 150.0
 
     # ── Section 2: Channel ────────────────────────────────────────────────────
     st.markdown("### 2 — Price channel")
 
     channel = st.radio(
-        "Channel",
-        ["Wholesale", "Retail"],
-        horizontal=True,
-        key="calc_channel"
+        "Channel", ["Wholesale", "Retail"],
+        horizontal=True, key="calc_channel"
     )
 
     st.divider()
@@ -101,7 +86,6 @@ def screen_calculator():
     # ── Section 3: Format ─────────────────────────────────────────────────────
     st.markdown("### 3 — Format")
 
-    # Build available format buttons
     formats = ["Standard"]
     if has_individual:
         formats.append("Individual")
@@ -116,87 +100,74 @@ def screen_calculator():
             "Format", formats, horizontal=True, key="calc_format"
         )
 
-    # Determine scale, batch size, intensity and margin from format + channel
+    # ── Determine scale, batch, intensity and margin from format + channel ────
     if selected_format == "Standard":
-        tier        = tier_map.get("LA", {})
-        intensity   = float(tier.get("labour_intensity") or 1.0)
-        batch_size  = ws_batch_large if channel == "Wholesale" else rt_batch_large
-        margin      = ws_margin if channel == "Wholesale" else rt_margin_large
+        tier       = tier_map.get("LA", {})
+        intensity  = float(tier.get("labour_intensity") or 1.0)
+        batch_size = ws_batch_large if channel == "Wholesale" else rt_batch_large
+        margin     = ws_margin if channel == "Wholesale" else rt_margin_large
 
         if size_type == "diameter":
-            # Show size inputs
             st.markdown("**Size**")
             c1, c2 = st.columns(2)
             with c1:
                 target_diameter = st.number_input(
-                    "Diameter (cm)",
-                    min_value=1.0,
-                    value=ref_diameter,
-                    key="calc_diameter"
+                    "Diameter (cm)", min_value=1.0,
+                    value=ref_diameter, key="calc_diameter"
                 )
             with c2:
                 target_height = st.number_input(
-                    "Height (cm)",
-                    min_value=0.0,
+                    "Height (cm)", min_value=0.0,
                     value=ref_height if ref_height else 5.0,
                     key="calc_height"
                 )
-
             if ref_height and target_height:
                 scale = (target_diameter ** 2 * target_height) / \
                         (ref_diameter ** 2 * ref_height)
+                st.info(
+                    f"Volume scaling: ({target_diameter:.0f}² × "
+                    f"{target_height:.1f}) / ({ref_diameter:.0f}² × "
+                    f"{ref_height:.1f}) = **{scale:.3f}×**"
+                )
             else:
                 scale = (target_diameter ** 2) / (ref_diameter ** 2)
                 st.warning(
-                    "⚠️ No reference height — scaling by area only. "
-                    "Add height in the recipe editor for accurate results."
+                    f"⚠️ No reference height — scaling by area only "
+                    f"({scale:.3f}×). Add height in recipe editor."
                 )
-
             size_labour_factor = target_diameter / ref_diameter
 
         elif size_type == "weight":
             target_weight = st.number_input(
-                "Weight (kg)",
-                min_value=0.1,
-                value=ref_weight,
-                key="calc_weight"
+                "Weight (kg)", min_value=0.1,
+                value=ref_weight_kg, key="calc_weight"
             )
-            scale              = target_weight / ref_weight
+            scale              = target_weight / ref_weight_kg
             size_labour_factor = 1.0
+            st.info(f"Weight scaling: {target_weight:.2f} / "
+                    f"{ref_weight_kg:.2f} = **{scale:.3f}×**")
 
         else:  # portions
             target_portions = st.number_input(
-                "Portions",
-                min_value=1,
-                value=ref_portions,
-                key="calc_portions"
+                "Portions", min_value=1,
+                value=ref_portions, key="calc_portions"
             )
             scale              = target_portions / ref_portions
             size_labour_factor = 1.0
+            st.info(f"Portion scaling: {target_portions} / "
+                    f"{ref_portions} = **{scale:.3f}×**")
 
     elif selected_format == "Individual":
         tier       = tier_map.get("IN", {})
         intensity  = float(tier.get("labour_intensity") or 1.5)
         batch_size = ws_batch_ind if channel == "Wholesale" else rt_batch_ind
         margin     = ws_margin if channel == "Wholesale" else rt_margin_ind
-
-        # Scale by weight: individual_weight / reference_weight_equivalent
-        # Reference weight equivalent derived from reference size
-        if size_type == "diameter":
-            # Approximate reference cake weight from volume × density (0.4 g/cm³)
-            import math
-            ref_vol_cm3    = math.pi * (ref_diameter / 2) ** 2 * \
-                             (ref_height if ref_height else 5.0)
-            ref_weight_g   = ref_vol_cm3 * 0.4
-        else:
-            ref_weight_g   = ref_weight * 1000
-
         scale              = ind_weight / ref_weight_g
         size_labour_factor = 1.0
-        st.caption(
-            f"Individual portion: {ind_weight:.0f}g "
-            f"(reference cake ≈ {ref_weight_g:.0f}g) — "
-            f"scale factor: {scale:.4f}×"
+        st.info(
+            f"Individual: {ind_weight:.0f}g portion — "
+            f"reference cake ≈ {ref_weight_g:.0f}g — "
+            f"scale: **{scale:.4f}×**"
         )
 
     else:  # Bocado
@@ -204,21 +175,12 @@ def screen_calculator():
         intensity  = float(tier.get("labour_intensity") or 2.5)
         batch_size = ws_batch_boc if channel == "Wholesale" else rt_batch_boc
         margin     = ws_margin if channel == "Wholesale" else rt_margin_boc
-
-        if size_type == "diameter":
-            import math
-            ref_vol_cm3  = math.pi * (ref_diameter / 2) ** 2 * \
-                           (ref_height if ref_height else 5.0)
-            ref_weight_g = ref_vol_cm3 * 0.4
-        else:
-            ref_weight_g = ref_weight * 1000
-
         scale              = boc_weight / ref_weight_g
         size_labour_factor = 1.0
-        st.caption(
-            f"Bocado: {boc_weight:.0f}g "
-            f"(reference cake ≈ {ref_weight_g:.0f}g) — "
-            f"scale factor: {scale:.4f}×"
+        st.info(
+            f"Bocado: {boc_weight:.0f}g — "
+            f"reference cake ≈ {ref_weight_g:.0f}g — "
+            f"scale: **{scale:.4f}×**"
         )
 
     st.divider()
@@ -283,8 +245,8 @@ def screen_calculator():
 
     st.divider()
 
-    # ── Section 6: Number of units (secondary) ────────────────────────────────
-    with st.expander("Order quantity (optional — for total cost)"):
+    # ── Section 6: Order quantity (secondary) ─────────────────────────────────
+    with st.expander("Order quantity (for total cost breakdown)"):
         order_qty = st.number_input(
             "Number of cakes / units",
             min_value=1, value=1, key="calc_order_qty"
@@ -307,32 +269,35 @@ def screen_calculator():
             amount   = float(line.get("amount") or 0)
             ing      = ing_map.get(ing_name, {})
             cpu      = ing.get("cost_per_unit")
-
             if cpu:
                 ingredient_cost += cpu * amount * scale
             elif ing_name:
                 missing_prices.append(ing_name)
 
         # ── Labour cost per unit ──────────────────────────────────────────────
-        # batch_size already set from channel + format above
+        # Total time for a batch of `batch_size` scales as power law
+        # from the reference batch time.
+        # Per-unit cost = total batch time / batch_size
+        #
+        # qty_factor = (batch_size / ref_batch_size)^power / batch_size
+        #
+        # Wholesale (batch_size=20, ref=20):
+        #   (20/20)^0.7 / 20 = 1.0/20 = 0.05hr/cake
+        # Retail (batch_size=1, ref=20):
+        #   (1/20)^0.7 / 1  = 0.096hr/cake
+
         if ref_batch_size > 0:
-            qty_factor = (1 / ref_batch_size) ** labour_power
+            qty_factor = (
+                (batch_size / ref_batch_size) ** labour_power
+            ) / batch_size
         else:
-            qty_factor = 1.0
+            qty_factor = 1.0 / max(batch_size, 1)
 
-        prep_hours = (
-            ref_prep_hours
-            * qty_factor
-            * size_labour_factor
-            * intensity
-        )
-        oven_hours = (
-            ref_oven_hours
-            * qty_factor
-        )
+        prep_per_unit = ref_prep_hours * qty_factor * size_labour_factor * intensity
+        oven_per_unit = ref_oven_hours * qty_factor
 
-        labour_cost = prep_hours * labour_rate
-        oven_cost   = oven_hours * oven_rate
+        labour_cost = prep_per_unit * labour_rate
+        oven_cost   = oven_per_unit * oven_rate
 
         # ── Packaging cost per unit ───────────────────────────────────────────
         packaging_cost = 0.0
@@ -353,8 +318,9 @@ def screen_calculator():
                     cpu = con.get("cost_per_unit") or 0
                     packaging_cost += cpu * con_qty
 
-        # ── Per unit totals ───────────────────────────────────────────────────
-        cost_per_unit  = ingredient_cost + labour_cost + oven_cost + packaging_cost
+        # ── Totals ────────────────────────────────────────────────────────────
+        cost_per_unit  = (ingredient_cost + labour_cost
+                          + oven_cost + packaging_cost)
         price_per_unit = cost_per_unit * margin
 
         # ── Display results ───────────────────────────────────────────────────
@@ -369,22 +335,19 @@ def screen_calculator():
                 "Ingredient cost is understated."
             )
 
-        # Headline metrics — per unit
+        # Headline per-unit metrics
         col_a, col_b = st.columns(2)
         with col_a:
-            st.metric(
-                "Cost per cake",
-                f"€ {cost_per_unit:.2f}"
-            )
+            st.metric("Cost per cake", f"€ {cost_per_unit:.2f}")
         with col_b:
+            channel_label = "Wholesale" if channel == "Wholesale" else "Retail"
             st.metric(
-                f"{'Wholesale' if channel == 'Wholesale' else 'Retail'} "
-                f"price per cake",
+                f"{channel_label} price per cake",
                 f"€ {price_per_unit:.2f}",
                 help=f"Cost × {margin:.1f}× margin"
             )
 
-        # Breakdown
+        # Cost breakdown
         st.markdown("**Cost breakdown**")
         col_c, col_d, col_e, col_f = st.columns(4)
         col_c.metric("Ingredients", f"€ {ingredient_cost:.4f}")
@@ -400,20 +363,33 @@ def screen_calculator():
             col_g.metric("Total cost",  f"€ {cost_per_unit * order_qty:.2f}")
             col_h.metric("Total price", f"€ {price_per_unit * order_qty:.2f}")
 
-        # Labour detail expander — for sense-checking
+        # Labour detail — for sense-checking
         with st.expander("Labour calculation detail"):
             st.markdown(f"""
-- Reference batch: **{ref_batch_size:.0f}** cakes — 
-  {ref_prep_hours:.1f}h prep · {ref_oven_hours:.1f}h oven
-- Batch assumption ({channel}): **{batch_size}** cakes
-- Quantity factor: (1 / {ref_batch_size:.0f})^{labour_power} 
-  = **{qty_factor:.4f}**
+**Reference:** {ref_batch_size:.0f} cakes — 
+{ref_prep_hours:.1f}h prep · {ref_oven_hours:.1f}h oven
+
+**Pricing assumption ({channel}):** batch of {batch_size} cakes
+
+**Formula:** (batch / ref_batch)^power / batch × intensity × size_factor
+
+- Quantity factor: ({batch_size} / {ref_batch_size:.0f})^{labour_power} 
+  / {batch_size} = **{qty_factor:.5f}**
 - Size labour factor: **{size_labour_factor:.3f}**
 - Tier intensity: **{intensity:.1f}×**
-- Prep hours (per unit): **{prep_hours:.4f}h** 
-  × €{labour_rate:.2f}/hr = **€ {labour_cost:.4f}**
-- Oven hours (per unit): **{oven_hours:.4f}h** 
-  × €{oven_rate:.2f}/hr = **€ {oven_cost:.4f}**
+- Prep per cake: {ref_prep_hours:.2f} × {qty_factor:.5f} × 
+  {size_labour_factor:.3f} × {intensity:.1f} = **{prep_per_unit:.5f}h**
+- Oven per cake: {ref_oven_hours:.2f} × {qty_factor:.5f} = 
+  **{oven_per_unit:.5f}h**
+- Labour cost: {prep_per_unit:.5f}h × €{labour_rate:.2f} = 
+  **€ {labour_cost:.4f}**
+- Oven cost: {oven_per_unit:.5f}h × €{oven_rate:.2f} = 
+  **€ {oven_cost:.4f}**
 - Margin: **{margin:.1f}×** ({channel})
-- Scale factor: **{scale:.4f}×**
+- Ingredient scale factor: **{scale:.5f}×**
             """)
+
+        st.caption(
+            f"Channel: {channel} · Format: {selected_format} · "
+            f"Scale: {scale:.4f}× · Margin: {margin:.1f}×"
+        )
