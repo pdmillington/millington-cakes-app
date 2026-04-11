@@ -64,13 +64,13 @@ def screen_settings():
         rt_margin_ind = st.number_input(
             "Individual ×",
             min_value=1.0,
-            value=float(settings.get("rt_margin_individual") or 3.5),
+            value=float(settings.get("rt_margin_individual") or 3.0),
             step=0.1, key="set_rt_ind"
         )
         rt_margin_boc = st.number_input(
             "Bocado ×",
             min_value=1.0,
-            value=float(settings.get("rt_margin_bocado") or 4.0),
+            value=float(settings.get("rt_margin_bocado") or 3.0),
             step=0.1, key="set_rt_boc"
         )
 

@@ -385,12 +385,25 @@ def screen_calculator():
         with col_a:
             st.metric("Cost per unit", f"€ {cost_per_unit:.2f}")
         with col_b:
-            channel_label = "Wholesale" if channel == "Wholesale" else "Retail"
-            st.metric(
-                f"{channel_label} price per unit",
-                f"€ {price_per_unit:.2f}",
-                help=f"Cost × {margin:.1f}× margin"
-            )
+            if channel == "Retail":
+                vat_rate        = 0.10
+                price_inc_vat   = price_per_unit * (1 + vat_rate)
+                st.metric(
+                    "Retail price per unit (ex-VAT)",
+                    f"€ {price_per_unit:.2f}",
+                    help=f"Cost × {margin:.1f}× margin"
+                )
+                st.metric(
+                    "Retail price per unit (inc-VAT 10%)",
+                    f"€ {price_inc_vat:.2f}",
+                    help="Ex-VAT price × 1.10"
+                )
+            else:
+                st.metric(
+                    "Wholesale price per unit (ex-VAT)",
+                    f"€ {price_per_unit:.2f}",
+                    help=f"Cost × {margin:.1f}× margin"
+                )
 
         st.markdown("**Cost breakdown**")
         col_c, col_d, col_e, col_f = st.columns(4)
@@ -403,8 +416,17 @@ def screen_calculator():
             st.divider()
             st.markdown(f"**Total for {order_qty} unit(s)**")
             col_g, col_h = st.columns(2)
-            col_g.metric("Total cost",  f"€ {cost_per_unit * order_qty:.2f}")
-            col_h.metric("Total price", f"€ {price_per_unit * order_qty:.2f}")
+            col_g.metric("Total cost", f"€ {cost_per_unit * order_qty:.2f}")
+            if channel == "Retail":
+                col_h.metric(
+                    "Total retail price (inc-VAT)",
+                    f"€ {price_inc_vat * order_qty:.2f}"
+                )
+            else:
+                col_h.metric(
+                    "Total wholesale price",
+                    f"€ {price_per_unit * order_qty:.2f}"
+                )
 
         with st.expander("Labour calculation detail"):
             st.markdown(f"""
