@@ -176,9 +176,12 @@ def _ingredient_row(ing: dict):
                            key=f"{col_id}_vat", label_visibility="collapsed")
     with c7:
         # Compute and display cost per unit live
-        cost = round(price / pack_size, 6) if pack_size > 0 and price > 0 else None
+        _UNIT_TO_BASE = {"g": 1.0, "kg": 1000.0, "ml": 1.0, "l": 1000.0, "units": 1.0}
+        factor    = _UNIT_TO_BASE.get(unit, 1.0)
+        base_size = pack_size * factor
+        cost      = round(price / base_size, 6) if base_size > 0 and price > 0 else None
+        base_unit = "g" if unit in ("g", "kg") else "ml" if unit in ("ml", "l") else "unit"
         if cost:
-            base_unit = "g" if unit in ("g", "kg") else "ml" if unit in ("ml", "l") else unit
             st.markdown(f"`€ {cost:.5f} / {base_unit}`")
         else:
             st.markdown("—")
