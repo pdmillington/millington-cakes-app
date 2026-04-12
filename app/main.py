@@ -29,6 +29,26 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Password checker
+def check_password():
+    """Returns True if the user has entered the correct password."""
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.markdown("### 🎂 Millington Cakes")
+    st.markdown("Pricing Manager — please log in")
+    st.divider()
+
+    password = st.text_input("Password", type="password", key="password_input")
+
+    if st.button("Log in", type="primary"):
+        if password == st.secrets.get("APP_PASSWORD", ""):
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+
+    return False
 
 # -----------------------------------------------------------------------------
 # Sidebar navigation
@@ -483,6 +503,8 @@ SCREENS = {
 # -----------------------------------------------------------------------------
 
 def main():
+    if not check_password():
+        return
     screen = sidebar()
     screen_fn = SCREENS.get(screen, screen_calculator)
     screen_fn()
