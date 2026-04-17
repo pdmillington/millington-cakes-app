@@ -21,8 +21,10 @@ def screen_packaging():
         selected_preset_id = st.session_state.get("selected_preset_id")
 
         for p in presets:
+            units = int(p.get("units_per_pack") or 1)
+            label = f"{p['name']}" if units == 1 else f"{p['name']} (×{units})"
             if st.button(
-                p["name"],
+                label,
                 key=f"preset_btn_{p['id']}",
                 use_container_width=True,
                 type="primary" if selected_preset_id == p["id"] else "secondary"
@@ -58,48 +60,58 @@ def screen_packaging():
             st.error("Preset not found.")
             return
 
-        # ── Preset name ───────────────────────────────────────────────────────
+        # ── Preset name and units per pack ────────────────────────────────────
         st.markdown("#### Preset details")
 
-        preset_name = st.text_input(
-            "Preset name",
-            value=preset.get("name", ""),
-            key=f"preset_name_{selected_id}",
-            placeholder="e.g. Standard tart 22–26cm"
-        )
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            preset_name = st.text_input(
+                "Preset name",
+                value=preset.get("name", ""),
+                key=f"preset_name_{selected_id}",
+                placeholder="e.g. Individual tart retail (×4)"
+            )
+        with c2:
+            units_per_pack = st.number_input(
+                "Units per pack",
+                min_value=1,
+                value=int(preset.get("units_per_pack") or 1),
+                key=f"preset_units_{selected_id}",
+                help="How many cakes fit in this packaging. "
+                     "Total cost is divided by this number."
+            )
 
         # ── Consumable lines ──────────────────────────────────────────────────
         st.markdown("#### Consumables")
-        st.caption("Select consumables and quantities for this preset.")
+        st.caption(
+            "Add the consumables that make up this preset. "
+            "Cost per unit = total ÷ units per pack."
+        )
 
-        # Initialise working lines from saved data
         lines_key = "preset_lines_state"
         if lines_key not in st.session_state:
             st.session_state[lines_key] = [
                 {
-                    "id":             l.get("id"),
+                    "id":              l.get("id"),
                     "consumable_name": l.get("consumable_name", ""),
                     "quantity":        float(l.get("quantity") or 1),
                     "cost_per_unit":   l.get("consumable_cost_per_unit") or 0,
                 }
                 for l in saved_lines
             ]
-            # Always have one empty row
             st.session_state[lines_key].append(_empty_preset_line())
 
         working_lines = st.session_state[lines_key]
 
-        # Column headers
         h1, h2, h3, h4 = st.columns([3, 1, 1.5, 0.5])
         h1.markdown("**Consumable**")
         h2.markdown("**Qty**")
-        h3.markdown("**Cost**")
+        h3.markdown("**Line cost**")
         h4.markdown("")
 
-        total_cost = 0.0
-        remove_idx = None
-
-        con_label_list = ["— select consumable —"] + list(con_names.keys())
+        total_pack_cost = 0.0
+        remove_idx      = None
+        con_label_list  = ["— select consumable —"] + list(con_names.keys())
 
         for idx, line in enumerate(working_lines):
             c1, c2, c3, c4 = st.columns([3, 1, 1.5, 0.5])
@@ -119,8 +131,7 @@ def screen_packaging():
                 quantity = st.number_input(
                     "Qty",
                     value=float(line.get("quantity") or 1),
-                    min_value=0.0,
-                    step=1.0,
+                    min_value=0.0, step=1.0,
                     key=f"preset_qty_{selected_id}_{idx}",
                     label_visibility="collapsed"
                 )
@@ -130,7 +141,7 @@ def screen_packaging():
                 cpu       = con_data.get("cost_per_unit") or 0
                 line_cost = cpu * quantity if cpu and quantity else 0
                 if line_cost:
-                    total_cost += line_cost
+                    total_pack_cost += line_cost
                     st.markdown(f"`€ {line_cost:.4f}`")
                 else:
                     st.markdown("—")
@@ -143,7 +154,6 @@ def screen_packaging():
                     ):
                         remove_idx = idx
 
-            # Keep working lines in sync
             st.session_state[lines_key][idx] = {
                 "id":              line.get("id"),
                 "consumable_name": selected_con
@@ -156,19 +166,23 @@ def screen_packaging():
             del st.session_state[lines_key][remove_idx]
             st.rerun()
 
-        # Add empty row when last row is filled
         last = working_lines[-1] if working_lines else {}
         if last.get("consumable_name") and \
                 last["consumable_name"] != "— select consumable —":
             st.session_state[lines_key].append(_empty_preset_line())
             st.rerun()
 
-        # Total
+        # ── Cost summary ──────────────────────────────────────────────────────
         st.divider()
-        if total_cost > 0:
-            st.markdown(f"**Total packaging cost per cake: € {total_cost:.4f}**")
+        if total_pack_cost > 0:
+            cost_per_unit = total_pack_cost / units_per_pack
+            st.markdown(
+                f"**Pack cost: € {total_pack_cost:.4f} "
+                f"÷ {units_per_pack} unit(s) "
+                f"= € {cost_per_unit:.4f} per unit**"
+            )
         else:
-            st.caption("Add consumables above to see the total cost.")
+            st.caption("Add consumables above to see the cost breakdown.")
 
         # ── Save / Delete ─────────────────────────────────────────────────────
         st.divider()
@@ -180,7 +194,6 @@ def screen_packaging():
                 if not preset_name:
                     st.error("Preset name is required.")
                 else:
-                    # Build clean lines — exclude empty rows
                     clean_lines = [
                         {
                             "consumable_id": con_names[l["consumable_name"]]["id"],
@@ -191,15 +204,15 @@ def screen_packaging():
                         and l["consumable_name"] != "— select consumable —"
                         and l.get("quantity", 0) > 0
                     ]
-
                     if not clean_lines:
                         st.error("Add at least one consumable.")
                     else:
                         if is_new:
-                            db.save_preset(preset_name, clean_lines)
+                            db.save_preset(preset_name, clean_lines,
+                                           units_per_pack)
                         else:
-                            db.update_preset(selected_id, preset_name, clean_lines)
-
+                            db.update_preset(selected_id, preset_name,
+                                             clean_lines, units_per_pack)
                         st.success(f"Saved: {preset_name}", icon="✅")
                         st.session_state.pop("preset_lines_state", None)
                         st.session_state.pop("selected_preset_id", None)

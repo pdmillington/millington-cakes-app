@@ -426,10 +426,13 @@ def get_preset_lines(preset_id: str) -> list[dict]:
     return lines
 
 
-def save_preset(name: str, lines: list[dict]) -> None:
-    """Create or replace a packaging preset and its lines."""
+def save_preset(name: str, lines: list[dict], 
+                units_per_pack: int = 1) -> None:
     sb = get_client()
-    result = sb.table("packaging_presets").insert({"name": name}).execute()
+    result = sb.table("packaging_presets").insert({
+        "name": name,
+        "units_per_pack": units_per_pack
+    }).execute()
     if not result.data:
         return
     preset_id = result.data[0]["id"]
@@ -437,6 +440,27 @@ def save_preset(name: str, lines: list[dict]) -> None:
         line["preset_id"] = preset_id
     if lines:
         sb.table("packaging_preset_lines").insert(lines).execute()
+
+
+def update_preset(preset_id: str, name: str, lines: list[dict],
+                  units_per_pack: int = 1) -> None:
+    sb = get_client()
+    sb.table("packaging_presets").update({
+        "name": name,
+        "units_per_pack": units_per_pack
+    }).eq("id", preset_id).execute()
+    sb.table("packaging_preset_lines").delete().eq(
+        "preset_id", preset_id
+    ).execute()
+    if lines:
+        for line in lines:
+            line["preset_id"] = preset_id
+        sb.table("packaging_preset_lines").insert(lines).execute()
+
+
+def delete_preset(preset_id: str) -> None:
+    sb = get_client()
+    sb.table("packaging_presets").delete().eq("id", preset_id).execute()
 
 # Packaging presets
 
