@@ -369,16 +369,21 @@ def screen_calculator():
         live_prices  = db.get_current_prices(code_str) if code_str else []
 
         def find_price(chan):
-            """Return best matching current price ex-VAT for channel."""
+            """Return best matching current price ex-VAT for channel.
+            For WS, also checks MD as fallback since MD prices mirror WS."""
+            channels = [chan]
+            if chan == "WS":
+                channels.append("MD")  # MD is legacy wholesale
             matches = [
                 p for p in live_prices
-                if p["channel"] == chan
+                if p["channel"] in channels
                 and any(f"-{fc}-" in p["sku_code"] for fc in relevant_codes)
             ]
             if not matches:
                 return None, None
-            # Prefer exact size match if available
-            best = matches[0]
+            # Prefer WS over MD if both exist
+            ws_match = next((p for p in matches if p["channel"] == "WS"), None)
+            best = ws_match if ws_match else matches[0]
             return float(best["price_ex_vat"]), best["sku_code"]
 
         current_ws_ex,  current_ws_sku  = find_price("WS")
