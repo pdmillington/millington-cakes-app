@@ -51,6 +51,21 @@ def find_similar_names(name: str, existing_names: list[str],
         if score >= threshold and match.lower() != name_normalised.lower()
     ]
 
+def get_current_prices(cake_code: str) -> list[dict]:
+    """
+    Return all current_prices rows for a given cake code prefix.
+    e.g. cake_code='LP' returns all LP-* SKUs across all channels.
+    """
+    sb = get_client()
+    result = (
+        sb.table("current_prices")
+        .select("*")
+        .ilike("sku_code", f"{cake_code}-%")
+        .order("sku_code")
+        .execute()
+    )
+    return result.data or []
+
 # =============================================================================
 # Recipe weight estimation
 # =============================================================================

@@ -420,6 +420,92 @@ def screen_calculator():
 - Margin: **{margin:.1f}×** ({channel})
 - Ingredient scale: **{scale:.5f}×**
             """)
+        # ── Current price comparison ──────────────────────────────────────
+        cake_code = recipe.get("cake_code_id")
+        # Look up cake code string from the code_options reverse map
+        cake_codes  = db.get_cake_codes()
+        code_by_id  = {cc["id"]: cc["code"] for cc in cake_codes}
+        code_str    = code_by_id.get(cake_code, "")
+
+        if code_str:
+            live_prices = db.get_current_prices(code_str)
+            if live_prices:
+                with st.expander("📊 Current Shopify prices for this product"):
+                    st.caption(
+                        "Prices from Shopify inc-VAT · ex-VAT shown in brackets. "
+                        "WS = wholesale · GW = retail · MD = Mentidero."
+                    )
+                    # Filter to relevant channel and format
+                    format_codes = {
+                        "Standard":   ["LA", "XL", "XX", "DC"],
+                        "Individual": ["TI", "IN"],
+                        "Bocado":     ["MI", "BO"],
+                    }
+                    relevant_codes = format_codes.get(selected_format, [])
+
+                    # Split by channel
+                    ws_prices = [
+                        p for p in live_prices
+                        if p["channel"] == "WS"
+                        and any(f"-{fc}-" in p["sku_code"]
+                                for fc in relevant_codes)
+                    ]
+                    gw_prices = [
+                        p for p in live_prices
+                        if p["channel"] == "GW"
+                        and any(f"-{fc}-" in p["sku_code"]
+                                for fc in relevant_codes)
+                    ]
+
+                    col_ws, col_gw = st.columns(2)
+
+                    with col_ws:
+                        st.markdown("**Wholesale (ex-VAT)**")
+                        if ws_prices:
+                            for p in ws_prices:
+                                margin_on_cost = (
+                                    float(p["price_ex_vat"]) / cost_per_unit
+                                    if cost_per_unit > 0 else 0
+                                )
+                                st.markdown(
+                                    f"`{p['sku_code']}` "
+                                    f"€ {float(p['price_ex_vat']):.2f} "
+                                    f"· {margin_on_cost:.2f}× cost"
+                                )
+                        else:
+                            st.caption("No WS prices found")
+
+                    with col_gw:
+                        st.markdown("**Retail (inc-VAT)**")
+                        if gw_prices:
+                            for p in gw_prices:
+                                price_ex = float(p["price_ex_vat"])
+                                margin_on_cost = (
+                                    price_ex / cost_per_unit
+                                    if cost_per_unit > 0 else 0
+                                )
+                                st.markdown(
+                                    f"`{p['sku_code']}` "
+                                    f"€ {float(p['price_inc_vat']):.2f} inc · "
+                                    f"€ {price_ex:.2f} ex · "
+                                    f"{margin_on_cost:.2f}× cost"
+                                )
+                        else:
+                            st.caption("No GW prices found")
+
+                    # Highlight if calculated cost exceeds current price
+                    all_relevant = ws_prices + gw_prices
+                    if all_relevant and cost_per_unit > 0:
+                        min_price_ex = min(
+                            float(p["price_ex_vat"]) for p in all_relevant
+                        )
+                        if cost_per_unit > min_price_ex:
+                            st.error(
+                                f"⚠️ Calculated cost (€ {cost_per_unit:.2f}) "
+                                f"exceeds lowest current price "
+                                f"(€ {min_price_ex:.2f} ex-VAT). "
+                                "Check ingredient prices and labour times."
+                            )
 
         st.caption(
             f"Labour rate: €{default_labour:.2f}/hr · "
