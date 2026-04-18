@@ -18,6 +18,7 @@ from screen_recipes import screen_recipes
 from screen_calculator import screen_calculator
 from screen_settings import screen_settings
 from screen_packaging import screen_packaging
+from screen_analysis import screen_analysis
 
 # -----------------------------------------------------------------------------
 # Page config — must be the first Streamlit call in the file
@@ -64,6 +65,8 @@ def sidebar() -> str:
         st.markdown("**Daily use**")
         if st.button("Cost calculator", use_container_width=True):
             st.session_state.screen = "calculator"
+        if st.button("Recipe analysis", use_container_width=True):
+                st.session_state.screen = "analysis"
 
         st.divider()
         st.markdown("**Manage**")
@@ -480,6 +483,7 @@ def _add_consumable_form():
 
 SCREENS = {
     "calculator": screen_calculator,
+    "analysis": screen_analysis,
     "ingredients": screen_ingredients,
     "consumables": screen_consumables,
     "recipes": screen_recipes,
