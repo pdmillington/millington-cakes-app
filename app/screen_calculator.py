@@ -340,20 +340,7 @@ def screen_calculator():
                           + oven_cost + packaging_cost)
         price_per_unit = cost_per_unit * margin
 
-        # ── Display results ───────────────────────────────────────────────────
-        st.markdown("---")
-        st.markdown(
-            f"### {selected_name} — {selected_format} — {channel}"
-        )
-
-        if missing_prices:
-            st.warning(
-                f"⚠️ Missing prices for: {', '.join(missing_prices)}. "
-                "Ingredient cost is understated."
-            )
-
-        col_a, col_b = st.columns(2)
-        # ── Fetch current prices for comparison ───────────────────────────────
+        # ── Fetch current prices for comparison ──────────────────────────────
         cake_code_id = recipe.get("cake_code_id")
         cake_codes   = db.get_cake_codes()
         code_by_id   = {cc["id"]: cc["code"] for cc in cake_codes}
@@ -365,15 +352,14 @@ def screen_calculator():
             "Bocado":     ["MI", "BO"],
         }
         relevant_codes = format_tier_codes.get(selected_format, [])
-
-        live_prices  = db.get_current_prices(code_str) if code_str else []
+        live_prices    = db.get_current_prices(code_str) if code_str else []
 
         def find_price(chan):
             """Return best matching current price ex-VAT for channel.
             For WS, also checks MD as fallback since MD prices mirror WS."""
             channels = [chan]
             if chan == "WS":
-                channels.append("MD")  # MD is legacy wholesale
+                channels.append("MD")
             matches = [
                 p for p in live_prices
                 if p["channel"] in channels
@@ -381,19 +367,16 @@ def screen_calculator():
             ]
             if not matches:
                 return None, None
-            # Prefer WS over MD if both exist
             ws_match = next((p for p in matches if p["channel"] == "WS"), None)
-            best = ws_match if ws_match else matches[0]
+            best     = ws_match if ws_match else matches[0]
             return float(best["price_ex_vat"]), best["sku_code"]
 
-        current_ws_ex,  current_ws_sku  = find_price("WS")
-        current_gw_ex,  current_gw_sku  = find_price("GW")
+        current_ws_ex, current_ws_sku = find_price("WS")
+        current_gw_ex, current_gw_sku = find_price("GW")
 
         # ── Display results ───────────────────────────────────────────────────
         st.markdown("---")
-        st.markdown(
-            f"### {selected_name} — {selected_format} — {channel}"
-        )
+        st.markdown(f"### {selected_name} — {selected_format} — {channel}")
 
         if missing_prices:
             st.warning(
@@ -401,80 +384,113 @@ def screen_calculator():
                 "Ingredient cost is understated."
             )
 
-        # Cost
+        # Cost per unit — always shown
         st.metric("Cost per unit", f"€ {cost_per_unit:.2f}")
 
-        # Wholesale price row
-        ws_delta = None
-        if current_ws_ex and cost_per_unit > 0:
-            ws_achieved = current_ws_ex / cost_per_unit
-            ws_delta    = f"Current: € {current_ws_ex:.2f} ex-VAT " \
-                          f"({ws_achieved:.2f}× cost) [{current_ws_sku}]"
+        st.divider()
 
-        st.metric(
-            "Wholesale price (ex-VAT)",
-            f"€ {price_per_unit:.2f}" if channel == "Wholesale"
-                else f"€ {cost_per_unit * ws_margin:.2f}",
-            delta=ws_delta,
-            delta_color="off",
-            help=f"Calculated at {ws_margin:.1f}× cost"
-        )
+        if channel == "Wholesale":
+            # ── Wholesale view ────────────────────────────────────────────────
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric(
+                    "Suggested wholesale (ex-VAT)",
+                    f"€ {price_per_unit:.2f}",
+                    help=f"Cost × {ws_margin:.1f}× margin"
+                )
+            with c2:
+                if current_ws_ex:
+                    ws_margin_achieved = current_ws_ex / cost_per_unit \
+                        if cost_per_unit > 0 else 0
+                    st.metric(
+                        f"Current price (ex-VAT) [{current_ws_sku}]",
+                        f"€ {current_ws_ex:.2f}",
+                        delta=f"{ws_margin_achieved:.2f}× cost",
+                        delta_color="off"
+                    )
+                else:
+                    st.metric("Current wholesale price", "—")
 
-        # Retail price rows
-        rt_price_ex    = cost_per_unit * (
-            rt_margin_large if selected_format == "Standard"
-            else rt_margin_ind if selected_format == "Individual"
-            else rt_margin_boc
-        )
-        rt_price_inc   = rt_price_ex * 1.10
-
-        gw_delta = None
-        if current_gw_ex and cost_per_unit > 0:
-            gw_achieved = current_gw_ex / cost_per_unit
-            gw_delta    = f"Current: € {current_gw_ex:.2f} ex-VAT · " \
-                          f"€ {current_gw_ex * 1.10:.2f} inc-VAT " \
-                          f"({gw_achieved:.2f}× cost) [{current_gw_sku}]"
-
-        st.metric(
-            "Retail price (ex-VAT)",
-            f"€ {rt_price_ex:.2f}",
-            delta=gw_delta,
-            delta_color="off",
-            help=f"Calculated at retail margin"
-        )
-        st.metric(
-            "Retail price (inc-VAT 10%)",
-            f"€ {rt_price_inc:.2f}"
-        )
-
-        # Alert if cost exceeds any current price
-        prices_to_check = [p for p in [current_ws_ex, current_gw_ex] if p]
-        if prices_to_check and cost_per_unit > 0:
-            if cost_per_unit > min(prices_to_check):
+            if current_ws_ex and cost_per_unit > 0 \
+                    and cost_per_unit > current_ws_ex:
                 st.error(
                     f"⚠️ Calculated cost (€ {cost_per_unit:.2f}) exceeds "
-                    f"lowest current price (€ {min(prices_to_check):.2f} ex-VAT). "
+                    f"current wholesale price (€ {current_ws_ex:.2f}). "
                     "Check ingredient prices and labour times."
                 )
 
+            if order_qty > 1:
+                st.divider()
+                st.markdown(f"**Total for {order_qty} unit(s)**")
+                col_g, col_h = st.columns(2)
+                col_g.metric("Total cost",
+                             f"€ {cost_per_unit * order_qty:.2f}")
+                col_h.metric("Total wholesale",
+                             f"€ {price_per_unit * order_qty:.2f}")
+
+        else:
+            # ── Retail view ───────────────────────────────────────────────────
+            rt_margin_used = (
+                rt_margin_large if selected_format == "Standard"
+                else rt_margin_ind if selected_format == "Individual"
+                else rt_margin_boc
+            )
+            rt_price_ex  = cost_per_unit * rt_margin_used
+            rt_price_inc = rt_price_ex * 1.10
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric(
+                    "Suggested retail (ex-VAT)",
+                    f"€ {rt_price_ex:.2f}",
+                    help=f"Cost × {rt_margin_used:.1f}× margin"
+                )
+                st.metric(
+                    "Suggested retail (inc-VAT 10%)",
+                    f"€ {rt_price_inc:.2f}"
+                )
+            with c2:
+                if current_gw_ex:
+                    gw_margin_achieved = current_gw_ex / cost_per_unit \
+                        if cost_per_unit > 0 else 0
+                    st.metric(
+                        f"Current price ex-VAT [{current_gw_sku}]",
+                        f"€ {current_gw_ex:.2f}",
+                        delta=f"{gw_margin_achieved:.2f}× cost",
+                        delta_color="off"
+                    )
+                    st.metric(
+                        "Current price inc-VAT",
+                        f"€ {current_gw_ex * 1.10:.2f}"
+                    )
+                else:
+                    st.metric("Current retail price", "—")
+
+            if current_gw_ex and cost_per_unit > 0 \
+                    and cost_per_unit > current_gw_ex:
+                st.error(
+                    f"⚠️ Calculated cost (€ {cost_per_unit:.2f}) exceeds "
+                    f"current retail price (€ {current_gw_ex:.2f} ex-VAT). "
+                    "Check ingredient prices and labour times."
+                )
+
+            if order_qty > 1:
+                st.divider()
+                st.markdown(f"**Total for {order_qty} unit(s)**")
+                col_g, col_h = st.columns(2)
+                col_g.metric("Total cost",
+                             f"€ {cost_per_unit * order_qty:.2f}")
+                col_h.metric("Total retail (inc-VAT)",
+                             f"€ {rt_price_inc * order_qty:.2f}")
+
+        # ── Cost breakdown ────────────────────────────────────────────────────
+        st.divider()
         st.markdown("**Cost breakdown**")
         col_c, col_d, col_e, col_f = st.columns(4)
         col_c.metric("Ingredients", f"€ {ingredient_cost:.4f}")
         col_d.metric("Labour",      f"€ {labour_cost:.4f}")
         col_e.metric("Oven",        f"€ {oven_cost:.4f}")
         col_f.metric("Packaging",   f"€ {packaging_cost:.4f}")
-
-        if order_qty > 1:
-            st.divider()
-            st.markdown(f"**Total for {order_qty} unit(s)**")
-            col_g, col_h = st.columns(2)
-            col_g.metric("Total cost",  f"€ {cost_per_unit * order_qty:.2f}")
-            col_h.metric(
-                "Total retail (inc-VAT)" if channel == "Retail"
-                    else "Total wholesale",
-                f"€ {rt_price_inc * order_qty:.2f}" if channel == "Retail"
-                    else f"€ {price_per_unit * order_qty:.2f}"
-            )
 
         with st.expander("Labour calculation detail"):
             st.markdown(f"""

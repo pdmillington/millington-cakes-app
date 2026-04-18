@@ -188,6 +188,7 @@ def save_ingredient(record: dict) -> dict:
     """Insert or update an ingredient. Computes cost_per_unit before saving."""
     sb = get_client()
     record["name"] = _normalise_name(record.get("name", ""))
+    record["updated_at"] = "now()"          
     record = _compute_ingredient_cost(record)
     if record.get("id"):
         sb.table("ingredients").update(record).eq("id", record["id"]).execute()
