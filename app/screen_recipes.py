@@ -320,6 +320,19 @@ multiples — no numeric size codes needed.
             else:
                 bocado_prep_hours = 0.0
                 bocado_oven_hours = 0.0
+                
+            # ── Kitchen cross-contamination ───────────────────────────────────────
+            st.markdown("**Puede contener (cocina)**")
+            st.caption(
+                "Riesgos de contaminación cruzada por equipos compartidos "
+                "o entorno de producción. Se añade a la declaración del ficha."
+            )
+            kitchen_may_contain = st.text_input(
+                "Puede contener",
+                key=f"field_kitchen_may_contain_{p}",
+                placeholder="e.g. soja y derivados, mostaza y derivados",
+                label_visibility="collapsed"
+            )
 
         # ── Ingredient lines ──────────────────────────────────────────────────
         st.markdown("#### Ingredients")
@@ -474,6 +487,7 @@ multiples — no numeric size codes needed.
                         "small_batch_oven_hours": small_oven_hours or None,
                         "bocado_batch_prep_hours": bocado_prep_hours or None,
                         "bocado_batch_oven_hours": bocado_oven_hours or None,
+                        "kitchen_may_contain": kitchen_may_contain or None,
                     })
                     clean_lines = [
                         {"ingredient_id": l["ingredient_id"],
@@ -536,6 +550,7 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_bocado_weight_{p}"]      = 30.0
         st.session_state[f"field_bocado_prep_{p}"]        = 0.0
         st.session_state[f"field_bocado_oven_{p}"]        = 0.0
+        st.session_state[f"field_kitchen_may_contain_{p}"] = ""
     else:
         recipe = db.get_recipe(recipe_id)
 
@@ -567,6 +582,8 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_bocado_weight_{p}"]     = float(recipe.get("bocado_weight_g") or 30)
         st.session_state[f"field_bocado_prep_{p}"]       = float(recipe.get("bocado_batch_prep_hours") or 0.0)
         st.session_state[f"field_bocado_oven_{p}"]       = float(recipe.get("bocado_batch_oven_hours") or 0.0)
+        st.session_state[f"field_kitchen_may_contain_{p}"] = \
+            recipe.get("kitchen_may_contain") or ""
 
     st.rerun()
 
