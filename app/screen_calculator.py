@@ -292,13 +292,39 @@ def screen_calculator():
         ingredient_cost = 0.0
         missing_prices  = []
 
+        # Average weights in grams for fruit bought by the unit.
+        # Used for COST calculation only — we pay for the whole fruit
+        # regardless of how much is used in the recipe.
+        _UNIT_TO_G = {
+            "limones":  100.0,
+            "limas":     67.0,
+            "naranja":  180.0,
+            "manzanas": 182.0,
+        }
+        
         for line in lines:
-            ing_name = line.get("ingredient_name", "")
-            amount   = float(line.get("amount") or 0)
-            ing      = ing_map.get(ing_name, {})
-            cpu      = ing.get("cost_per_unit")
+            ing_name  = line.get("ingredient_name", "")
+            amount    = float(line.get("amount") or 0)
+            ing       = ing_map.get(ing_name, {})
+            cpu       = ing.get("cost_per_unit")  # always per gram/ml/unit
+            pack_unit = (ing.get("pack_unit") or "g").lower()
+        
             if cpu:
-                ingredient_cost += cpu * amount * scale
+                effective_amount = amount
+                # If ingredient is bought by weight (kg/g) but recipe amount
+                # is in units, convert using known fruit weights.
+                # Guard of < 20 ensures e.g. 150g of juice is not
+                # misread as 150 lemons.
+                if pack_unit in ("kg", "g"):
+                    name_lower = ing_name.lower()
+                    unit_weight = next(
+                        (w for key, w in _UNIT_TO_G.items()
+                         if key in name_lower),
+                        None
+                    )
+                    if unit_weight and amount < 20:
+                        effective_amount = amount * unit_weight
+                ingredient_cost += cpu * effective_amount * scale
             elif ing_name:
                 missing_prices.append(ing_name)
 
