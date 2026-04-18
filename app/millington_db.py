@@ -234,7 +234,17 @@ def _compute_ingredient_cost(record: dict) -> dict:
         record["cost_per_unit"] = None
     return record
 
-
+def save_ingredient_allergens(record: dict) -> None:
+    """Save allergen fields for an ingredient without touching price data."""
+    sb = get_client()
+    allergen_fields = {
+        k: v for k, v in record.items()
+        if k.startswith("allergen_") or k in ("id", "allergen_notes")
+    }
+    allergen_fields["updated_at"] = "now()"
+    sb.table("ingredients").update(allergen_fields).eq(
+        "id", allergen_fields["id"]
+    ).execute()
 
 # -----------------------------------------------------------------------------
 # Consumables
