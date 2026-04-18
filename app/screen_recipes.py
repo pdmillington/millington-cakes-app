@@ -384,26 +384,26 @@ multiples — no numeric size codes needed.
                     )
                     cost_per_unit = ing_data.get("cost_per_unit")
                 if cost_per_unit and amount:
-                # Apply fruit unit conversion if needed
-                _UNIT_TO_G = {
-                    "limones": 100.0, "limas": 67.0,
-                    "naranja": 180.0, "manzanas": 182.0,
-                }
-                pack_unit  = (ing_data.get("pack_unit") or "g").lower()
-                eff_amount = amount
-                if pack_unit in ("kg", "g"):
-                    name_lower  = selected_ing.lower()
-                    unit_weight = next(
-                        (w for key, w in _UNIT_TO_G.items()
-                         if key in name_lower), None
-                    )
-                    if unit_weight and amount < 20:
-                        eff_amount = amount * unit_weight
-                line_cost   = cost_per_unit * eff_amount
-                total_cost += line_cost
-                st.markdown(f"`€ {line_cost:.4f}`")
-            else:
-                st.markdown("—")
+                    # Apply fruit unit conversion if needed
+                    _UNIT_TO_G = {
+                        "limones": 100.0, "limas": 67.0,
+                        "naranja": 180.0, "manzanas": 182.0,
+                    }
+                    pack_unit  = (ing_data.get("pack_unit") or "g").lower()
+                    eff_amount = amount
+                    if pack_unit in ("kg", "g"):
+                        name_lower  = selected_ing.lower()
+                        unit_weight = next(
+                            (w for key, w in _UNIT_TO_G.items()
+                             if key in name_lower), None
+                        )
+                        if unit_weight and amount < 20:
+                            eff_amount = amount * unit_weight
+                    line_cost   = cost_per_unit * eff_amount
+                    total_cost += line_cost
+                    st.markdown(f"`€ {line_cost:.4f}`")
+                else:
+                    st.markdown("—")
 
             with c4:
                 if selected_ing != "— select ingredient —":
