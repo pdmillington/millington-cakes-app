@@ -8,6 +8,11 @@
 import streamlit as st
 from math import pi
 import millington_db as db
+from millington_db import (
+    get_allergen_declaration,
+    get_ingredient_label_text,
+    ALLERGEN_DISPLAY_ES,
+)
 
 # Fruit unit-to-gram conversion (same as calculator)
 _UNIT_TO_G = {
@@ -370,3 +375,45 @@ def screen_analysis():
 
     else:
         st.caption("No ingredient costs available — add prices in the Ingredients screen.")
+
+    # ── Allergen declaration preview ──────────────────────────────────────────
+    st.markdown("### Declaración de alérgenos")
+    st.caption("Calculado automáticamente a partir de los ingredientes de la receta.")
+
+    declaration = db.get_allergen_declaration(recipe["id"])
+
+    if declaration["warnings"]:
+        for w in declaration["warnings"]:
+            st.warning(w)
+
+    col_c, col_p = st.columns(2)
+    with col_c:
+        st.markdown("**Contiene:**")
+        if declaration["contiene"]:
+            for item in declaration["contiene"]:
+                st.markdown(f"- {item.capitalize()}")
+        else:
+            st.caption("Ninguno detectado")
+
+    with col_p:
+        st.markdown("**Puede contener:**")
+        if declaration["puede_contener"]:
+            for item in declaration["puede_contener"]:
+                st.markdown(f"- {item.capitalize()}")
+        else:
+            st.caption("Ninguno detectado")
+
+    st.divider()
+    st.markdown("### Borrador — lista de ingredientes")
+    st.caption(
+        "Ordenado por peso descendente (EU 1169/2011). "
+        "Revisa y aprueba en el editor de variantes antes de generar el ficha."
+    )
+
+    label_data = db.get_ingredient_label_text(recipe["id"])
+
+    if label_data["label_text"]:
+        st.markdown(f"*{label_data['label_text']}*")
+        st.caption("Los alérgenos aparecerán en negrita en el ficha generado.")
+    else:
+        st.caption("Sin datos de etiqueta disponibles.")
