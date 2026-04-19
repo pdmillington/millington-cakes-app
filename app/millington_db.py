@@ -183,6 +183,11 @@ def get_ingredients() -> list[dict]:
     result = sb.table("ingredients").select("*").order("name").execute()
     return result.data or []
 
+def get_ingredient_categories() -> list[dict]:
+    sb = get_client()
+    result = sb.table("ingredient_categories").select("*").order("label_name_es").execute()
+    return result.data or []
+
 
 def save_ingredient(record: dict) -> dict:
     """Insert or update an ingredient. Computes cost_per_unit before saving."""
@@ -235,16 +240,15 @@ def _compute_ingredient_cost(record: dict) -> dict:
     return record
 
 def save_ingredient_allergens(record: dict) -> None:
-    """Save allergen fields for an ingredient without touching price data."""
+    """Save allergen and ficha fields for an ingredient."""
     sb = get_client()
-    allergen_fields = {
+    allowed = {
         k: v for k, v in record.items()
-        if k.startswith("allergen_") or k in ("id", "allergen_notes")
+        if k.startswith("allergen_")
+        or k in ("id", "category_id", "allergen_override", "is_sub_recipe")
     }
-    allergen_fields["updated_at"] = "now()"
-    sb.table("ingredients").update(allergen_fields).eq(
-        "id", allergen_fields["id"]
-    ).execute()
+    allowed["updated_at"] = "now()"
+    sb.table("ingredients").update(allowed).eq("id", allowed["id"]).execute()
 
 # -----------------------------------------------------------------------------
 # Consumables
