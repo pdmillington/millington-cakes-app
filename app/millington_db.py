@@ -376,6 +376,16 @@ def replace_recipe_lines(recipe_id: str, lines: list[dict]) -> None:
             line["recipe_id"]  = recipe_id
             line["sort_order"] = i
         sb.table("recipe_ingredient_lines").insert(lines).execute()
+        
+def get_all_variants() -> list[dict]:
+    """Fetch all product variants in one query — used for sidebar counts."""
+    sb = get_client()
+    result = (
+        sb.table("product_variants")
+        .select("id, recipe_id, format, label_approved, channel")
+        .execute()
+    )
+    return result.data or []
 
 def get_variants_for_recipe(recipe_id: str) -> list[dict]:
     sb = get_client()
