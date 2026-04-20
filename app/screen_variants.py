@@ -1,28 +1,40 @@
 # screen_variants.py
 # =============================================================================
-# Product variants editor.
-# One variant per recipe + format + channel combination.
-# Each variant holds all data needed to generate a ficha técnica.
+# Product variants editor — simplified.
 #
-# Pre-population pattern: values written to session state before rerun,
-# so widgets render correctly on the next pass (same as recipe editor).
-# Allergen declaration is deferred behind a button to avoid slow renders.
+# Variant slots are auto-derived from recipe flags:
+#   Standard  — always shown
+#   Individual — shown if recipe.has_individual = TRUE
+#   Bocado     — shown if recipe.has_bocado = TRUE
+#
+# Each slot pre-fills sensible defaults:
+#   - Description: standard text for individual, blank prompt for bocado
+#   - Packaging: format default unless variant has a packaging_desc override
+#   - Ingredient label: copied from standard for individual,
+#                       flagged for review for bocado
+#
+# Allergen declaration is calculated on demand (button) to avoid slow renders.
 # =============================================================================
 
 import streamlit as st
 import millington_db as db
 
-FORMAT_LABELS = {
+
+# ── Packaging defaults per format ─────────────────────────────────────────────
+PACKAGING_DEFAULTS = {
+    "standard":   "Caja de cartón y base de cartón",
+    "individual": "Caja de cartón",
+    "bocado":     "Caja de cartón",
+}
+
+FORMAT_DISPLAY = {
     "standard":   "Tarta estándar",
     "individual": "Individual",
     "bocado":     "Bocado",
 }
 
-CHANNEL_LABELS = {
-    "both": "Mayorista y minorista",
-    "WS":   "Solo mayorista",
-    "GW":   "Solo minorista",
-}
+STORAGE_DEFAULT  = "Refrigerada entre 0 - 5°C"
+SHELF_DEFAULT    = 24
 
 
 # =============================================================================
@@ -32,18 +44,17 @@ CHANNEL_LABELS = {
 def screen_variants():
     st.title("Variantes de producto")
     st.caption(
-        "Cada variante define una combinación de receta + formato + canal. "
-        "Aprueba la lista de ingredientes antes de generar el ficha."
+        "Los slots de variante se generan automáticamente según los formatos "
+        "activos en cada receta. Rellena los datos del ficha y aprueba la "
+        "lista de ingredientes antes de generar el PDF."
     )
 
-    recipes  = db.get_recipes()
-    presets  = db.get_packaging_presets()
-
-    recipe_map   = {r["id"]: r for r in recipes}
-    recipe_names = sorted([r["name"] for r in recipes], key=str.lower)
-    preset_list  = [{"id": None, "name": "— ninguno —"}] + presets
+    recipes      = db.get_recipes()
+    presets      = db.get_packaging_presets()
     preset_by_id = {p["id"]: p for p in presets}
-    preset_by_name = {p["name"]: p["id"] for p in presets}
+
+    recipe_names = sorted([r["name"] for r in recipes], key=str.lower)
+    recipe_by_id = {r["id"]: r for r in recipes}
 
     col_list, col_detail = st.columns([1, 2.5])
 
@@ -53,8 +64,7 @@ def screen_variants():
 
         search = st.text_input(
             "Buscar", placeholder="Filtrar…",
-            label_visibility="collapsed",
-            key="var_search"
+            label_visibility="collapsed", key="var_search"
         )
 
         displayed = [
@@ -67,8 +77,9 @@ def screen_variants():
         for name in displayed:
             r        = next(x for x in recipes if x["name"] == name)
             variants = db.get_variants_for_recipe(r["id"])
+            n_slots  = _count_slots(r)
             approved = sum(1 for v in variants if v.get("label_approved"))
-            badge    = f" ✅{approved}/{len(variants)}" if variants else " —"
+            badge    = f" ✅{approved}/{n_slots}"
 
             if st.button(
                 name + badge,
@@ -76,8 +87,9 @@ def screen_variants():
                 use_container_width=True,
                 type="primary" if selected_rid == r["id"] else "secondary"
             ):
-                st.session_state.var_recipe_id  = r["id"]
-                st.session_state.var_variant_id = None
+                st.session_state.var_recipe_id = r["id"]
+                # Clear all loaded flags for this recipe's variants
+                _clear_variant_state(r["id"])
                 st.rerun()
 
     # ── Detail panel ──────────────────────────────────────────────────────────
@@ -87,139 +99,138 @@ def screen_variants():
             st.info("Selecciona una receta de la lista.")
             return
 
-        recipe   = recipe_map.get(rid, {})
+        recipe   = recipe_by_id.get(rid, {})
         variants = db.get_variants_for_recipe(rid)
+        var_by_fmt = {v["format"]: v for v in variants}
 
-        st.markdown(f"### {recipe.get('name','')}")
+        st.markdown(f"### {recipe.get('name', '')}")
         st.caption(_ref_size_desc(recipe))
 
-        # Variant selector tabs when there are multiple variants
-        if variants:
-            tab_labels = [_variant_tab_label(v) for v in variants]
-            tab_labels.append("➕ Nueva")
-            tabs = st.tabs(tab_labels)
+        # Determine active slots from recipe flags
+        slots = _active_slots(recipe)
 
-            for tab, v in zip(tabs[:-1], variants):
-                with tab:
-                    _variant_form(
-                        v, rid, recipe, preset_list,
-                        preset_by_id, preset_by_name
-                    )
+        if not slots:
+            st.warning("Esta receta no tiene formatos activos.")
+            return
 
-            with tabs[-1]:
-                _new_variant_form(rid, presets, preset_by_name, variants)
-        else:
-            st.info("No hay variantes — añade la primera abajo.")
-            _new_variant_form(rid, presets, preset_by_name, variants)
+        # ── Tabs — one per slot ───────────────────────────────────────────────
+        tab_labels = [_slot_tab_label(fmt, var_by_fmt) for fmt in slots]
+        tabs = st.tabs(tab_labels)
+
+        for tab, fmt in zip(tabs, slots):
+            with tab:
+                variant = var_by_fmt.get(fmt)
+                _slot_editor(
+                    fmt, variant, rid, recipe,
+                    var_by_fmt, presets, preset_by_id
+                )
 
 
 # =============================================================================
-# Variant form
+# Slot editor
 # =============================================================================
 
-def _variant_form(
-    v: dict, rid: str, recipe: dict,
-    preset_list: list, preset_by_id: dict, preset_by_name: dict
+def _slot_editor(
+    fmt: str,
+    variant: dict | None,
+    rid: str,
+    recipe: dict,
+    var_by_fmt: dict,
+    presets: list,
+    preset_by_id: dict,
 ):
-    """Render the full editor for an existing variant."""
-    vid = v["id"]
-    p   = f"vf_{vid}"
+    """
+    Editor for one format slot.
+    If no variant row exists yet, show a create form with pre-filled defaults.
+    If variant exists, show editable form pre-populated from the DB row.
+    """
+    vid  = variant["id"] if variant else None
+    p    = f"vs_{rid}_{fmt}"
 
-    # ── Load into session state on first render ────────────────────────────
-    # Uses the same pattern as screen_recipes — write before render.
+    # Load into session state once
     if f"{p}_loaded" not in st.session_state:
-        _load_variant(v, preset_by_id, p)
+        _load_slot(p, fmt, variant, var_by_fmt, recipe)
 
-    # ── Section 1: Format / Channel / Pack ────────────────────────────────
-    st.markdown("#### Formato y canal")
-    c1, c2, c3 = st.columns(3)
+    is_new = vid is None
 
-    with c1:
-        fmt = st.selectbox(
-            "Formato",
-            options=list(FORMAT_LABELS.keys()),
-            format_func=lambda x: FORMAT_LABELS[x],
-            key=f"{p}_format"
-        )
-    with c2:
-        channel = st.selectbox(
-            "Canal",
-            options=list(CHANNEL_LABELS.keys()),
-            format_func=lambda x: CHANNEL_LABELS[x],
-            key=f"{p}_channel"
-        )
-    with c3:
-        units_per_pack = st.number_input(
-            "Uds. por caja",
-            min_value=1,
-            key=f"{p}_units",
-            help="1 = unidad. 12, 24 etc. para cajas mayoristas."
+    if is_new:
+        st.info(
+            f"No hay variante {FORMAT_DISPLAY[fmt]} aún — "
+            "rellena los datos y guarda para crearla."
         )
 
-    # ── Section 2: SKUs (conditional on channel) ─────────────────────────
+    # ── SKUs ──────────────────────────────────────────────────────────────────
     st.markdown("#### SKUs")
-    if channel in ("both", "WS"):
+    sk1, sk2 = st.columns(2)
+    with sk1:
         sku_ws = st.text_input(
             "SKU Mayorista",
             key=f"{p}_sku_ws",
             placeholder="e.g. LP-01-TI-WS"
         )
-    else:
-        sku_ws = None
-
-    if channel in ("both", "GW"):
+    with sk2:
         sku_gw = st.text_input(
             "SKU Minorista",
             key=f"{p}_sku_gw",
             placeholder="e.g. LP-01-TI-GW"
         )
-    else:
-        sku_gw = None
 
-    # ── Section 3: Size & weight ──────────────────────────────────────────
+    # ── Size & weight ──────────────────────────────────────────────────────────
     st.markdown("#### Tamaño y peso")
-    s1, s2 = st.columns(2)
-    with s1:
+    sz1, sz2 = st.columns(2)
+    with sz1:
         size_description = st.text_input(
             "Descripción de tamaño",
             key=f"{p}_size",
             placeholder="e.g. 8 cm diámetro"
         )
-    with s2:
+    with sz2:
         ref_weight_g = st.number_input(
             "Peso aprox. (g)",
             min_value=0.0,
             key=f"{p}_weight"
         )
 
-    # ── Section 4: Description ────────────────────────────────────────────
-    st.markdown("#### Descripción")
+    # ── Description ────────────────────────────────────────────────────────────
+    st.markdown("#### Descripción (español)")
+
+    if fmt == "bocado" and not st.session_state.get(f"{p}_desc"):
+        st.caption(
+            "Los bocados suelen tener una descripción más corta — "
+            "comienza con 'Bocado de...' y omite detalles de decoración "
+            "que no apliquen."
+        )
+    elif fmt == "individual":
+        st.caption(
+            "La descripción del individual suele ser idéntica a la estándar. "
+            "Modifica solo si hay diferencias reales."
+        )
+
     description_es = st.text_area(
         "Descripción",
         key=f"{p}_desc",
-        height=90,
+        height=85,
         label_visibility="collapsed",
         placeholder="Descripción del producto en español…"
     )
 
-    # ── Section 5: Packaging & storage ───────────────────────────────────
-    st.markdown("#### Embalaje y conservación")
-    pk1, pk2 = st.columns(2)
-    with pk1:
-        packaging_desc = st.text_input(
-            "Descripción de embalaje",
-            key=f"{p}_packdesc",
-            placeholder="e.g. Caja de cartón y base de cartón"
-        )
-    with pk2:
-        preset_names_list = [pl["name"] for pl in preset_list]
-        selected_preset_name = st.selectbox(
-            "Preset de embalaje",
-            options=preset_names_list,
-            key=f"{p}_preset"
-        )
-        selected_preset_id = preset_by_name.get(selected_preset_name)
+    # ── Packaging ──────────────────────────────────────────────────────────────
+    st.markdown("#### Embalaje")
+    st.caption(
+        f"Por defecto: *{PACKAGING_DEFAULTS[fmt]}* — "
+        "modifica solo si este producto usa embalaje diferente."
+    )
+    packaging_desc = st.text_input(
+        "Embalaje (dejar vacío para usar el predeterminado)",
+        key=f"{p}_packdesc",
+        placeholder=PACKAGING_DEFAULTS[fmt]
+    )
+    # Effective packaging — override if filled, otherwise default
+    effective_packaging = packaging_desc.strip() if packaging_desc.strip() \
+        else PACKAGING_DEFAULTS[fmt]
 
+    # ── Storage & shelf life ───────────────────────────────────────────────────
+    st.markdown("#### Conservación")
     sv1, sv2 = st.columns(2)
     with sv1:
         storage_instructions = st.text_input(
@@ -233,45 +244,56 @@ def _variant_form(
             key=f"{p}_shelf"
         )
 
-    # ── Section 6: Prices ─────────────────────────────────────────────────
+    # ── Prices ─────────────────────────────────────────────────────────────────
     st.markdown("#### Precios")
     pr1, pr2 = st.columns(2)
     with pr1:
-        if channel in ("both", "WS"):
-            ws_price = st.number_input(
-                "Precio mayorista ex-IVA (€)",
-                min_value=0.0, format="%.4f",
-                key=f"{p}_ws"
-            )
-        else:
-            ws_price = None
+        ws_price = st.number_input(
+            "Mayorista ex-IVA (€)",
+            min_value=0.0, format="%.4f",
+            key=f"{p}_ws"
+        )
     with pr2:
-        if channel in ("both", "GW"):
-            rt_price = st.number_input(
-                "Precio minorista inc-IVA (€)",
-                min_value=0.0, format="%.4f",
-                key=f"{p}_rt"
-            )
-        else:
-            rt_price = None
+        rt_price = st.number_input(
+            "Minorista inc-IVA (€)",
+            min_value=0.0, format="%.4f",
+            key=f"{p}_rt"
+        )
 
-    # ── Section 7: Ingredient label text ──────────────────────────────────
+    # ── Ingredient label text ──────────────────────────────────────────────────
     st.markdown("#### Lista de ingredientes (etiqueta)")
+
+    if fmt == "bocado":
+        st.caption(
+            "⚠️ Verifica si los ingredientes del bocado difieren del estándar "
+            "(p.ej. sin fruta fresca si no lleva decoración). "
+            "Pulsa Regenerar como punto de partida y edita si es necesario."
+        )
+    elif fmt == "individual":
+        st.caption(
+            "Normalmente idéntica al estándar. "
+            "Pulsa Regenerar si está vacía."
+        )
 
     ingredient_label_es = st.text_area(
         "Lista de ingredientes",
         key=f"{p}_label",
-        height=110,
+        height=100,
         label_visibility="collapsed",
-        help="Ordenado por peso descendente. Alérgenos en negrita en el ficha."
+        help="Ordenado por peso descendente. "
+             "Alérgenos en negrita en el ficha generado."
     )
 
-    col_regen, col_blank = st.columns([1, 3])
+    col_regen, _ = st.columns([1, 3])
     with col_regen:
         if st.button("↺ Regenerar", key=f"{p}_regen",
-                     help="Sobreescribe con borrador generado desde la receta"):
+                     help="Genera borrador desde la receta"):
             label_data = db.get_ingredient_label_text(rid)
-            st.session_state[f"{p}_label"] = label_data.get("label_text", "")
+            st.session_state[f"{p}_label"] = \
+                label_data.get("label_text", "")
+            if label_data.get("warnings"):
+                for w in label_data["warnings"]:
+                    st.warning(w)
             st.rerun()
 
     label_approved = st.checkbox(
@@ -280,75 +302,77 @@ def _variant_form(
         help="Solo las variantes aprobadas pueden generar fichas."
     )
 
-    # ── Section 8: Allergen declaration (on demand) ───────────────────────
+    # ── Allergen declaration — on demand ──────────────────────────────────────
     st.markdown("#### Declaración de alérgenos")
 
-    if st.button("Calcular alérgenos", key=f"{p}_calc_al"):
-        declaration = db.get_allergen_declaration(rid)
+    if st.button("Calcular alérgenos", key=f"{p}_calc"):
+        with st.spinner("Calculando…"):
+            declaration = db.get_allergen_declaration(rid)
         st.session_state[f"{p}_declaration"] = declaration
 
-    declaration = st.session_state.get(f"{p}_declaration")
-    if declaration:
-        if declaration["warnings"]:
-            for w in declaration["warnings"]:
+    decl = st.session_state.get(f"{p}_declaration")
+    if decl:
+        if decl["warnings"]:
+            for w in decl["warnings"]:
                 st.warning(w)
         al1, al2 = st.columns(2)
         with al1:
             st.markdown("**Contiene:**")
-            if declaration["contiene"]:
-                for item in declaration["contiene"]:
-                    st.markdown(f"- {item.capitalize()}")
-            else:
-                st.caption("Ninguno detectado")
+            for item in decl["contiene"]:
+                st.markdown(f"- {item.capitalize()}")
+            if not decl["contiene"]:
+                st.caption("Ninguno")
         with al2:
             st.markdown("**Puede contener:**")
-            if declaration["puede_contener"]:
-                for item in declaration["puede_contener"]:
-                    st.markdown(f"- {item.capitalize()}")
-            else:
+            for item in decl["puede_contener"]:
+                st.markdown(f"- {item.capitalize()}")
+            if not decl["puede_contener"]:
                 st.caption("Ninguno")
     else:
         st.caption(
-            "Pulsa 'Calcular alérgenos' para ver la declaración generada "
-            "automáticamente desde los ingredientes de la receta."
+            "Pulsa 'Calcular alérgenos' para ver la declaración "
+            "generada automáticamente."
         )
 
-    # ── Save / Delete ─────────────────────────────────────────────────────
+    # ── Save ──────────────────────────────────────────────────────────────────
     st.divider()
     col_save, col_del = st.columns([2, 1])
 
     with col_save:
         if st.button(
-            "💾 Guardar variante", type="primary",
+            "💾 Guardar", type="primary",
             use_container_width=True, key=f"{p}_save"
         ):
-            db.save_variant({
-                "id":                   vid,
+            record = {
+                "recipe_id":            rid,
                 "format":               fmt,
-                "channel":              channel,
-                "units_per_pack":       units_per_pack,
+                "channel":              "both",
+                "units_per_pack":       1,
                 "sku_ws":               sku_ws or None,
                 "sku_gw":               sku_gw or None,
                 "size_description":     size_description or None,
                 "ref_weight_g":         ref_weight_g or None,
                 "description_es":       description_es or None,
-                "packaging_desc":       packaging_desc or None,
-                "packaging_preset_id":  selected_preset_id,
+                "packaging_desc":       effective_packaging,
                 "storage_instructions": storage_instructions or None,
                 "shelf_life_hours":     shelf_life_hours,
                 "ws_price_ex_vat":      ws_price or None,
                 "rt_price_inc_vat":     rt_price or None,
                 "ingredient_label_es":  ingredient_label_es or None,
                 "label_approved":       label_approved,
-            })
+            }
+            if vid:
+                record["id"] = vid
+            db.save_variant(record)
+
             # Clear loaded flag so form reloads fresh values
             st.session_state.pop(f"{p}_loaded", None)
             st.session_state.pop(f"{p}_declaration", None)
-            st.success("Variante guardada", icon="✅")
+            st.success("Guardado", icon="✅")
             st.rerun()
 
     with col_del:
-        if st.button(
+        if vid and st.button(
             "🗑 Eliminar", use_container_width=True,
             key=f"{p}_del"
         ):
@@ -359,143 +383,148 @@ def _variant_form(
 
 
 # =============================================================================
-# New variant form
+# Session state helpers
 # =============================================================================
 
-def _new_variant_form(
-    rid: str, presets: list,
-    preset_by_name: dict, existing_variants: list
+def _load_slot(
+    p: str, fmt: str,
+    variant: dict | None,
+    var_by_fmt: dict,
+    recipe: dict,
 ):
-    st.caption(
-        "Añade un nuevo formato, canal o configuración de caja. "
-        "Puedes tener varias variantes del mismo formato con "
-        "diferentes tamaños de caja mayorista."
-    )
+    """
+    Write slot values into session state before first render.
+    Pre-fills defaults intelligently:
+      - Individual inherits description from standard if blank
+      - All formats use packaging default if variant has no override
+    """
+    std = var_by_fmt.get("standard", {})
 
-    existing = {
-        (v.get("format"), v.get("channel", "both"))
-        for v in existing_variants
-    }
-
-    a1, a2, a3 = st.columns(3)
-    with a1:
-        new_fmt = st.selectbox(
-            "Formato",
-            options=list(FORMAT_LABELS.keys()),
-            format_func=lambda x: FORMAT_LABELS[x],
-            key="nv_format"
+    if variant:
+        # Existing variant — load from DB
+        st.session_state[f"{p}_sku_ws"]   = variant.get("sku_ws") or ""
+        st.session_state[f"{p}_sku_gw"]   = variant.get("sku_gw") or ""
+        st.session_state[f"{p}_size"]     = variant.get("size_description") or ""
+        st.session_state[f"{p}_weight"]   = float(variant.get("ref_weight_g") or 0)
+        st.session_state[f"{p}_desc"]     = variant.get("description_es") or ""
+        # packaging_desc: show the override (may be empty, default shown as placeholder)
+        stored_pack = variant.get("packaging_desc") or ""
+        is_default  = stored_pack == PACKAGING_DEFAULTS.get(fmt, "")
+        st.session_state[f"{p}_packdesc"] = "" if is_default else stored_pack
+        st.session_state[f"{p}_storage"]  = (
+            variant.get("storage_instructions") or STORAGE_DEFAULT
         )
-    with a2:
-        new_channel = st.selectbox(
-            "Canal",
-            options=list(CHANNEL_LABELS.keys()),
-            format_func=lambda x: CHANNEL_LABELS[x],
-            key="nv_channel"
+        st.session_state[f"{p}_shelf"]    = int(
+            variant.get("shelf_life_hours") or SHELF_DEFAULT
         )
-    with a3:
-        new_units = st.number_input(
-            "Uds. por caja", min_value=1, value=1,
-            key="nv_units"
-        )
+        st.session_state[f"{p}_ws"]       = float(variant.get("ws_price_ex_vat") or 0)
+        st.session_state[f"{p}_rt"]       = float(variant.get("rt_price_inc_vat") or 0)
+        st.session_state[f"{p}_label"]    = variant.get("ingredient_label_es") or ""
+        st.session_state[f"{p}_approved"] = bool(variant.get("label_approved"))
 
-    if (new_fmt, new_channel) in existing and new_units == 1:
-        st.warning(
-            f"Ya existe {FORMAT_LABELS[new_fmt]} / "
-            f"{CHANNEL_LABELS[new_channel]}. Añade con "
-            "número de unidades distinto para cajas específicas."
-        )
+    else:
+        # New variant — pre-fill defaults
+        st.session_state[f"{p}_sku_ws"]   = ""
+        st.session_state[f"{p}_sku_gw"]   = ""
+        st.session_state[f"{p}_size"]     = _default_size(fmt, recipe)
+        st.session_state[f"{p}_weight"]   = _default_weight(fmt, recipe)
+        st.session_state[f"{p}_packdesc"] = ""  # empty = use format default
 
-    b1, b2 = st.columns(2)
-    with b1:
-        new_size = st.text_input(
-            "Tamaño", key="nv_size",
-            placeholder="e.g. 8 cm diámetro"
-        )
-    with b2:
-        new_weight = st.number_input(
-            "Peso aprox. (g)", min_value=0.0, key="nv_weight"
-        )
+        # Description: individual copies standard, bocado starts blank
+        if fmt == "individual":
+            st.session_state[f"{p}_desc"] = std.get("description_es") or ""
+        else:
+            st.session_state[f"{p}_desc"] = ""
 
-    c1, c2 = st.columns(2)
-    with c1:
-        new_storage = st.text_input(
-            "Conservación", key="nv_storage",
-            value="Refrigerada entre 0 - 5°C"
-        )
-    with c2:
-        new_shelf = st.number_input(
-            "Vida útil (h)", min_value=1, value=24, key="nv_shelf"
-        )
+        st.session_state[f"{p}_storage"]  = STORAGE_DEFAULT
+        st.session_state[f"{p}_shelf"]    = SHELF_DEFAULT
+        st.session_state[f"{p}_ws"]       = 0.0
+        st.session_state[f"{p}_rt"]       = 0.0
 
-    if st.button("Añadir variante", type="primary", key="nv_add"):
-        db.save_variant({
-            "recipe_id":            rid,
-            "format":               new_fmt,
-            "channel":              new_channel,
-            "units_per_pack":       new_units,
-            "size_description":     new_size or None,
-            "ref_weight_g":         new_weight or None,
-            "storage_instructions": new_storage or None,
-            "shelf_life_hours":     new_shelf,
-            "label_approved":       False,
-        })
-        st.success("Variante añadida", icon="✅")
-        st.rerun()
+        # Label: individual copies standard, bocado starts blank
+        if fmt == "individual":
+            st.session_state[f"{p}_label"] = std.get("ingredient_label_es") or ""
+        else:
+            st.session_state[f"{p}_label"] = ""
 
+        st.session_state[f"{p}_approved"] = False
 
-# =============================================================================
-# Helpers
-# =============================================================================
-
-def _load_variant(v: dict, preset_by_id: dict, p: str):
-    """Write variant values into session state before render."""
-    st.session_state[f"{p}_format"]   = v.get("format", "standard")
-    st.session_state[f"{p}_channel"]  = v.get("channel", "both")
-    st.session_state[f"{p}_units"]    = int(v.get("units_per_pack") or 1)
-    st.session_state[f"{p}_sku_ws"]   = v.get("sku_ws") or ""
-    st.session_state[f"{p}_sku_gw"]   = v.get("sku_gw") or ""
-    st.session_state[f"{p}_size"]     = v.get("size_description") or ""
-    st.session_state[f"{p}_weight"]   = float(v.get("ref_weight_g") or 0)
-    st.session_state[f"{p}_desc"]     = v.get("description_es") or ""
-    st.session_state[f"{p}_packdesc"] = v.get("packaging_desc") or ""
-    st.session_state[f"{p}_storage"]  = (
-        v.get("storage_instructions") or "Refrigerada entre 0 - 5°C"
-    )
-    st.session_state[f"{p}_shelf"]    = int(v.get("shelf_life_hours") or 24)
-    st.session_state[f"{p}_ws"]       = float(v.get("ws_price_ex_vat") or 0)
-    st.session_state[f"{p}_rt"]       = float(v.get("rt_price_inc_vat") or 0)
-    st.session_state[f"{p}_label"]    = v.get("ingredient_label_es") or ""
-    st.session_state[f"{p}_approved"] = bool(v.get("label_approved"))
-
-    # Preset name
-    preset_id   = v.get("packaging_preset_id")
-    preset      = preset_by_id.get(preset_id, {})
-    preset_name = preset.get("name", "— ninguno —")
-    st.session_state[f"{p}_preset"] = preset_name
-
-    # Mark as loaded so we don't overwrite user edits on rerun
     st.session_state[f"{p}_loaded"] = True
 
 
-def _variant_tab_label(v: dict) -> str:
-    fmt     = FORMAT_LABELS.get(v.get("format", "standard"), "?")
-    channel = v.get("channel", "both")
-    units   = int(v.get("units_per_pack") or 1)
-    approved = "✅" if v.get("label_approved") else "⚠️"
-    ch_short = {"both": "↕", "WS": "WS", "GW": "GW"}.get(channel, "?")
-    label    = f"{approved} {fmt} {ch_short}"
-    if units > 1:
-        label += f" ×{units}"
-    return label
+def _clear_variant_state(rid: str):
+    """Clear all session state keys for a recipe's variant slots."""
+    keys_to_clear = [
+        k for k in st.session_state
+        if k.startswith(f"vs_{rid}_")
+    ]
+    for k in keys_to_clear:
+        del st.session_state[k]
+
+
+# =============================================================================
+# Default value helpers
+# =============================================================================
+
+def _default_size(fmt: str, recipe: dict) -> str:
+    """Suggest a size description for a new variant slot."""
+    size_type = recipe.get("size_type", "diameter")
+    if fmt == "standard":
+        if size_type == "diameter":
+            d = recipe.get("ref_diameter_cm", "")
+            return f"{d:.0f} cm diámetro" if d else ""
+        elif size_type == "weight":
+            return f"{recipe.get('ref_weight_kg', '')} kg"
+        else:
+            return f"{recipe.get('ref_portions', '')} porciones"
+    elif fmt == "individual":
+        return "8 cm diámetro"   # most common — user adjusts
+    elif fmt == "bocado":
+        return "3.5 cm diámetro"
+    return ""
+
+
+def _default_weight(fmt: str, recipe: dict) -> float:
+    """Suggest a weight in grams for a new variant slot."""
+    if fmt == "individual":
+        return float(recipe.get("individual_weight_g") or 100)
+    elif fmt == "bocado":
+        return float(recipe.get("bocado_weight_g") or 30)
+    return 0.0
+
+
+# =============================================================================
+# Display helpers
+# =============================================================================
+
+def _active_slots(recipe: dict) -> list[str]:
+    """Return list of active format slots for this recipe."""
+    slots = ["standard"]
+    if recipe.get("has_individual"):
+        slots.append("individual")
+    if recipe.get("has_bocado"):
+        slots.append("bocado")
+    return slots
+
+
+def _count_slots(recipe: dict) -> int:
+    return len(_active_slots(recipe))
+
+
+def _slot_tab_label(fmt: str, var_by_fmt: dict) -> str:
+    v        = var_by_fmt.get(fmt)
+    approved = v and v.get("label_approved")
+    icon     = "✅" if approved else "⚠️"
+    return f"{icon} {FORMAT_DISPLAY[fmt]}"
 
 
 def _ref_size_desc(recipe: dict) -> str:
-    st_type = recipe.get("size_type", "diameter")
-    if st_type == "diameter":
+    size_type = recipe.get("size_type", "diameter")
+    if size_type == "diameter":
         d = recipe.get("ref_diameter_cm", "")
         h = recipe.get("ref_height_cm", "")
-        return f"Referencia: {d}cm diámetro" + (f" × {h}cm alto" if h else "")
-    elif st_type == "weight":
-        return f"Referencia: {recipe.get('ref_weight_kg', '')}kg"
+        return f"Referencia: {d}cm diámetro" + (f" × {h}cm" if h else "")
+    elif size_type == "weight":
+        return f"Referencia: {recipe.get('ref_weight_kg', '')} kg"
     else:
         return f"Referencia: {recipe.get('ref_portions', '')} porciones"
