@@ -377,6 +377,37 @@ def replace_recipe_lines(recipe_id: str, lines: list[dict]) -> None:
             line["sort_order"] = i
         sb.table("recipe_ingredient_lines").insert(lines).execute()
 
+def get_variants_for_recipe(recipe_id: str) -> list[dict]:
+    sb = get_client()
+    result = (
+        sb.table("product_variants")
+        .select("*")
+        .eq("recipe_id", recipe_id)
+        .order("format")
+        .execute()
+    )
+    return result.data or []
+
+
+def save_variant(record: dict) -> dict:
+    sb = get_client()
+    record["updated_at"] = "now()"
+    if record.get("id"):
+        sb.table("product_variants").update(record).eq(
+            "id", record["id"]
+        ).execute()
+        result = sb.table("product_variants").select("*").eq(
+            "id", record["id"]
+        ).execute()
+    else:
+        result = sb.table("product_variants").insert(record).execute()
+    return result.data[0] if result.data else {}
+
+
+def delete_variant(variant_id: str) -> None:
+    sb = get_client()
+    sb.table("product_variants").delete().eq("id", variant_id).execute()
+
 # =============================================================================
 # ALLERGEN DECLARATION GENERATOR
 # Add these functions to millington_db.py

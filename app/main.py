@@ -20,6 +20,7 @@ from screen_calculator import screen_calculator
 from screen_settings import screen_settings
 from screen_packaging import screen_packaging
 from screen_analysis import screen_analysis
+from screen_variants import screen_variants
 
 # -----------------------------------------------------------------------------
 # Page config — must be the first Streamlit call in the file
@@ -83,6 +84,9 @@ def sidebar() -> str:
 
         if st.button("Packaging presets", use_container_width=True):
             st.session_state.screen = "packaging"
+            
+        if st.button("Variantes de producto", use_container_width=True):
+            st.session_state.screen = "variants"
 
         st.divider()
         st.markdown("**System**")
@@ -276,6 +280,7 @@ SCREENS = {
     "recipes": screen_recipes,
     "packaging": screen_packaging,
     "settings": screen_settings,
+    "variants": screen_variants,
 }
 
 
