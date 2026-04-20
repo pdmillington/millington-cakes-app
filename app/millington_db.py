@@ -392,6 +392,8 @@ def get_variants_for_recipe(recipe_id: str) -> list[dict]:
 def save_variant(record: dict) -> dict:
     sb = get_client()
     record["updated_at"] = "now()"
+    # Remove legacy sku_code if present
+    record.pop("sku_code", None)
     if record.get("id"):
         sb.table("product_variants").update(record).eq(
             "id", record["id"]
