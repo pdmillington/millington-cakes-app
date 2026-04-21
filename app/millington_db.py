@@ -419,6 +419,16 @@ def save_variant(record: dict) -> dict:
 def delete_variant(variant_id: str) -> None:
     sb = get_client()
     sb.table("product_variants").delete().eq("id", variant_id).execute()
+    
+def get_all_variants_full() -> list[dict]:
+    """Fetch all variants with price fields — used by repricing screen."""
+    sb = get_client()
+    result = (
+        sb.table("product_variants")
+        .select("recipe_id, format, ws_price_ex_vat, rt_price_inc_vat, channel")
+        .execute()
+    )
+    return result.data or []
 
 # =============================================================================
 # ALLERGEN DECLARATION GENERATOR

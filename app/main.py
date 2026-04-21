@@ -20,6 +20,7 @@ from screen_analysis    import screen_analysis
 from screen_variants    import screen_variants
 from screen_packaging   import screen_packaging
 from screen_settings    import screen_settings
+from screen_repricing    import screen_repricing
 
 
 # =============================================================================
@@ -73,6 +74,8 @@ def sidebar() -> str:
             st.session_state.screen = "calculator"
         if st.button("Recipe analysis", use_container_width=True):
             st.session_state.screen = "analysis"
+        if st.button("Repricing analysis", use_container_width=True):
+            st.session_state.screen = "repricing"
 
         st.divider()
         st.markdown("**Manage**")
@@ -247,6 +250,7 @@ SCREENS = {
     "variants":    screen_variants,
     "packaging":   screen_packaging,
     "settings":    screen_settings,
+    "repricing":   screen_repricing,
 }
 
 
