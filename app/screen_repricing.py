@@ -253,7 +253,7 @@ def screen_repricing():
 
     st.dataframe(
         display_df.style.apply(row_style, axis=1),
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )
 

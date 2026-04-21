@@ -258,7 +258,7 @@ def screen_analysis():
                 f"Wholesale cost  ·  € {ws_total:.2f} / cake",
                 colours
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
         st.caption(
             f"Labour: batch of {ws_batch_large} · "
@@ -278,7 +278,7 @@ def screen_analysis():
                 f"Retail cost  ·  € {rt_total:.2f} / cake",
                 rt_colours
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
         st.caption(
             f"Labour: batch of {rt_batch_large} · "
@@ -324,7 +324,7 @@ def screen_analysis():
 
             if has_plotly:
                 fig = make_pie(labels, vals, subtitle, colours)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
             # Key numbers
             st.caption(
