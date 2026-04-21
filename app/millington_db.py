@@ -921,25 +921,6 @@ def delete_preset(preset_id: str) -> None:
     sb = get_client()
     sb.table("packaging_presets").delete().eq("id", preset_id).execute()
 
-# Packaging presets
-
-def update_preset(preset_id: str, name: str, lines: list[dict]) -> None:
-    """Update an existing packaging preset name and replace its lines."""
-    sb = get_client()
-    sb.table("packaging_presets").update({"name": name}).eq("id", preset_id).execute()
-    # Replace all lines
-    sb.table("packaging_preset_lines").delete().eq("preset_id", preset_id).execute()
-    if lines:
-        for line in lines:
-            line["preset_id"] = preset_id
-        sb.table("packaging_preset_lines").insert(lines).execute()
-
-
-def delete_preset(preset_id: str) -> None:
-    """Delete a packaging preset and its lines (cascade handles lines)."""
-    sb = get_client()
-    sb.table("packaging_presets").delete().eq("id", preset_id).execute()
-
 # -----------------------------------------------------------------------------
 # Settings
 # -----------------------------------------------------------------------------
