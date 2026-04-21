@@ -75,7 +75,7 @@ def sidebar() -> str:
         if st.button("Recipe analysis", use_container_width=True):
             st.session_state.screen = "analysis"
         if st.button("Repricing analysis", use_container_width=True):
-            st.session_state.screen = "repricing"
+             st.session_state.screen = "repricing"
 
         st.divider()
         st.markdown("**Manage**")
