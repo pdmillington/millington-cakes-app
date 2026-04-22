@@ -77,8 +77,10 @@ def screen_repricing():
     with col_f2:
         filter_status = st.multiselect(
             "WS Status",
-            ["🟢 On target", "🟡 Review", "🔴 Below cost", "⚪ No price"],
-            default=["🟢 On target", "🟡 Review", "🔴 Below cost", "⚪ No price"]
+            ["🟢 On target", "🟡 Review (low)", "🟡 Review (high)",
+             "🔴 Below cost", "⚪ No price"],
+            default=["🟢 On target", "🟡 Review (low)", "🟡 Review (high)",
+                     "🔴 Below cost", "⚪ No price"]
         )
     with col_f3:
         show_incomplete = st.checkbox(
@@ -175,15 +177,15 @@ def screen_repricing():
             # WS gap
             ws_gap = (ws_price_ex - ws_suggested) if ws_price_ex else None
 
-            # Traffic light on WS margin
+            # Traffic light — symmetric ±5% band around target WS margin
             if not ws_price_ex or ws_cost <= 0:
                 status = "⚪ No price"
             elif ws_price_ex < ws_cost:
                 status = "🔴 Below cost"
-            elif ws_margin_ach < target_ws * 0.85:
-                status = "🔴 Below cost"
-            elif ws_margin_ach < target_ws:
-                status = "🟡 Review"
+            elif ws_margin_ach < target_ws * 0.95:
+                status = "🟡 Review (low)"
+            elif ws_margin_ach > target_ws * 1.05:
+                status = "🟡 Review (high)"
             else:
                 status = "🟢 On target"
 
@@ -261,18 +263,20 @@ def screen_repricing():
     st.divider()
     st.markdown("### Summary")
 
-    n_green  = sum(1 for r in rows if r["Status"] == "🟢 On target")
-    n_amber  = sum(1 for r in rows if r["Status"] == "🟡 Review")
-    n_red    = sum(1 for r in rows if r["Status"] == "🔴 Below cost")
-    n_nodata = sum(1 for r in rows if r["Status"] == "⚪ No price")
-    n_miss   = sum(1 for r in rows if r["_missing"])
+    n_green   = sum(1 for r in rows if r["Status"] == "🟢 On target")
+    n_low     = sum(1 for r in rows if r["Status"] == "🟡 Review (low)")
+    n_high    = sum(1 for r in rows if r["Status"] == "🟡 Review (high)")
+    n_red     = sum(1 for r in rows if r["Status"] == "🔴 Below cost")
+    n_nodata  = sum(1 for r in rows if r["Status"] == "⚪ No price")
+    n_miss    = sum(1 for r in rows if r["_missing"])
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("🟢 On target",        n_green)
-    m2.metric("🟡 Review",           n_amber)
-    m3.metric("🔴 Below cost",       n_red)
-    m4.metric("⚪ No price",         n_nodata)
-    m5.metric("⚠️ Incomplete costs", n_miss)
+    m2.metric("🟡 Review (low)",     n_low)
+    m3.metric("🟡 Review (high)",    n_high)
+    m4.metric("🔴 Below cost",       n_red)
+    m5.metric("⚪ No price",         n_nodata)
+    m6.metric("⚠️ Incomplete costs", n_miss)
 
     if n_red > 0:
         st.error(
