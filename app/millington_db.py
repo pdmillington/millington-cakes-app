@@ -245,8 +245,7 @@ def save_ingredient_allergens(record: dict) -> None:
     allowed = {
         k: v for k, v in record.items()
         if k.startswith("allergen_")
-        or k in ("id", "category_id", "allergen_override",
-                 "is_sub_recipe", "label_name_es")
+        or k in ("id", "category_id", "allergen_override", "is_sub_recipe", "label_name_es")
     }
     allowed["updated_at"] = "now()"
     sb.table("ingredients").update(allowed).eq("id", allowed["id"]).execute()
@@ -420,6 +419,16 @@ def save_variant(record: dict) -> dict:
 def delete_variant(variant_id: str) -> None:
     sb = get_client()
     sb.table("product_variants").delete().eq("id", variant_id).execute()
+    
+def get_all_variants_full() -> list[dict]:
+    """Fetch all variants with price fields — used by repricing screen."""
+    sb = get_client()
+    result = (
+        sb.table("product_variants")
+        .select("recipe_id, format, ws_price_ex_vat, rt_price_inc_vat, channel")
+        .execute()
+    )
+    return result.data or []
 
 # =============================================================================
 # ALLERGEN DECLARATION GENERATOR
@@ -500,8 +509,7 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
         .select(
             "amount, sort_order, "
             "ingredients!inner("
-            "  id, name, label_name_es, is_sub_recipe, allergen_override, "
-            "  allergen_notes, "
+            "  id, name, label_name_es, is_sub_recipe, allergen_override, allergen_notes, "
             + ", ".join(ALLERGEN_FIELDS) + ", "
             "  ingredient_categories(id, label_name_es, " +
             ", ".join(ALLERGEN_FIELDS) + ")"
@@ -517,8 +525,7 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
         ing = row.pop("ingredients", None) or {}
         cat = ing.pop("ingredient_categories", None) or {}
 
-        # Label name: ingredient's own label_name_es if set,
-        # otherwise fall back to category label, then ingredient name
+        # Label name: ingredient label_name_es > category label > ingredient name
         ing_label = (
             ing.get("label_name_es")
             or cat.get("label_name_es")
@@ -930,25 +937,6 @@ def update_preset(preset_id: str, name: str, lines: list[dict],
 
 
 def delete_preset(preset_id: str) -> None:
-    sb = get_client()
-    sb.table("packaging_presets").delete().eq("id", preset_id).execute()
-
-# Packaging presets
-
-def update_preset(preset_id: str, name: str, lines: list[dict]) -> None:
-    """Update an existing packaging preset name and replace its lines."""
-    sb = get_client()
-    sb.table("packaging_presets").update({"name": name}).eq("id", preset_id).execute()
-    # Replace all lines
-    sb.table("packaging_preset_lines").delete().eq("preset_id", preset_id).execute()
-    if lines:
-        for line in lines:
-            line["preset_id"] = preset_id
-        sb.table("packaging_preset_lines").insert(lines).execute()
-
-
-def delete_preset(preset_id: str) -> None:
-    """Delete a packaging preset and its lines (cascade handles lines)."""
     sb = get_client()
     sb.table("packaging_presets").delete().eq("id", preset_id).execute()
 
