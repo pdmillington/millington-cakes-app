@@ -391,8 +391,8 @@ def _generate_pdf(
         ("LINEBELOW",   (0, 0), (-1, -1), 0.3, rule),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
         ("RIGHTPADDING",(0, 0), (-1, -1), 6),
-        ("TOPPADDING",  (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING",(0,0), (-1, -1), 5),
+        ("TOPPADDING",  (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING",(0,0), (-1, -1), 3),
         ("ALIGN",       (2, 0), (2, -1), "RIGHT"),
         ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
     ]
@@ -406,13 +406,15 @@ def _generate_pdf(
 
         # Group header row — full width, shaded
         table_data.append([
-            Paragraph(group.upper(), grp_ps), "", ""
+            Paragraph(group.upper(), grp_ps),
+            "",
+            Paragraph("Precio (€)", ps(f"gh{row_idx}", f=bold, sz=8, ld=11, al=2, col=grp_fg)),
         ])
         table_styles += [
             ("BACKGROUND", (0, row_idx), (-1, row_idx), grp_bg),
             ("SPAN",       (0, row_idx), (-1, row_idx)),
-            ("TOPPADDING", (0, row_idx), (-1, row_idx), 4),
-            ("BOTTOMPADDING",(0,row_idx),(-1, row_idx), 4),
+            ("TOPPADDING", (0, row_idx), (-1, row_idx), 3),
+            ("BOTTOMPADDING",(0,row_idx),(-1, row_idx), 3),
         ]
         row_idx += 1
 
