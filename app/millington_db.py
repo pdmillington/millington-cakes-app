@@ -425,15 +425,14 @@ def delete_variant(variant_id: str) -> None:
     sb.table("product_variants").delete().eq("id", variant_id).execute()
     
 def get_all_variants_full() -> list[dict]:
-    """Fetch all variants with price fields — used by repricing screen."""
+    """Fetch all variants with working, approved price fields and size info."""
     sb = get_client()
     result = (
         sb.table("product_variants")
         .select(
-            "id, recipe_id, format, channel, "
-            "ws_price_ex_vat, ws_price_approved, "
-            "rt_price_inc_vat, rt_price_approved, "
-            "size_description"
+            "id, recipe_id, format, channel, size_description, "
+            "ws_price_ex_vat, ws_price_approved, ws_price_approved_at, "
+            "rt_price_inc_vat, rt_price_approved, rt_price_approved_at"
         )
         .execute()
     )
