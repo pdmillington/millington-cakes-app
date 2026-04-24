@@ -402,8 +402,12 @@ def get_variants_for_recipe(recipe_id: str) -> list[dict]:
 def save_variant(record: dict) -> dict:
     sb = get_client()
     record["updated_at"] = "now()"
-    # Remove legacy sku_code if present
     record.pop("sku_code", None)
+    # Timestamp price fields when they are updated
+    if "ws_price_ex_vat" in record:
+        record["ws_price_updated_at"] = "now()"
+    if "rt_price_inc_vat" in record:
+        record["rt_price_updated_at"] = "now()"
     if record.get("id"):
         sb.table("product_variants").update(record).eq(
             "id", record["id"]
@@ -525,7 +529,6 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
         ing = row.pop("ingredients", None) or {}
         cat = ing.pop("ingredient_categories", None) or {}
 
-        # Label name: ingredient label_name_es > category label > ingredient name
         ing_label = (
             ing.get("label_name_es")
             or cat.get("label_name_es")
@@ -709,7 +712,6 @@ def get_allergen_declaration(
             accumulated = _union_allergens(accumulated, eff)
 
             # Add to label ingredient list
-            # Priority: ingredient label_name_es > category label > ingredient name
             label_name = (
                 line.get("label_name_es")
                 or line.get("category_label")
@@ -958,3 +960,117 @@ def save_settings(record: dict) -> dict:
     else:
         result = sb.table("settings").insert(record).execute()
     return result.data[0] if result.data else {}
+
+
+# =============================================================================
+# Price approval and client pricing
+# =============================================================================
+
+def get_all_variants_full_with_approval() -> list[dict]:
+    """Fetch all variants with working and approved price fields."""
+    sb = get_client()
+    result = (
+        sb.table("product_variants")
+        .select(
+            "id, recipe_id, format, channel, "
+            "ws_price_ex_vat, ws_price_approved, ws_price_approved_at, "
+            "rt_price_inc_vat, rt_price_approved, rt_price_approved_at, "
+            "ws_price_updated_at, rt_price_updated_at, "
+            "size_description"
+        )
+        .execute()
+    )
+    return result.data or []
+
+
+def approve_variant_prices(
+    variant_id: str,
+    ws_price: float | None,
+    rt_price: float | None
+) -> None:
+    """Copy working prices to approved fields with current timestamp."""
+    sb     = get_client()
+    record = {"id": variant_id, "updated_at": "now()"}
+    if ws_price is not None:
+        record["ws_price_approved"]    = ws_price
+        record["ws_price_approved_at"] = "now()"
+    if rt_price is not None:
+        record["rt_price_approved"]    = rt_price
+        record["rt_price_approved_at"] = "now()"
+    sb.table("product_variants").update(record).eq(
+        "id", variant_id
+    ).execute()
+
+
+def get_client_prices() -> list[dict]:
+    """Fetch all client-specific prices with variant and recipe info."""
+    sb = get_client()
+    result = (
+        sb.table("client_prices")
+        .select(
+            "*, "
+            "product_variants(format, size_description, "
+            "recipes(name))"
+        )
+        .order("client_name")
+        .execute()
+    )
+    rows = []
+    for row in result.data or []:
+        variant = row.pop("product_variants", None) or {}
+        recipe  = variant.pop("recipes", None) or {}
+        fmt     = variant.get("format", "")
+        fmt_label = {"standard": "Estándar", "individual": "Individual",
+                     "bocado": "Bocado"}.get(fmt, fmt)
+        row["variant_label"] = (
+            f"{recipe.get('name', '')} — {fmt_label}"
+        )
+        rows.append(row)
+    return rows
+
+
+def save_client_price(record: dict) -> dict:
+    """Save a client-specific price (upsert on client_name + variant_id)."""
+    sb = get_client()
+    # Check if exists
+    existing = (
+        sb.table("client_prices")
+        .select("id")
+        .eq("client_name", record["client_name"])
+        .eq("variant_id",  record["variant_id"])
+        .execute()
+    )
+    if existing.data:
+        record["id"] = existing.data[0]["id"]
+        sb.table("client_prices").update(record).eq(
+            "id", record["id"]
+        ).execute()
+        result = sb.table("client_prices").select("*").eq(
+            "id", record["id"]
+        ).execute()
+    else:
+        result = sb.table("client_prices").insert(record).execute()
+    return result.data[0] if result.data else {}
+
+
+def delete_client_price(price_id: str) -> None:
+    sb = get_client()
+    sb.table("client_prices").delete().eq("id", price_id).execute()
+
+
+def get_client_prices_for_catalogue(client_name: str) -> dict[str, dict]:
+    """
+    Return client-specific prices for a named client, keyed by variant_id.
+    Used in catalogue generation to override standard approved prices.
+    """
+    sb = get_client()
+    today = str(__import__("datetime").date.today())
+    result = (
+        sb.table("client_prices")
+        .select("variant_id, ws_price_ex_vat, rt_price_inc_vat")
+        .eq("client_name", client_name)
+        .lte("valid_from", today)
+        .or_(f"valid_until.is.null,valid_until.gte.{today}")
+        .execute()
+    )
+    return {r["variant_id"]: r for r in (result.data or [])}
