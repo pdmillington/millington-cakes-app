@@ -147,7 +147,7 @@ def _price_matrix():
 
     edited = st.data_editor(
         display_df[edit_cols].reset_index(drop=True),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         disabled=[
             "Recipe", "Format",
@@ -304,7 +304,7 @@ def _client_prices():
         st.dataframe(
             cp_df[["Client", "Product", "WS price (€)",
                    "RT price (€)", "Valid from", "Valid until", "Notes"]],
-            use_container_width=True,
+            width='stretch',
             hide_index=True
         )
     else:
