@@ -20,7 +20,8 @@ from screen_analysis    import screen_analysis
 from screen_variants    import screen_variants
 from screen_packaging   import screen_packaging
 from screen_settings    import screen_settings
-from screen_repricing    import screen_repricing
+from screen_repricing   import screen_repricing
+from screen_catalogue   import screen_catalogue
 
 
 # =============================================================================
@@ -86,6 +87,8 @@ def sidebar() -> str:
             st.session_state.screen = "ingredients"
         if st.button("Consumables", use_container_width=True):
             st.session_state.screen = "consumables"
+        if st.button("Wholesale catalogue", use_container_width=True):
+            st.session_state.screen = "catalogue"
 
         st.divider()
         st.markdown("**Config**")
@@ -251,6 +254,7 @@ SCREENS = {
     "packaging":   screen_packaging,
     "settings":    screen_settings,
     "repricing":   screen_repricing,
+    "catalogue":   screen_catalogue,
 }
 
 
