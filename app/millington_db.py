@@ -419,16 +419,6 @@ def save_variant(record: dict) -> dict:
 def delete_variant(variant_id: str) -> None:
     sb = get_client()
     sb.table("product_variants").delete().eq("id", variant_id).execute()
-    
-def get_all_variants_full() -> list[dict]:
-    """Fetch all variants with price fields — used by repricing screen."""
-    sb = get_client()
-    result = (
-        sb.table("product_variants")
-        .select("recipe_id, format, ws_price_ex_vat, rt_price_inc_vat, channel")
-        .execute()
-    )
-    return result.data or []
 
 # =============================================================================
 # ALLERGEN DECLARATION GENERATOR
@@ -473,19 +463,19 @@ ALLERGEN_FIELDS = [
 
 ALLERGEN_DISPLAY_ES = {
     "allergen_gluten":     "cereales con gluten y sus derivados",
-    "allergen_crustacean": "crustáceos y productos a base de crustáceos",
-    "allergen_egg":        "huevo y productos a base de huevo",
-    "allergen_fish":       "pescado y productos a base de pescado",
-    "allergen_peanut":     "cacahuetes y productos a base de cacahuetes",
-    "allergen_soy":        "soja y productos a base de soja",
-    "allergen_milk":       "leche y sus derivados (incluida la lactosa)",
-    "allergen_nuts":       "frutos de cáscara y productos derivados",
-    "allergen_celery":     "apio y productos derivados",
-    "allergen_mustard":    "mostaza y productos derivados",
-    "allergen_sesame":     "granos de sésamo y productos a base de granos de sésamo",
+    "allergen_crustacean": "crustáceos y sus derivados",
+    "allergen_egg":        "huevo y derivados",
+    "allergen_fish":       "pescado y sus derivados",
+    "allergen_peanut":     "cacahuetes y sus derivados",
+    "allergen_soy":        "soja y sus derivados",
+    "allergen_milk":       "leche y derivados lácteos",
+    "allergen_nuts":       "frutos de cáscara y sus derivados",
+    "allergen_celery":     "apio y sus derivados",
+    "allergen_mustard":    "mostaza y sus derivados",
+    "allergen_sesame":     "granos de sésamo y sus derivados",
     "allergen_sulphites":  "dióxido de azufre y sulfitos",
-    "allergen_lupin":      "altramuces y productos a base de altramuces",
-    "allergen_mollusc":    "moluscos y productos a base de moluscos",
+    "allergen_lupin":      "altramuces y sus derivados",
+    "allergen_mollusc":    "moluscos y sus derivados",
 }
 
 
@@ -509,7 +499,8 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
         .select(
             "amount, sort_order, "
             "ingredients!inner("
-            "  id, name, is_sub_recipe, allergen_override, allergen_notes, "
+            "  id, name, label_name_es, is_sub_recipe, allergen_override, "
+            "  allergen_notes, "
             + ", ".join(ALLERGEN_FIELDS) + ", "
             "  ingredient_categories(id, label_name_es, " +
             ", ".join(ALLERGEN_FIELDS) + ")"
@@ -525,11 +516,20 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
         ing = row.pop("ingredients", None) or {}
         cat = ing.pop("ingredient_categories", None) or {}
 
+        # Label name: ingredient's own label_name_es if set,
+        # otherwise fall back to category label, then ingredient name
+        ing_label = (
+            ing.get("label_name_es")
+            or cat.get("label_name_es")
+            or ing.get("name", "")
+        )
+
         entry = {
             "amount":            float(row.get("amount") or 0),
             "sort_order":        row.get("sort_order", 0),
             "ingredient_id":     ing.get("id"),
             "ingredient_name":   ing.get("name", ""),
+            "label_name_es":     ing_label,
             "is_sub_recipe":     bool(ing.get("is_sub_recipe")),
             "allergen_override": bool(ing.get("allergen_override")),
             "allergen_notes":    ing.get("allergen_notes"),
@@ -701,10 +701,11 @@ def get_allergen_declaration(
             accumulated = _union_allergens(accumulated, eff)
 
             # Add to label ingredient list
+            # Priority: ingredient label_name_es > category label > ingredient name
             label_name = (
-                line["category_label"]
-                if line["category_label"]
-                else name
+                line.get("label_name_es")
+                or line.get("category_label")
+                or name
             )
             if label_name:
                 ing_for_label.append((label_name, amount))
@@ -928,6 +929,25 @@ def update_preset(preset_id: str, name: str, lines: list[dict],
 
 
 def delete_preset(preset_id: str) -> None:
+    sb = get_client()
+    sb.table("packaging_presets").delete().eq("id", preset_id).execute()
+
+# Packaging presets
+
+def update_preset(preset_id: str, name: str, lines: list[dict]) -> None:
+    """Update an existing packaging preset name and replace its lines."""
+    sb = get_client()
+    sb.table("packaging_presets").update({"name": name}).eq("id", preset_id).execute()
+    # Replace all lines
+    sb.table("packaging_preset_lines").delete().eq("preset_id", preset_id).execute()
+    if lines:
+        for line in lines:
+            line["preset_id"] = preset_id
+        sb.table("packaging_preset_lines").insert(lines).execute()
+
+
+def delete_preset(preset_id: str) -> None:
+    """Delete a packaging preset and its lines (cascade handles lines)."""
     sb = get_client()
     sb.table("packaging_presets").delete().eq("id", preset_id).execute()
 
