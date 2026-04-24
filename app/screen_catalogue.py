@@ -2,12 +2,18 @@
 # =============================================================================
 # Wholesale catalogue generator.
 #
-# Select which products to include, preview the price table,
-# then generate a PDF matching the format of the original LaTeX catalogue.
+# Prices shown and printed are APPROVED prices (ws_price_approved).
+# Working/draft prices are NOT used here — only approved prices go into
+# the catalogue. This ensures the catalogue always reflects a deliberate
+# pricing decision.
 #
-# PDF uses EB Garamond font (data/EBGaramond-Regular.ttf and Bold)
-# and the Millington logo (data/Logo.png).
-# Background colour: #F2EEE8 (warm off-white).
+# If a client name is entered and that client has specific prices in the
+# client_prices table, those override the standard approved prices for
+# that client's catalogue only.
+#
+# PDF uses EB Garamond (data/EBGaramond-Regular.ttf + Bold) and
+# the Millington logo (data/Logo.png).
+# Background: #F2EEE8 (warm off-white).
 # =============================================================================
 
 import streamlit as st
@@ -17,24 +23,17 @@ import io
 from datetime import date
 
 
-# ── Format groupings for catalogue ───────────────────────────────────────────
 FORMAT_GROUPS = [
-    ("Tarta",             "standard"),
-    ("Tarta Individual",  "individual"),
-    ("Bocados",           "bocado"),
+    ("Tarta",            "standard"),
+    ("Tarta Individual", "individual"),
+    ("Bocados",          "bocado"),
 ]
 
-# Products that belong to "Otros" in the catalogue
 OTROS_RECIPES = {
     "Cookies", "Brownie", "Blondie", "Brioche - canela",
     "Brioche - chocolate", "Scones", "Scone con pasas",
     "Trufas chocolate negro",
 }
-
-BG_COLOUR = "#F2EEE8"
-DARK      = "#1a1a1a"
-GREY      = "#6b7280"
-HEADER_BG = "#a0a0a0"
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
@@ -42,8 +41,8 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 def screen_catalogue():
     st.title("Catálogo mayorista")
     st.caption(
-        "Selecciona los productos a incluir y genera el PDF del catálogo. "
-        "Los precios se toman directamente de las variantes de producto."
+        "Los precios del catálogo son los precios aprobados. "
+        "Para actualizar precios en el catálogo, apruébalos primero en la pantalla Prices."
     )
 
     # ── Load data ─────────────────────────────────────────────────────────────
@@ -51,21 +50,23 @@ def screen_catalogue():
     all_variants = db.get_all_variants_full()
     settings     = db.get_settings()
 
-    recipe_by_id  = {r["id"]: r for r in recipes}
+    recipe_by_id = {r["id"]: r for r in recipes}
+
+    # Build variant lookup: {recipe_id: {format: variant}}
     var_lookup: dict[str, dict[str, dict]] = {}
     for v in all_variants:
         var_lookup.setdefault(v["recipe_id"], {})[v["format"]] = v
 
-    # ── Build product list grouped for display ────────────────────────────────
-    # Each entry: {recipe_name, format, size_description, ws_price_ex_vat, recipe_id}
+    # ── Build product list using APPROVED prices ───────────────────────────────
+    # Each row stores the variant_id so we can apply client overrides later.
     catalogue_rows: dict[str, list[dict]] = {
         "Tarta": [], "Tarta Individual": [],
-        "Bocados": [], "Otros": []
+        "Bocados": [], "Otros": [],
     }
 
     for recipe in sorted(recipes, key=lambda r: r["name"]):
-        rid  = recipe["id"]
-        name = recipe["name"]
+        rid      = recipe["id"]
+        name     = recipe["name"]
         is_otros = name in OTROS_RECIPES
 
         for fmt_label, fmt_key in FORMAT_GROUPS:
@@ -79,26 +80,37 @@ def screen_catalogue():
             if not active:
                 continue
 
-            variant = var_lookup.get(rid, {}).get(fmt_key, {})
-            ws_price = float(variant.get("ws_price_ex_vat") or 0) or None
+            variant    = var_lookup.get(rid, {}).get(fmt_key, {})
+            variant_id = variant.get("id")
 
-            size_desc = variant.get("size_description") or ""
-
-            group = "Otros" if is_otros and fmt_key == "standard" \
+            # Use APPROVED price — not working price
+            approved_price = (
+                float(variant.get("ws_price_approved") or 0) or None
+            )
+            approved_date = (
+                str(variant.get("ws_price_approved_at") or "")[:10] or None
+            )
+            size_desc  = variant.get("size_description") or ""
+            group      = "Otros" if is_otros and fmt_key == "standard" \
                 else fmt_label
 
             catalogue_rows[group].append({
-                "recipe_id":    rid,
-                "fmt_key":      fmt_key,
-                "name":         name,
-                "size":         size_desc,
-                "ws_price":     ws_price,
-                "group":        group,
+                "variant_id":     variant_id,
+                "recipe_id":      rid,
+                "fmt_key":        fmt_key,
+                "name":           name,
+                "size":           size_desc,
+                "ws_price":       approved_price,   # approved price
+                "approved_date":  approved_date,
+                "group":          group,
             })
 
     # ── Product selector ──────────────────────────────────────────────────────
     st.markdown("### Selección de productos")
-    st.caption("Marca los productos a incluir en el catálogo.")
+    st.caption(
+        "Sólo se muestran precios aprobados. "
+        "Los productos sin precio aprobado aparecen como 'Sin precio'."
+    )
 
     selected_rows: list[dict] = []
 
@@ -108,11 +120,15 @@ def screen_catalogue():
         st.markdown(f"**{group_name}**")
         cols = st.columns(2)
         for i, row in enumerate(group_rows):
-            price_str = f"€ {row['ws_price']:.2f}" if row["ws_price"] else "Sin precio"
+            price_str = (
+                f"€ {row['ws_price']:.2f}"
+                if row["ws_price"]
+                else "⚠️ Sin precio aprobado"
+            )
             label = f"{row['name']}  ·  {row['size']}  ·  {price_str}"
             checked = cols[i % 2].checkbox(
                 label,
-                value=bool(row["ws_price"]),  # default: tick if has price
+                value=bool(row["ws_price"]),
                 key=f"cat_sel_{row['recipe_id']}_{row['fmt_key']}"
             )
             if checked:
@@ -124,13 +140,7 @@ def screen_catalogue():
         st.info("Selecciona al menos un producto para continuar.")
         return
 
-    # ── Preview ───────────────────────────────────────────────────────────────
-    st.markdown("### Vista previa")
-
-    with st.expander("Ver tabla de precios", expanded=True):
-        _render_preview_table(selected_rows)
-
-    # ── Catalogue header options ───────────────────────────────────────────────
+    # ── Catalogue options ──────────────────────────────────────────────────────
     st.markdown("### Opciones del catálogo")
 
     col_a, col_b = st.columns(2)
@@ -141,27 +151,62 @@ def screen_catalogue():
             key="cat_title"
         )
         catalogue_date = st.text_input(
-            "Fecha (aparece en el documento)",
+            "Fecha",
             value=date.today().strftime("%B %Y").capitalize(),
             key="cat_date"
         )
     with col_b:
         client_name = st.text_input(
-            "Cliente (opcional — para catálogo personalizado)",
+            "Cliente (opcional)",
             placeholder="e.g. Restaurante La Paloma",
-            key="cat_client"
+            key="cat_client",
+            help="If this client has specific prices in the Prices screen, "
+                 "those will override the standard approved prices."
         )
         include_conditions = st.checkbox(
             "Incluir condiciones de pedido", value=True,
             key="cat_conditions"
         )
 
-    # Override conditions text for this client
+    # ── Resolve final prices ───────────────────────────────────────────────────
+    # If client_name is set, fetch their overrides and apply.
+    # This happens AFTER the product selection so the client name is known.
+    if client_name.strip():
+        client_overrides = db.get_client_prices_for_catalogue(
+            client_name.strip()
+        )
+        if client_overrides:
+            st.info(
+                f"Found {len(client_overrides)} client-specific price(s) "
+                f"for '{client_name}' — these will override standard prices."
+            )
+            # Apply overrides to selected rows (mutate a copy)
+            resolved_rows = []
+            for row in selected_rows:
+                row_copy = dict(row)
+                override = client_overrides.get(row["variant_id"], {})
+                if override.get("ws_price_ex_vat"):
+                    row_copy["ws_price"] = float(override["ws_price_ex_vat"])
+                    row_copy["_overridden"] = True
+                else:
+                    row_copy["_overridden"] = False
+                resolved_rows.append(row_copy)
+        else:
+            resolved_rows = selected_rows
+            if client_name.strip():
+                st.caption(
+                    f"No client-specific prices found for '{client_name}' — "
+                    "using standard approved prices."
+                )
+    else:
+        resolved_rows = selected_rows
+
+    # ── Conditions ────────────────────────────────────────────────────────────
     if include_conditions:
         with st.expander("✏️ Editar condiciones para este catálogo"):
             st.caption(
                 "Los valores por defecto vienen de Settings. "
-                "Edita aquí solo si este cliente tiene condiciones especiales."
+                "Edita aquí para condiciones especiales de este cliente."
             )
             custom_allergen = st.text_area(
                 "Nota alérgenos",
@@ -183,6 +228,11 @@ def screen_catalogue():
         custom_availability = settings.get("cond_availability_notice") or ""
         custom_returns      = settings.get("cond_returns_policy") or ""
 
+    # ── Preview ───────────────────────────────────────────────────────────────
+    st.markdown("### Vista previa")
+    with st.expander("Ver tabla de precios", expanded=True):
+        _render_preview_table(resolved_rows, client_name.strip())
+
     st.divider()
 
     # ── Generate PDF ──────────────────────────────────────────────────────────
@@ -190,17 +240,21 @@ def screen_catalogue():
         with st.spinner("Generando catálogo…"):
             try:
                 pdf_bytes = _generate_pdf(
-                    rows             = selected_rows,
-                    settings         = settings,
-                    title            = catalogue_title,
-                    cat_date         = catalogue_date,
-                    client_name      = client_name or None,
-                    include_cond     = include_conditions,
-                    cond_allergen    = custom_allergen,
-                    cond_avail       = custom_availability,
-                    cond_returns     = custom_returns,
+                    rows          = resolved_rows,
+                    settings      = settings,
+                    title         = catalogue_title,
+                    cat_date      = catalogue_date,
+                    client_name   = client_name.strip() or None,
+                    include_cond  = include_conditions,
+                    cond_allergen = custom_allergen,
+                    cond_avail    = custom_availability,
+                    cond_returns  = custom_returns,
                 )
-                fname = f"millington_catalogo_{date.today().isoformat()}.pdf"
+                fname = (
+                    f"millington_catalogo"
+                    f"{'_' + client_name.strip().replace(' ','_') if client_name.strip() else ''}"
+                    f"_{date.today().isoformat()}.pdf"
+                )
                 st.download_button(
                     "⬇️ Descargar catálogo PDF",
                     data=pdf_bytes,
@@ -215,11 +269,10 @@ def screen_catalogue():
 
 
 # =============================================================================
-# Preview table
+# Preview
 # =============================================================================
 
-def _render_preview_table(rows: list[dict]):
-    """Render an in-app preview of the catalogue table."""
+def _render_preview_table(rows: list[dict], client_name: str = ""):
     groups_order = ["Tarta", "Tarta Individual", "Bocados", "Otros"]
     by_group: dict[str, list] = {}
     for r in rows:
@@ -242,10 +295,18 @@ def _render_preview_table(rows: list[dict]):
             c1.write(group if first else "")
             c2.write(row["name"])
             c3.write(row["size"] or "—")
-            c4.write(
-                f"€ {row['ws_price']:.2f}" if row["ws_price"] else "—"
-            )
+
+            if row.get("ws_price"):
+                price_text = f"€ {row['ws_price']:.2f}"
+                if row.get("_overridden"):
+                    price_text += " ★"  # flag client override
+            else:
+                price_text = "—"
+            c4.write(price_text)
             first = False
+
+    if client_name:
+        st.caption("★ = client-specific price override")
 
 
 # =============================================================================
@@ -263,13 +324,12 @@ def _generate_pdf(
     cond_avail: str,
     cond_returns: str,
 ) -> bytes:
-    """Generate the catalogue PDF using ReportLab."""
     from reportlab.platypus import (
         SimpleDocTemplate, Table, TableStyle, Paragraph,
         Spacer, Image, HRFlowable
     )
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import cm
     from reportlab.lib import colors
     from reportlab.pdfbase import pdfmetrics
@@ -280,48 +340,39 @@ def _generate_pdf(
     font_bold    = os.path.join(DATA_DIR, "EBGaramond-Bold.ttf")
 
     if os.path.exists(font_regular) and os.path.exists(font_bold):
-        pdfmetrics.registerFont(TTFont("Garamond",     font_regular))
+        pdfmetrics.registerFont(TTFont("Garamond",      font_regular))
         pdfmetrics.registerFont(TTFont("Garamond-Bold", font_bold))
-        body_font  = "Garamond"
-        bold_font  = "Garamond-Bold"
+        body_font = "Garamond"
+        bold_font = "Garamond-Bold"
     else:
-        body_font  = "Times-Roman"
-        bold_font  = "Times-Bold"
+        body_font = "Times-Roman"
+        bold_font = "Times-Bold"
 
     # ── Colours ────────────────────────────────────────────────────────────────
     bg_color     = colors.HexColor("#F2EEE8")
     dark_color   = colors.HexColor("#1a1a1a")
     header_color = colors.HexColor("#9ca3af")
     row_alt      = colors.HexColor("#ebe6de")
+    override_col = colors.HexColor("#1d4ed8")  # blue for client overrides
 
     # ── Document ───────────────────────────────────────────────────────────────
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
+    doc    = SimpleDocTemplate(
+        buffer, pagesize=A4,
         leftMargin=2.5*cm, rightMargin=2.5*cm,
-        topMargin=2*cm, bottomMargin=2.5*cm,
+        topMargin=2*cm,    bottomMargin=2.5*cm,
     )
 
-    styles = getSampleStyleSheet()
-
-    def style(name, font=body_font, size=10, leading=14,
-              alignment=0, color=dark_color, space_before=0, space_after=4):
+    def ps(name, font=None, size=10, leading=14, align=0,
+           color=None, sb=0, sa=4):
         return ParagraphStyle(
-            name, fontName=font, fontSize=size,
-            leading=leading, alignment=alignment,
-            textColor=color, spaceAfter=space_after,
-            spaceBefore=space_before,
+            name,
+            fontName=font or body_font,
+            fontSize=size, leading=leading,
+            alignment=align,
+            textColor=color or dark_color,
+            spaceBefore=sb, spaceAfter=sa,
         )
-
-    title_style    = style("Title",    font=bold_font,  size=18, leading=22, alignment=1, space_before=6, space_after=4)
-    subtitle_style = style("Subtitle", font=body_font,  size=11, leading=14, alignment=1, color=colors.HexColor("#6b7280"), space_after=2)
-    date_style     = style("Date",     font=body_font,  size=9,  leading=12, alignment=1, color=colors.HexColor("#6b7280"), space_after=12)
-    section_style  = style("Section",  font=bold_font,  size=11, leading=14, space_before=10, space_after=4)
-    body_style     = style("Body",     font=body_font,  size=9,  leading=13)
-    cond_h_style   = style("CondH",    font=bold_font,  size=9,  leading=13, space_before=6)
-    cond_style     = style("Cond",     font=body_font,  size=8,  leading=12, color=colors.HexColor("#374151"))
-    footer_style   = style("Footer",   font=body_font,  size=8,  leading=10, alignment=1, color=colors.HexColor("#9ca3af"))
 
     story = []
 
@@ -334,13 +385,27 @@ def _generate_pdf(
         story.append(Spacer(1, 0.3*cm))
 
     # ── Title block ────────────────────────────────────────────────────────────
-    story.append(Paragraph(title, title_style))
-    story.append(Paragraph("Millington Cakes", subtitle_style))
+    story.append(Paragraph(
+        title,
+        ps("T", font=bold_font, size=18, leading=22, align=1, sb=6, sa=4)
+    ))
+    story.append(Paragraph(
+        "Millington Cakes",
+        ps("S", size=11, align=1, color=colors.HexColor("#6b7280"), sa=2)
+    ))
     if client_name:
-        story.append(Paragraph(f"Preparado para: {client_name}", subtitle_style))
-    story.append(Paragraph(cat_date, date_style))
-    story.append(HRFlowable(width="100%", thickness=0.5,
-                             color=colors.HexColor("#d1c9be")))
+        story.append(Paragraph(
+            f"Preparado para: {client_name}",
+            ps("C", size=10, align=1, color=colors.HexColor("#6b7280"), sa=2)
+        ))
+    story.append(Paragraph(
+        cat_date,
+        ps("D", size=9, align=1, color=colors.HexColor("#6b7280"), sa=12)
+    ))
+    story.append(HRFlowable(
+        width="100%", thickness=0.5,
+        color=colors.HexColor("#d1c9be")
+    ))
     story.append(Spacer(1, 0.4*cm))
 
     # ── Price table ────────────────────────────────────────────────────────────
@@ -349,76 +414,99 @@ def _generate_pdf(
     for r in rows:
         by_group.setdefault(r["group"], []).append(r)
 
-    # Build table data
     col_widths = [3.5*cm, 6.5*cm, 4*cm, 2.5*cm]
+
+    th_style = ParagraphStyle(
+        "th", fontName=bold_font, fontSize=9, textColor=colors.white
+    )
+    th_r = ParagraphStyle(
+        "thr", fontName=bold_font, fontSize=9,
+        textColor=colors.white, alignment=2
+    )
+
     table_data = [[
-        Paragraph("<b>Tamaño</b>",   ParagraphStyle("th", fontName=bold_font, fontSize=9, textColor=colors.white)),
-        Paragraph("<b>Producto</b>", ParagraphStyle("th", fontName=bold_font, fontSize=9, textColor=colors.white)),
-        Paragraph("<b>Medida</b>",   ParagraphStyle("th", fontName=bold_font, fontSize=9, textColor=colors.white)),
-        Paragraph("<b>Precio (€)</b>",ParagraphStyle("th", fontName=bold_font, fontSize=9, textColor=colors.white, alignment=2)),
+        Paragraph("<b>Tamaño</b>",    th_style),
+        Paragraph("<b>Producto</b>",  th_style),
+        Paragraph("<b>Medida</b>",    th_style),
+        Paragraph("<b>Precio (€)</b>", th_r),
     ]]
 
-    row_styles   = []
-    data_row_idx = 1  # header is row 0
-    group_start: dict[str, int] = {}
+    cell_style = ps("cell", size=9, leading=12)
+    size_style = ps("sz", size=8, leading=12,
+                    color=colors.HexColor("#6b7280"))
+
+    extra_styles = []
+    data_idx = 1
 
     for group in groups_order:
         group_rows = by_group.get(group, [])
         if not group_rows:
             continue
 
-        group_start[group] = data_row_idx
-        sorted_rows = sorted(group_rows, key=lambda x: x["name"])
-
-        for i, row in enumerate(sorted_rows):
+        for i, row in enumerate(sorted(group_rows, key=lambda x: x["name"])):
             group_label = group if i == 0 else ""
-            price_str   = f"{row['ws_price']:.2f}" if row["ws_price"] else "—"
+            price_val   = row.get("ws_price")
+            price_str   = f"{price_val:.2f}" if price_val else "—"
+            overridden  = row.get("_overridden", False)
+
+            price_color = override_col if overridden else dark_color
+            price_ps    = ps(f"p{data_idx}", font=bold_font, size=9,
+                             leading=12, align=2, color=price_color)
 
             table_data.append([
-                Paragraph(group_label, ParagraphStyle("cell", fontName=bold_font if i==0 else body_font, fontSize=9, leading=12)),
-                Paragraph(row["name"], ParagraphStyle("cell", fontName=body_font, fontSize=9, leading=12)),
-                Paragraph(row["size"] or "—", ParagraphStyle("cell", fontName=body_font, fontSize=8, leading=12, textColor=colors.HexColor("#6b7280"))),
-                Paragraph(price_str, ParagraphStyle("cell", fontName=bold_font, fontSize=9, leading=12, alignment=2)),
+                Paragraph(group_label, ps(f"g{data_idx}",
+                                          font=bold_font if i == 0 else body_font,
+                                          size=9, leading=12)),
+                Paragraph(row["name"], cell_style),
+                Paragraph(row["size"] or "—", size_style),
+                Paragraph(price_str, price_ps),
             ])
-            # Alternate row shading
-            if data_row_idx % 2 == 0:
-                row_styles.append(
-                    ("BACKGROUND", (0, data_row_idx), (-1, data_row_idx), row_alt)
+
+            if data_idx % 2 == 0:
+                extra_styles.append(
+                    ("BACKGROUND", (0, data_idx), (-1, data_idx), row_alt)
                 )
-            data_row_idx += 1
+            data_idx += 1
 
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
-        # Header
-        ("BACKGROUND",  (0, 0), (-1, 0), header_color),
-        ("TEXTCOLOR",   (0, 0), (-1, 0), colors.white),
-        ("FONTNAME",    (0, 0), (-1, 0), bold_font),
-        ("FONTSIZE",    (0, 0), (-1, 0), 9),
-        ("TOPPADDING",  (0, 0), (-1, 0), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-        # Grid
-        ("GRID",        (0, 0), (-1, -1), 0.25, colors.HexColor("#d1c9be")),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, row_alt]),
-        # Alignment
-        ("ALIGN",       (-1, 0), (-1, -1), "RIGHT"),
-        ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING",  (0, 1), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        *row_styles,
+        ("BACKGROUND",    (0, 0), (-1, 0), header_color),
+        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+        ("GRID",          (0, 0), (-1, -1), 0.25,
+         colors.HexColor("#d1c9be")),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1),
+         [colors.white, row_alt]),
+        ("ALIGN",         (-1, 0), (-1, -1), "RIGHT"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        *extra_styles,
     ]))
-
     story.append(table)
+
+    # ── Client override note ───────────────────────────────────────────────────
+    if client_name and any(r.get("_overridden") for r in rows):
+        story.append(Spacer(1, 0.2*cm))
+        story.append(Paragraph(
+            "* Precios en azul son específicos para este cliente.",
+            ps("note", size=7, color=override_col, sa=0)
+        ))
 
     # ── Conditions ─────────────────────────────────────────────────────────────
     if include_cond:
         story.append(Spacer(1, 0.6*cm))
-        story.append(HRFlowable(width="100%", thickness=0.5,
-                                color=colors.HexColor("#d1c9be")))
-        story.append(Paragraph("Condiciones de Pedido", section_style))
+        story.append(HRFlowable(
+            width="100%", thickness=0.5,
+            color=colors.HexColor("#d1c9be")
+        ))
+        story.append(Paragraph(
+            "Condiciones de Pedido",
+            ps("sec", font=bold_font, size=11, leading=14, sb=10, sa=4)
+        ))
 
-        s   = settings
+        s       = settings
         min_u   = int(s.get("cond_min_order_units") or 50)
         min_v   = float(s.get("cond_min_order_value") or 150)
         del_c   = float(s.get("cond_delivery_charge") or 25)
@@ -430,27 +518,43 @@ def _generate_pdf(
         var_pct = float(s.get("cond_price_variation_pct") or 5)
         notice  = int(s.get("cond_price_notice_days") or 30)
 
+        cond_ps = ps("cond", size=8, leading=12,
+                     color=colors.HexColor("#374151"), sa=3)
+
         conditions = [
             ("Pedido mínimo",
-             f"El pedido mínimo es de {min_u} unidades o un valor total de {min_v:.0f} euros."),
+             f"El pedido mínimo es de {min_u} unidades o un valor total "
+             f"de {min_v:.0f} euros."),
             ("Entrega",
-             f"Se realizará un cargo adicional de {del_c:.0f} euros para entregas si el valor total del pedido es inferior a {del_t:.0f} euros."),
+             f"Se realizará un cargo adicional de {del_c:.0f} euros para "
+             f"entregas si el valor total del pedido es inferior a "
+             f"{del_t:.0f} euros."),
             ("Entrega refrigerada",
-             "Todos los productos serán entregados en vehículos refrigerados para garantizar la frescura y calidad."),
+             "Todos los productos serán entregados en vehículos refrigerados "
+             "para garantizar la frescura y calidad."),
             ("Plazos",
-             f"Para asegurar la mejor calidad y servicio, les pedimos que realicen sus pedidos con un mínimo de {lead} días de antelación a la fecha de entrega prevista."),
+             f"Para asegurar la mejor calidad y servicio, les pedimos que "
+             f"realicen sus pedidos con un mínimo de {lead} días de "
+             f"antelación a la fecha de entrega prevista."),
             ("Facturación",
-             f"La factura será emitida en el momento de la entrega y el pago deberá realizarse mediante transferencia bancaria en un plazo de {pay} días."),
+             f"La factura será emitida en el momento de la entrega y el "
+             f"pago deberá realizarse mediante transferencia bancaria en "
+             f"un plazo de {pay} días."),
             ("Política de cancelación",
-             f"Las cancelaciones deberán ser notificadas con al menos {cancel} horas de antelación. En caso contrario, se podrá aplicar un cargo por cancelación."),
+             f"Las cancelaciones deberán ser notificadas con al menos "
+             f"{cancel} horas de antelación. En caso contrario, se podrá "
+             f"aplicar un cargo por cancelación."),
             ("Modificación de pedidos",
-             f"Las modificaciones en los pedidos deberán realizarse con un mínimo de {cancel} horas de antelación a la fecha de entrega."),
+             f"Las modificaciones deberán realizarse con un mínimo de "
+             f"{cancel} horas de antelación a la fecha de entrega."),
             ("Revisión de precios",
-             f"Los precios indicados en este documento estarán sujetos a revisión cada {review} meses bajo condiciones normales de mercado."),
+             f"Los precios estarán sujetos a revisión cada {review} meses "
+             f"bajo condiciones normales de mercado."),
             ("Protección de precios",
-             f"En caso de variación en el coste de materias primas superior al {var_pct:.0f}%, Millington Cakes se reserva el derecho a ajustar los precios con un preaviso de {notice} días."),
+             f"En caso de variación en el coste de materias primas superior "
+             f"al {var_pct:.0f}%, Millington Cakes se reserva el derecho a "
+             f"ajustar los precios con un preaviso de {notice} días."),
         ]
-
         if cond_allergen:
             conditions.append(("Información sobre alérgenos", cond_allergen))
         if cond_avail:
@@ -459,22 +563,25 @@ def _generate_pdf(
             conditions.append(("Política de devoluciones", cond_returns))
 
         for heading, text in conditions:
-            story.append(Paragraph(f"<b>{heading}:</b> {text}", cond_style))
-            story.append(Spacer(1, 0.15*cm))
+            story.append(Paragraph(
+                f"<b>{heading}:</b> {text}", cond_ps
+            ))
 
     # ── Footer ─────────────────────────────────────────────────────────────────
     story.append(Spacer(1, 0.5*cm))
-    story.append(HRFlowable(width="100%", thickness=0.5,
-                            color=colors.HexColor("#d1c9be")))
+    story.append(HRFlowable(
+        width="100%", thickness=0.5,
+        color=colors.HexColor("#d1c9be")
+    ))
     story.append(Paragraph(
         "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid  ·  "
         "637 773 669  ·  www.millingtons.es",
-        footer_style
+        ps("ft", size=8, leading=10, align=1,
+           color=colors.HexColor("#9ca3af"), sa=0)
     ))
 
-    # ── Build ──────────────────────────────────────────────────────────────────
+    # ── Build with background ──────────────────────────────────────────────────
     def on_page(canvas, doc):
-        """Draw background colour on every page."""
         canvas.saveState()
         canvas.setFillColor(bg_color)
         canvas.rect(0, 0, A4[0], A4[1], fill=1, stroke=0)

@@ -429,7 +429,12 @@ def get_all_variants_full() -> list[dict]:
     sb = get_client()
     result = (
         sb.table("product_variants")
-        .select("recipe_id, format, ws_price_ex_vat, rt_price_inc_vat, channel")
+        .select(
+            "id, recipe_id, format, channel, "
+            "ws_price_ex_vat, ws_price_approved, "
+            "rt_price_inc_vat, rt_price_approved, "
+            "size_description"
+        )
         .execute()
     )
     return result.data or []
