@@ -327,6 +327,20 @@ def _ficha_row(ing: dict, cat_options: dict, cat_map: dict):
                 help="Activa solo si este proveedor declara alérgenos "
                      "distintos a los de la categoría."
             )
+        
+        label_name_es = st.text_input(
+        "Nombre en etiqueta (español)",
+        value=ing.get("label_name_es") or "",
+        key=f"{col_id}_label_name",
+        placeholder="e.g. mantequilla, harina de trigo, chocolate negro…",
+        help="Nombre legal que aparece en la lista de ingredientes del ficha (EU 1169/2011)."
+        )
+        
+        if not ing.get("label_name_es") and not is_sub:
+            st.warning(
+                "⚠️ Sin nombre de etiqueta — el ficha usará el nombre operativo. "
+                "Añade el nombre legal aquí."
+            )
 
         # ── Allergen profile ──────────────────────────────────────────────────
         allergen_vals = {}
@@ -373,6 +387,7 @@ def _ficha_row(ing: dict, cat_options: dict, cat_map: dict):
                 "category_id":       selected_cat_id,
                 "allergen_override": override_new,
                 "allergen_notes":    new_notes or None,
+                "label_name":        label_name_es or None,
             }
             if override_new and allergen_vals:
                 record.update(allergen_vals)
