@@ -509,6 +509,79 @@ def _generate_pdf(
     if include_cond:
         story.append(PageBreak())
 
+        story.append(Paragraph(
+            "Condiciones de Pedido",
+            ps("sec", font=bold_font, size=11, leading=14, sb=8, sa=4)
+        ))
+
+        s       = settings
+        min_u   = int(s.get("cond_min_order_units")     or 50)
+        min_v   = float(s.get("cond_min_order_value")   or 150)
+        del_c   = float(s.get("cond_delivery_charge")   or 25)
+        del_t   = float(s.get("cond_delivery_threshold")or 400)
+        lead    = int(s.get("cond_lead_time_days")       or 3)
+        pay     = int(s.get("cond_payment_days")         or 15)
+        cancel  = int(s.get("cond_cancellation_hours")   or 48)
+        review  = int(s.get("cond_price_review_months")  or 6)
+        var_pct = float(s.get("cond_price_variation_pct")or 5)
+        notice  = int(s.get("cond_price_notice_days")    or 30)
+
+        cond_ps = ps("cp", size=8, leading=12,
+                     color=colors.HexColor("#374151"), sa=2)
+
+        conditions = [
+            ("Pedido mínimo",
+             f"El pedido mínimo es de {min_u} unidades o un valor total de {min_v:.0f} euros."),
+            ("Entrega",
+             f"Se realizará un cargo adicional de {del_c:.0f} euros para entregas "
+             f"si el valor total del pedido es inferior a {del_t:.0f} euros."),
+            ("Entrega refrigerada",
+             "Todos los productos serán entregados en vehículos refrigerados "
+             "para garantizar la frescura y calidad."),
+            ("Plazos",
+             f"Para asegurar la mejor calidad y servicio, les pedimos que realicen "
+             f"sus pedidos con un mínimo de {lead} días de antelación a la fecha "
+             f"de entrega prevista."),
+            ("Facturación",
+             f"La factura será emitida en el momento de la entrega y el pago deberá "
+             f"realizarse mediante transferencia bancaria en un plazo de {pay} días."),
+            ("Política de cancelación",
+             f"Las cancelaciones deberán ser notificadas con al menos {cancel} horas "
+             f"de antelación. En caso contrario, se podrá aplicar un cargo por cancelación."),
+            ("Modificación de pedidos",
+             f"Las modificaciones deberán realizarse con un mínimo de {cancel} horas "
+             f"de antelación a la fecha de entrega."),
+            ("Revisión de precios",
+             f"Los precios estarán sujetos a revisión cada {review} meses "
+             f"bajo condiciones normales de mercado."),
+            ("Protección de precios",
+             f"En caso de variación en el coste de materias primas superior al "
+             f"{var_pct:.0f}%, Millington Cakes se reserva el derecho a ajustar "
+             f"los precios con un preaviso de {notice} días."),
+        ]
+        if cond_allergen:
+            conditions.append(("Información sobre alérgenos", cond_allergen))
+        if cond_avail:
+            conditions.append(("Disponibilidad de productos", cond_avail))
+        if cond_returns:
+            conditions.append(("Política de devoluciones", cond_returns))
+
+        for heading, text in conditions:
+            story.append(Paragraph(
+                f"<b>{heading}:</b> {text}", cond_ps
+            ))
+
+        # Footer on conditions page
+        story.append(Spacer(1, 0.4*cm))
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                color=colors.HexColor("#d1c9be")))
+        story.append(Paragraph(
+            "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid  ·  "
+            "637 773 669  ·  www.millingtons.es",
+            ps("ft", size=8, leading=10, align=1,
+               color=colors.HexColor("#9ca3af"), sa=0)
+        ))
+
     def on_page(canvas, doc):
         canvas.saveState()
         canvas.setFillColor(bg_color)
