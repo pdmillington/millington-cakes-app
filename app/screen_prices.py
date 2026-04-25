@@ -74,11 +74,23 @@ def _price_matrix():
         ws_changed = (ws_working != ws_approved) if (ws_working and ws_approved) else bool(ws_working and not ws_approved)
         rt_changed = (rt_working != rt_approved) if (rt_working and rt_approved) else bool(rt_working and not rt_approved)
 
+        # Include size in recipe label for multi-size standard variants
+        variant_d  = _f(v.get("ref_diameter_cm"))
+        size_label = (
+            v.get("size_description") or
+            (f"{variant_d:.0f}cm" if variant_d else "")
+        )
+        recipe_label = (
+            f"{recipe.get('name', '')} ({size_label})"
+            if size_label and fmt == "standard"
+            else recipe.get("name", "")
+        )
+
         rows.append({
             "_variant_id":      v.get("id"),
             "_ws_changed":      ws_changed,
             "_rt_changed":      rt_changed,
-            "Recipe":           recipe.get("name", ""),
+            "Recipe":           recipe_label,
             "Format":           FORMAT_DISPLAY.get(fmt, fmt),
             "_fmt":             fmt,
             "WS working (€)":   ws_working or 0.0,
@@ -147,7 +159,7 @@ def _price_matrix():
 
     edited = st.data_editor(
         display_df[edit_cols].reset_index(drop=True),
-        width='stretch',
+        use_container_width=True,
         hide_index=True,
         disabled=[
             "Recipe", "Format",
@@ -304,7 +316,7 @@ def _client_prices():
         st.dataframe(
             cp_df[["Client", "Product", "WS price (€)",
                    "RT price (€)", "Valid from", "Valid until", "Notes"]],
-            width='stretch',
+            use_container_width=True,
             hide_index=True
         )
     else:

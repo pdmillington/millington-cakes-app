@@ -85,15 +85,35 @@ def screen_repricing():
 
     st.divider()
 
-    # ── Build rows ────────────────────────────────────────────────────────────
+    # ── Build rows ─────────────────────────────────────────────────────────────
+    # Iterate over ALL variants directly — handles multiple standard sizes
+    # per recipe (e.g. Lemon Pie 22/26/28cm) without dict key collisions.
     rows        = []
-    lines_cache: dict[str, list] = {}
+    lines_cache: dict[str, list]  = {}
     weight_cache: dict[str, float] = {}
+    recipe_by_id = {r["id"]: r for r in recipes}
 
-    for recipe in sorted(recipes, key=lambda r: r["name"]):
-        rid     = recipe["id"]
-        formats = _active_formats(recipe)
+    # Sort variants by recipe name then format then diameter
+    sorted_variants = sorted(
+        all_variants,
+        key=lambda v: (
+            recipe_by_id.get(v["recipe_id"], {}).get("name", ""),
+            v["format"],
+            float(v.get("ref_diameter_cm") or 0),
+        )
+    )
 
+    for variant in sorted_variants:
+        rid    = variant["recipe_id"]
+        fmt    = variant["format"]
+        recipe = recipe_by_id.get(rid)
+        if not recipe:
+            continue
+
+        if fmt not in filter_format:
+            continue
+
+        # Load recipe lines once
         if rid not in lines_cache:
             lines_cache[rid] = db.get_recipe_lines(rid)
         lines = lines_cache[rid]
@@ -109,115 +129,109 @@ def screen_repricing():
         if not show_incomplete and has_missing:
             continue
 
-        for fmt in formats:
-            if fmt not in filter_format:
-                continue
-
-            # Ingredient scale
-            if fmt == "individual":
-                iw    = float(recipe.get("individual_weight_g") or ind_weight_g)
-                scale = iw / ref_weight_g if ref_weight_g > 0 else 0
-            elif fmt == "bocado":
-                bw    = float(recipe.get("bocado_weight_g") or boc_weight_g)
-                scale = bw / ref_weight_g if ref_weight_g > 0 else 0
-            else:
-                # Standard — scale by volume if variant has its own diameter
-                variant_d = _f(variant.get("ref_diameter_cm"))
-                variant_h = _f(variant.get("ref_height_cm"))
-                ref_d     = float(recipe.get("ref_diameter_cm") or 0)
-                ref_h     = float(recipe.get("ref_height_cm") or 0)
-
-                if variant_d and ref_d and recipe.get("size_type") == "diameter":
-                    # Use variant height if set, else recipe height
-                    target_h = variant_h or ref_h or 1.0
-                    base_h   = ref_h or 1.0
-                    scale = (variant_d ** 2 * target_h) / (ref_d ** 2 * base_h)
-                else:
-                    scale = 1.0
-
-            ing_cost = full_ing_cost * scale
-
-            # WS and RT labour costs
-            ws_labour, ws_oven = _calc_labour(
-                recipe, fmt, default_labour, default_oven, labour_power,
-                ws_batch_large, ws_batch_ind, ws_batch_boc
-            )
-            rt_labour, rt_oven = _calc_labour(
-                recipe, fmt, default_labour, default_oven, labour_power,
-                rt_batch_large, rt_batch_ind, rt_batch_boc
-            )
-            ws_cost = ing_cost + ws_labour + ws_oven
-            rt_cost = ing_cost + rt_labour + rt_oven
-
-            target_ws = ws_margin
-            target_rt = (
-                rt_margin_large if fmt == "standard"
-                else rt_margin_ind if fmt == "individual"
-                else rt_margin_boc
-            )
-
-            variant      = var_lookup.get(rid, {}).get(fmt, {})
-            variant_id   = variant.get("id")
-            ws_price_ex  = _f(variant.get("ws_price_ex_vat"))
-            rt_price_inc = _f(variant.get("rt_price_inc_vat"))
-            rt_price_ex  = rt_price_inc / 1.10 if rt_price_inc else None
-
-            ws_margin_ach = (ws_price_ex / ws_cost) if (ws_price_ex and ws_cost > 0) else None
-            rt_margin_ach = (rt_price_ex / rt_cost) if (rt_price_ex and rt_cost > 0) else None
-
-            ws_suggested     = ws_cost * target_ws
-            rt_suggested_inc = rt_cost * target_rt * 1.10
-
-            ws_gap = (ws_price_ex - ws_suggested) if ws_price_ex else None
-
-            # Traffic light — symmetric ±5% around target WS margin
-            if not ws_price_ex or ws_cost <= 0:
-                status = "⚪ No price"
-            elif ws_price_ex < ws_cost:
-                status = "🔴 Below cost"
-            elif ws_margin_ach < target_ws * 0.95:
-                status = "🟡 Review (low)"
-            elif ws_margin_ach > target_ws * 1.05:
-                status = "🟡 Review (high)"
-            else:
-                status = "🟢 On target"
-
-            if status not in filter_status:
-                continue
-
-            # For standard variants with a specific diameter, show size
+        # ── Ingredient scale ──────────────────────────────────────────────────
+        if fmt == "individual":
+            iw    = float(recipe.get("individual_weight_g") or ind_weight_g)
+            scale = iw / ref_weight_g if ref_weight_g > 0 else 0
+        elif fmt == "bocado":
+            bw    = float(recipe.get("bocado_weight_g") or boc_weight_g)
+            scale = bw / ref_weight_g if ref_weight_g > 0 else 0
+        else:
+            # Standard — scale by volume if variant has its own diameter
             variant_d = _f(variant.get("ref_diameter_cm"))
-            size_label = (
-                variant.get("size_description") or
-                (f"{variant_d:.0f}cm" if variant_d else "")
-            )
-            recipe_label = (
-                f"{recipe['name']} ({size_label})"
-                if size_label and fmt == "standard"
-                else recipe["name"]
-            )
+            variant_h = _f(variant.get("ref_height_cm"))
+            ref_d     = float(recipe.get("ref_diameter_cm") or 0)
+            ref_h     = float(recipe.get("ref_height_cm") or 0)
 
-            rows.append({
-                "recipe_id":       rid,
-                "variant_id":      variant_id,
-                "Recipe":          recipe_label,
-                "Format":          FORMAT_DISPLAY.get(fmt, fmt),
-                "fmt_key":         fmt,
-                "Scale":           f"{scale:.3f}×" if fmt != "standard" else "—",
-                "Ing. cost":       ing_cost,
-                "WS total cost":   ws_cost,
-                "WS price":        ws_price_ex,
-                "WS suggested":    ws_suggested,
-                "WS gap":          ws_gap,
-                "WS margin":       ws_margin_ach,
-                "RT total cost":   rt_cost,
-                "RT price (inc)":  rt_price_inc,
-                "RT suggested (inc)": rt_suggested_inc,
-                "RT margin":       rt_margin_ach,
-                "Status":          status,
-                "⚠️ Missing":       ", ".join(missing) if missing else "",
-                "_missing":        has_missing,
-            })
+            if variant_d and ref_d and recipe.get("size_type") == "diameter":
+                target_h = variant_h or ref_h or 1.0
+                base_h   = ref_h or 1.0
+                scale = (variant_d ** 2 * target_h) / (ref_d ** 2 * base_h)
+            else:
+                scale = 1.0
+
+        ing_cost = full_ing_cost * scale
+
+        # ── Labour costs ──────────────────────────────────────────────────────
+        ws_labour, ws_oven = _calc_labour(
+            recipe, fmt, default_labour, default_oven, labour_power,
+            ws_batch_large, ws_batch_ind, ws_batch_boc
+        )
+        rt_labour, rt_oven = _calc_labour(
+            recipe, fmt, default_labour, default_oven, labour_power,
+            rt_batch_large, rt_batch_ind, rt_batch_boc
+        )
+        ws_cost = ing_cost + ws_labour + ws_oven
+        rt_cost = ing_cost + rt_labour + rt_oven
+
+        target_ws = ws_margin
+        target_rt = (
+            rt_margin_large if fmt == "standard"
+            else rt_margin_ind if fmt == "individual"
+            else rt_margin_boc
+        )
+
+        # ── Prices ────────────────────────────────────────────────────────────
+        variant_id   = variant.get("id")
+        ws_price_ex  = _f(variant.get("ws_price_ex_vat"))
+        rt_price_inc = _f(variant.get("rt_price_inc_vat"))
+        rt_price_ex  = rt_price_inc / 1.10 if rt_price_inc else None
+
+        ws_margin_ach = (ws_price_ex / ws_cost) if (ws_price_ex and ws_cost > 0) else None
+        rt_margin_ach = (rt_price_ex / rt_cost) if (rt_price_ex and rt_cost > 0) else None
+
+        ws_suggested     = ws_cost * target_ws
+        rt_suggested_inc = rt_cost * target_rt * 1.10
+        ws_gap           = (ws_price_ex - ws_suggested) if ws_price_ex else None
+
+        # ── Traffic light ─────────────────────────────────────────────────────
+        if not ws_price_ex or ws_cost <= 0:
+            status = "⚪ No price"
+        elif ws_price_ex < ws_cost:
+            status = "🔴 Below cost"
+        elif ws_margin_ach < target_ws * 0.95:
+            status = "🟡 Review (low)"
+        elif ws_margin_ach > target_ws * 1.05:
+            status = "🟡 Review (high)"
+        else:
+            status = "🟢 On target"
+
+        if status not in filter_status:
+            continue
+
+        # ── Recipe label — include size for multi-size standard variants ───────
+        variant_d  = _f(variant.get("ref_diameter_cm"))
+        size_label = (
+            variant.get("size_description") or
+            (f"{variant_d:.0f}cm" if variant_d else "")
+        )
+        recipe_label = (
+            f"{recipe['name']} ({size_label})"
+            if size_label and fmt == "standard"
+            else recipe["name"]
+        )
+
+        rows.append({
+            "recipe_id":          rid,
+            "variant_id":         variant_id,
+            "Recipe":             recipe_label,
+            "Format":             FORMAT_DISPLAY.get(fmt, fmt),
+            "fmt_key":            fmt,
+            "Scale":              f"{scale:.3f}×" if fmt != "standard" else "—",
+            "Ing. cost":          ing_cost,
+            "WS total cost":      ws_cost,
+            "WS price":           ws_price_ex,
+            "WS suggested":       ws_suggested,
+            "WS gap":             ws_gap,
+            "WS margin":          ws_margin_ach,
+            "RT total cost":      rt_cost,
+            "RT price (inc)":     rt_price_inc,
+            "RT suggested (inc)": rt_suggested_inc,
+            "RT margin":          rt_margin_ach,
+            "Status":             status,
+            "⚠️ Missing":          ", ".join(missing) if missing else "",
+            "_missing":           has_missing,
+        })
 
     if not rows:
         st.info("No recipes match the current filters.")
