@@ -431,6 +431,7 @@ def get_all_variants_full() -> list[dict]:
         sb.table("product_variants")
         .select(
             "id, recipe_id, format, channel, size_description, "
+            "ref_diameter_cm, ref_height_cm, "
             "ws_price_ex_vat, ws_price_approved, ws_price_approved_at, "
             "rt_price_inc_vat, rt_price_approved, rt_price_approved_at"
         )

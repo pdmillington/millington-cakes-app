@@ -121,7 +121,19 @@ def screen_repricing():
                 bw    = float(recipe.get("bocado_weight_g") or boc_weight_g)
                 scale = bw / ref_weight_g if ref_weight_g > 0 else 0
             else:
-                scale = 1.0
+                # Standard — scale by volume if variant has its own diameter
+                variant_d = _f(variant.get("ref_diameter_cm"))
+                variant_h = _f(variant.get("ref_height_cm"))
+                ref_d     = float(recipe.get("ref_diameter_cm") or 0)
+                ref_h     = float(recipe.get("ref_height_cm") or 0)
+
+                if variant_d and ref_d and recipe.get("size_type") == "diameter":
+                    # Use variant height if set, else recipe height
+                    target_h = variant_h or ref_h or 1.0
+                    base_h   = ref_h or 1.0
+                    scale = (variant_d ** 2 * target_h) / (ref_d ** 2 * base_h)
+                else:
+                    scale = 1.0
 
             ing_cost = full_ing_cost * scale
 
@@ -173,10 +185,22 @@ def screen_repricing():
             if status not in filter_status:
                 continue
 
+            # For standard variants with a specific diameter, show size
+            variant_d = _f(variant.get("ref_diameter_cm"))
+            size_label = (
+                variant.get("size_description") or
+                (f"{variant_d:.0f}cm" if variant_d else "")
+            )
+            recipe_label = (
+                f"{recipe['name']} ({size_label})"
+                if size_label and fmt == "standard"
+                else recipe["name"]
+            )
+
             rows.append({
                 "recipe_id":       rid,
                 "variant_id":      variant_id,
-                "Recipe":          recipe["name"],
+                "Recipe":          recipe_label,
                 "Format":          FORMAT_DISPLAY.get(fmt, fmt),
                 "fmt_key":         fmt,
                 "Scale":           f"{scale:.3f}×" if fmt != "standard" else "—",

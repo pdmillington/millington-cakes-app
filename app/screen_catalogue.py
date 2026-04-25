@@ -235,10 +235,33 @@ def screen_catalogue():
 
     st.divider()
 
+    # ── Ficha warnings ───────────────────────────────────────────────────────────
+    # Check which selected products have approved label text
+    unapproved = []
+    for row in resolved_rows:
+        vid = row.get("variant_id")
+        if vid:
+            v = var_lookup.get(row["recipe_id"], {}).get(row["fmt_key"], {})
+            if not v.get("label_approved"):
+                unapproved.append(f"{row['name']} ({FORMAT_DISPLAY.get(row['fmt_key'], row['fmt_key'])})")
+
+    if unapproved:
+        st.warning(
+            f"⚠️ {len(unapproved)} ficha(s) no aprobada(s) — "
+            f"se generarán con marca de borrador: "
+            f"{', '.join(unapproved)}"
+        )
+
     # ── Generate PDF ──────────────────────────────────────────────────────────
-    if st.button("📄 Generar PDF", type="primary"):
-        with st.spinner("Generando catálogo…"):
+    if st.button("📄 Generar catálogo + fichas", type="primary"):
+        with st.spinner("Generando catálogo y fichas…"):
             try:
+                # Fetch full variant data for ficha generation
+                all_v = db.get_all_variants_full()
+                full_var_lookup: dict[str, dict[str, dict]] = {}
+                for v in all_v:
+                    full_var_lookup.setdefault(v["recipe_id"], {})[v["format"]] = v
+
                 pdf_bytes = _generate_pdf(
                     rows          = resolved_rows,
                     settings      = settings,
@@ -249,11 +272,13 @@ def screen_catalogue():
                     cond_allergen = custom_allergen,
                     cond_avail    = custom_availability,
                     cond_returns  = custom_returns,
+                    var_lookup    = full_var_lookup,
                 )
                 fname = (
                     f"millington_catalogo"
-                    f"{'_' + client_name.strip().replace(' ','_') if client_name.strip() else ''}"
-                    f"_{date.today().isoformat()}.pdf"
+                    + (f"_{client_name.strip().replace(' ','_')}"
+                       if client_name.strip() else "")
+                    + f"_{date.today().isoformat()}.pdf"
                 )
                 st.download_button(
                     "⬇️ Descargar catálogo PDF",
@@ -262,7 +287,11 @@ def screen_catalogue():
                     mime="application/pdf",
                     type="primary"
                 )
-                st.success("PDF generado correctamente", icon="✅")
+                n_fichas = len(resolved_rows)
+                st.success(
+                    f"PDF generado — tabla de precios + {n_fichas} ficha(s)",
+                    icon="✅"
+                )
             except Exception as e:
                 st.error(f"Error al generar el PDF: {e}")
                 st.exception(e)
@@ -323,10 +352,11 @@ def _generate_pdf(
     cond_allergen: str,
     cond_avail: str,
     cond_returns: str,
+    var_lookup: dict = None,
 ) -> bytes:
     from reportlab.platypus import (
         SimpleDocTemplate, Table, TableStyle, Paragraph,
-        Spacer, Image, HRFlowable
+        Spacer, Image, HRFlowable, PageBreak
     )
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
@@ -408,156 +438,152 @@ def _generate_pdf(
     ))
     story.append(Spacer(1, 0.4*cm))
 
-    # ── Price table — one sub-table per group ────────────────────────────────────
-    # Each group is a separate Table so rows stay together and the group header
-    # with "Precio (€)" on the right is clearly associated with its products.
-    # Conditions are pushed to a new page via PageBreak.
-
-    from reportlab.platypus import PageBreak
-
+    # ── Price table ────────────────────────────────────────────────────────────
     groups_order = ["Tarta", "Tarta Individual", "Bocados", "Otros"]
     by_group: dict[str, list] = {}
     for r in rows:
         by_group.setdefault(r["group"], []).append(r)
 
-    col_w = [9.5*cm, 4*cm, 3*cm]   # Producto, Medida, Precio
+    col_widths = [3.5*cm, 6.5*cm, 4*cm, 2.5*cm]
 
-    # Paragraph styles
-    grp_bg   = colors.HexColor("#6b7280")
-    row_alt  = colors.HexColor("#ebe6de")
-    rule_col = colors.HexColor("#d1c9be")
-    grey     = colors.HexColor("#6b7280")
-    ovr_col  = colors.HexColor("#1d4ed8")
+    th_style = ParagraphStyle(
+        "th", fontName=bold_font, fontSize=9, textColor=colors.white
+    )
+    th_r = ParagraphStyle(
+        "thr", fontName=bold_font, fontSize=9,
+        textColor=colors.white, alignment=2
+    )
 
-    grp_l_ps = ParagraphStyle("gl", fontName=bold_font, fontSize=9,
-                               leading=11, textColor=colors.white)
-    grp_r_ps = ParagraphStyle("gr", fontName=bold_font, fontSize=8,
-                               leading=11, textColor=colors.white, alignment=2)
-    prod_ps  = ParagraphStyle("pr", fontName=body_font, fontSize=9, leading=11)
-    size_ps  = ParagraphStyle("sz", fontName=body_font, fontSize=8,
-                               leading=11, textColor=grey)
+    table_data = [[
+        Paragraph("<b>Tamaño</b>",    th_style),
+        Paragraph("<b>Producto</b>",  th_style),
+        Paragraph("<b>Medida</b>",    th_style),
+        Paragraph("<b>Precio (€)</b>", th_r),
+    ]]
 
-    has_overrides = any(r.get("_overridden") for r in rows)
+    cell_style = ps("cell", size=9, leading=12)
+    size_style = ps("sz", size=8, leading=12,
+                    color=colors.HexColor("#6b7280"))
+
+    extra_styles = []
+    data_idx = 1
 
     for group in groups_order:
         group_rows = by_group.get(group, [])
         if not group_rows:
             continue
 
-        tdata  = []
-        tstyle = [
-            # No outer border
-            ("GRID",          (0, 0), (-1, -1), 0,    colors.white),
-            ("LINEBELOW",     (0, 0), (-1, -1), 0.25, rule_col),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
-            ("TOPPADDING",    (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN",         (2, 0), (2, -1),  "RIGHT"),
-        ]
-
-        # Group header row: group name left, "Precio (€)" right
-        tdata.append([
-            Paragraph(group.upper(), grp_l_ps),
-            Paragraph("", grp_l_ps),
-            Paragraph("Precio (€)", grp_r_ps),
-        ])
-        tstyle += [
-            ("BACKGROUND",    (0, 0), (-1, 0), grp_bg),
-            ("TOPPADDING",    (0, 0), (-1, 0), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
-        ]
-
-        # Product rows
         for i, row in enumerate(sorted(group_rows, key=lambda x: x["name"])):
-            price_val  = row.get("ws_price")
-            overridden = row.get("_overridden", False)
-            price_str  = f"{price_val:.2f}" if price_val else "—"
-            price_col  = ovr_col if overridden else dark_color
+            group_label = group if i == 0 else ""
+            price_val   = row.get("ws_price")
+            price_str   = f"{price_val:.2f}" if price_val else "—"
+            overridden  = row.get("_overridden", False)
 
-            price_ps = ParagraphStyle(
-                f"p{i}", fontName=bold_font, fontSize=9,
-                leading=11, alignment=2, textColor=price_col
-            )
+            price_color = override_col if overridden else dark_color
+            price_ps    = ps(f"p{data_idx}", font=bold_font, size=9,
+                             leading=12, align=2, color=price_color)
 
-            tdata.append([
-                Paragraph(row["name"], prod_ps),
-                Paragraph(row["size"] or "—", size_ps),
+            table_data.append([
+                Paragraph(group_label, ps(f"g{data_idx}",
+                                          font=bold_font if i == 0 else body_font,
+                                          size=9, leading=12)),
+                Paragraph(row["name"], cell_style),
+                Paragraph(row["size"] or "—", size_style),
                 Paragraph(price_str, price_ps),
             ])
 
-            # Alternate shading (skip header row = index 0)
-            if i % 2 == 1:
-                tstyle.append(
-                    ("BACKGROUND", (0, i+1), (-1, i+1), row_alt)
+            if data_idx % 2 == 0:
+                extra_styles.append(
+                    ("BACKGROUND", (0, data_idx), (-1, data_idx), row_alt)
                 )
+            data_idx += 1
 
-        t = Table(tdata, colWidths=col_w)
-        t.setStyle(TableStyle(tstyle))
-        story.append(t)
+    table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0), header_color),
+        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+        ("GRID",          (0, 0), (-1, -1), 0.25,
+         colors.HexColor("#d1c9be")),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1),
+         [colors.white, row_alt]),
+        ("ALIGN",         (-1, 0), (-1, -1), "RIGHT"),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        *extra_styles,
+    ]))
+    story.append(table)
+
+    # ── Client override note ───────────────────────────────────────────────────
+    if client_name and any(r.get("_overridden") for r in rows):
         story.append(Spacer(1, 0.2*cm))
-
-    # Client override footnote
-    if has_overrides and client_name:
         story.append(Paragraph(
-            "★ Precio específico para este cliente.",
-            ps("fn", color=ovr_col, size=7, sa=0)
+            "* Precios en azul son específicos para este cliente.",
+            ps("note", size=7, color=override_col, sa=0)
         ))
 
-    # ── Page break before conditions ───────────────────────────────────────────
+    # ── Conditions ─────────────────────────────────────────────────────────────
     if include_cond:
-        story.append(PageBreak())
-
+        story.append(Spacer(1, 0.6*cm))
+        story.append(HRFlowable(
+            width="100%", thickness=0.5,
+            color=colors.HexColor("#d1c9be")
+        ))
         story.append(Paragraph(
             "Condiciones de Pedido",
-            ps("sec", font=bold_font, size=11, leading=14, sb=8, sa=4)
+            ps("sec", font=bold_font, size=11, leading=14, sb=10, sa=4)
         ))
 
         s       = settings
-        min_u   = int(s.get("cond_min_order_units")     or 50)
-        min_v   = float(s.get("cond_min_order_value")   or 150)
-        del_c   = float(s.get("cond_delivery_charge")   or 25)
-        del_t   = float(s.get("cond_delivery_threshold")or 400)
-        lead    = int(s.get("cond_lead_time_days")       or 3)
-        pay     = int(s.get("cond_payment_days")         or 15)
-        cancel  = int(s.get("cond_cancellation_hours")   or 48)
-        review  = int(s.get("cond_price_review_months")  or 6)
-        var_pct = float(s.get("cond_price_variation_pct")or 5)
-        notice  = int(s.get("cond_price_notice_days")    or 30)
+        min_u   = int(s.get("cond_min_order_units") or 50)
+        min_v   = float(s.get("cond_min_order_value") or 150)
+        del_c   = float(s.get("cond_delivery_charge") or 25)
+        del_t   = float(s.get("cond_delivery_threshold") or 400)
+        lead    = int(s.get("cond_lead_time_days") or 3)
+        pay     = int(s.get("cond_payment_days") or 15)
+        cancel  = int(s.get("cond_cancellation_hours") or 48)
+        review  = int(s.get("cond_price_review_months") or 6)
+        var_pct = float(s.get("cond_price_variation_pct") or 5)
+        notice  = int(s.get("cond_price_notice_days") or 30)
 
-        cond_ps = ps("cp", size=8, leading=12,
-                     color=colors.HexColor("#374151"), sa=2)
+        cond_ps = ps("cond", size=8, leading=12,
+                     color=colors.HexColor("#374151"), sa=3)
 
         conditions = [
             ("Pedido mínimo",
-             f"El pedido mínimo es de {min_u} unidades o un valor total de {min_v:.0f} euros."),
+             f"El pedido mínimo es de {min_u} unidades o un valor total "
+             f"de {min_v:.0f} euros."),
             ("Entrega",
-             f"Se realizará un cargo adicional de {del_c:.0f} euros para entregas "
-             f"si el valor total del pedido es inferior a {del_t:.0f} euros."),
+             f"Se realizará un cargo adicional de {del_c:.0f} euros para "
+             f"entregas si el valor total del pedido es inferior a "
+             f"{del_t:.0f} euros."),
             ("Entrega refrigerada",
              "Todos los productos serán entregados en vehículos refrigerados "
              "para garantizar la frescura y calidad."),
             ("Plazos",
-             f"Para asegurar la mejor calidad y servicio, les pedimos que realicen "
-             f"sus pedidos con un mínimo de {lead} días de antelación a la fecha "
-             f"de entrega prevista."),
+             f"Para asegurar la mejor calidad y servicio, les pedimos que "
+             f"realicen sus pedidos con un mínimo de {lead} días de "
+             f"antelación a la fecha de entrega prevista."),
             ("Facturación",
-             f"La factura será emitida en el momento de la entrega y el pago deberá "
-             f"realizarse mediante transferencia bancaria en un plazo de {pay} días."),
+             f"La factura será emitida en el momento de la entrega y el "
+             f"pago deberá realizarse mediante transferencia bancaria en "
+             f"un plazo de {pay} días."),
             ("Política de cancelación",
-             f"Las cancelaciones deberán ser notificadas con al menos {cancel} horas "
-             f"de antelación. En caso contrario, se podrá aplicar un cargo por cancelación."),
+             f"Las cancelaciones deberán ser notificadas con al menos "
+             f"{cancel} horas de antelación. En caso contrario, se podrá "
+             f"aplicar un cargo por cancelación."),
             ("Modificación de pedidos",
-             f"Las modificaciones deberán realizarse con un mínimo de {cancel} horas "
-             f"de antelación a la fecha de entrega."),
+             f"Las modificaciones deberán realizarse con un mínimo de "
+             f"{cancel} horas de antelación a la fecha de entrega."),
             ("Revisión de precios",
              f"Los precios estarán sujetos a revisión cada {review} meses "
              f"bajo condiciones normales de mercado."),
             ("Protección de precios",
-             f"En caso de variación en el coste de materias primas superior al "
-             f"{var_pct:.0f}%, Millington Cakes se reserva el derecho a ajustar "
-             f"los precios con un preaviso de {notice} días."),
+             f"En caso de variación en el coste de materias primas superior "
+             f"al {var_pct:.0f}%, Millington Cakes se reserva el derecho a "
+             f"ajustar los precios con un preaviso de {notice} días."),
         ]
         if cond_allergen:
             conditions.append(("Información sobre alérgenos", cond_allergen))
@@ -571,17 +597,42 @@ def _generate_pdf(
                 f"<b>{heading}:</b> {text}", cond_ps
             ))
 
-        # Footer on conditions page
-        story.append(Spacer(1, 0.4*cm))
-        story.append(HRFlowable(width="100%", thickness=0.5,
-                                color=colors.HexColor("#d1c9be")))
-        story.append(Paragraph(
-            "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid  ·  "
-            "637 773 669  ·  www.millingtons.es",
-            ps("ft", size=8, leading=10, align=1,
-               color=colors.HexColor("#9ca3af"), sa=0)
-        ))
+    # ── Footer ─────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(
+        width="100%", thickness=0.5,
+        color=colors.HexColor("#d1c9be")
+    ))
+    story.append(Paragraph(
+        "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid  ·  "
+        "637 773 669  ·  www.millingtons.es",
+        ps("ft", size=8, leading=10, align=1,
+           color=colors.HexColor("#9ca3af"), sa=0)
+    ))
 
+    # ── Fichas ─────────────────────────────────────────────────────────────────
+    if var_lookup and rows:
+        for row in rows:
+            rid     = row["recipe_id"]
+            fmt_key = row["fmt_key"]
+            variant = (var_lookup.get(rid) or {}).get(fmt_key, {})
+            if not variant:
+                continue
+
+            story.append(PageBreak())
+            _add_ficha_page(
+                story        = story,
+                recipe_name  = row["name"],
+                variant      = variant,
+                ps           = ps,
+                body_font    = body_font,
+                bold_font    = bold_font,
+                rule         = colors.HexColor("#d1c9be"),
+                grey         = colors.HexColor("#6b7280"),
+                border_col   = colors.HexColor("#9ca3af"),
+            )
+
+    # ── Build with background ──────────────────────────────────────────────────
     def on_page(canvas, doc):
         canvas.saveState()
         canvas.setFillColor(bg_color)
@@ -590,3 +641,207 @@ def _generate_pdf(
 
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
     return buffer.getvalue()
+
+
+# =============================================================================
+# Ficha page generator
+# =============================================================================
+
+def _add_ficha_page(
+    story: list,
+    recipe_name: str,
+    variant: dict,
+    ps,
+    body_font: str,
+    bold_font: str,
+    rule,
+    grey,
+    border_col,
+):
+    """
+    Add one ficha page to the story.
+    Reads all data from the variant dict.
+    Fetches allergen declaration and ingredient label from DB.
+    Marks as BORRADOR if label_approved is False.
+    """
+    from reportlab.platypus import Table, TableStyle, Spacer, HRFlowable
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+
+    recipe_id    = variant.get("recipe_id")
+    is_approved  = bool(variant.get("label_approved"))
+    size_desc    = variant.get("size_description") or "—"
+    weight_g     = variant.get("ref_weight_g")
+    weight_str   = f"{weight_g:.0f} g" if weight_g else "—"
+    description  = variant.get("description_es") or ""
+    packaging    = variant.get("packaging_desc") or "Caja de cartón"
+    storage      = variant.get("storage_instructions") or "Refrigerada entre 0 - 5°C"
+    shelf_life   = int(variant.get("shelf_life_hours") or 24)
+    label_text   = variant.get("ingredient_label_es") or ""
+
+    # Fetch allergen declaration
+    try:
+        declaration = db.get_allergen_declaration(recipe_id)
+    except Exception:
+        declaration = {"contiene": [], "puede_contener": [], "warnings": []}
+
+    # If no stored label text, generate from recipe
+    if not label_text and recipe_id:
+        try:
+            label_data = db.get_ingredient_label_text(recipe_id)
+            label_text = label_data.get("label_text") or ""
+        except Exception:
+            label_text = ""
+
+    contiene = (
+        ", ".join(a.capitalize() for a in declaration.get("contiene", []))
+        or "Ninguno detectado"
+    )
+    puede = (
+        ", ".join(a.capitalize() for a in declaration.get("puede_contener", []))
+        or "Ninguno"
+    )
+
+    white = colors.white
+    box_bg = white
+
+    # Company header box
+    story.append(_ficha_box(
+        title="Empresa",
+        content=[
+            f"<b>Millington Cakes</b>",
+            "<b>CIF: B13998596</b>",
+            "<i>Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid</i>",
+        ],
+        title_bg=border_col,
+        box_bg=box_bg,
+        body_font=body_font,
+        bold_font=bold_font,
+        border_col=border_col,
+        is_header=True,
+    ))
+    story.append(Spacer(1, 0.25*cm))
+
+    # Draft watermark note if not approved
+    draft_note = ""
+    if not is_approved:
+        draft_note = " ⚠️ BORRADOR — pendiente de aprobación"
+
+    # Ficha content
+    lines = [
+        f"<b>Tamaño:</b> {size_desc}",
+        f"<b>Peso aprox:</b> {weight_str}",
+    ]
+    if description:
+        lines.append(f"<b>Descripción:</b> {description}")
+
+    lines += [
+        f"<b>Ingredientes:</b> {label_text}" if label_text
+            else "<b>Ingredientes:</b> Ver ingredientes en base de datos.",
+        "<b>Declaración de alérgenos</b>",
+        f"<b>Contiene:</b> {contiene}.",
+        f"<b>Puede contener:</b> {puede}.",
+        f"<b>Embalaje:</b> {packaging}",
+        f"<b>Conservación:</b> {storage}",
+        f"<b>Vida útil:</b> {shelf_life} horas",
+    ]
+
+    story.append(_ficha_box(
+        title=recipe_name + draft_note,
+        content=lines,
+        title_bg=border_col,
+        box_bg=box_bg,
+        body_font=body_font,
+        bold_font=bold_font,
+        border_col=border_col,
+    ))
+
+    # Footer
+    from reportlab.platypus import Paragraph as P2
+    from reportlab.lib.styles import ParagraphStyle as PS2
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=rule))
+    story.append(P2(
+        "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid  ·  "
+        "637 773 669  ·  www.millingtons.es",
+        PS2("ftf", fontName=body_font, fontSize=8, leading=10,
+            alignment=1, textColor=grey, spaceAfter=0)
+    ))
+
+
+def _ficha_box(
+    title: str,
+    content: list,
+    title_bg,
+    box_bg,
+    body_font: str,
+    bold_font: str,
+    border_col,
+    is_header: bool = False,
+) -> object:
+    """
+    Render a tcolorbox-style bordered box matching the LaTeX ficha layout.
+    content is a list of HTML strings rendered as Paragraphs.
+    """
+    from reportlab.platypus import Table, TableStyle, Paragraph
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+
+    white = colors.white
+
+    title_ps = ParagraphStyle(
+        f"bt_{title[:8]}", fontName=bold_font, fontSize=10,
+        leading=13, textColor=white
+    )
+    body_ps = ParagraphStyle(
+        f"bc_{title[:8]}", fontName=body_font, fontSize=9,
+        leading=13, textColor=colors.HexColor("#1a1a1a"),
+        spaceAfter=2
+    )
+    body_bold_ps = ParagraphStyle(
+        f"bb_{title[:8]}", fontName=bold_font, fontSize=9,
+        leading=13, textColor=colors.HexColor("#1a1a1a"),
+        spaceAfter=6
+    )
+
+    # Title row
+    title_data  = [[Paragraph(title, title_ps)]]
+    title_table = Table(title_data, colWidths=[15.5*cm])
+    title_table.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), title_bg),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 7),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+
+    # Content rows
+    content_rows = []
+    for line in content:
+        content_rows.append(
+            [Paragraph(line, body_ps)]
+        )
+
+    if content_rows:
+        content_table = Table(content_rows, colWidths=[15.5*cm])
+        content_table.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), box_bg),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 7),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        outer_data = [[title_table], [content_table]]
+    else:
+        outer_data = [[title_table]]
+
+    outer = Table(outer_data, colWidths=[15.5*cm])
+    outer.setStyle(TableStyle([
+        ("BOX",           (0, 0), (-1, -1), 0.75, border_col),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ("TOPPADDING",    (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return outer
