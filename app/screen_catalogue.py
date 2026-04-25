@@ -35,6 +35,12 @@ OTROS_RECIPES = {
     "Trufas chocolate negro",
 }
 
+FORMAT_DISPLAY = {
+    "standard":   "Tarta estándar",
+    "individual": "Individual",
+    "bocado":     "Bocado",
+}
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
 
@@ -49,8 +55,7 @@ def screen_catalogue():
     recipes      = db.get_recipes()
     all_variants = db.get_all_variants_full()
     settings     = db.get_settings()
-
-    recipe_by_id = {r["id"]: r for r in recipes}
+    all_variants = db.get_all_variants_full()
 
     # Build variant lookup: {recipe_id: {format: variant}}
     var_lookup: dict[str, dict[str, dict]] = {}
