@@ -307,17 +307,12 @@ def get_recipe(recipe_id: str) -> dict:
 
 def save_recipe(record: dict) -> dict:
     sb = get_client()
-    record["updated_at"] = "now()"
     if record.get("id"):
-        # Sync diameter to standard variant if it changed
-        new_d = record.get("ref_diameter_cm")
-        if new_d:
-            sb.table("product_variants").update({
-                "ref_diameter_cm": new_d,
-                "size_description": f"{int(new_d)} cm diámetro"
-            }).eq("recipe_id", record["id"]).eq("format", "standard").is_(
-                "ws_price_approved", "null"  # only sync unpriced reference variants
-            ).execute()
+        sb.table("recipes").update(record).eq("id", record["id"]).execute()
+        result = sb.table("recipes").select("*").eq("id", record["id"]).execute()
+    else:
+        result = sb.table("recipes").insert(record).execute()
+    return result.data[0] if result.data else {}
 
 
 def delete_recipe(recipe_id: str) -> None:
