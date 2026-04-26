@@ -293,10 +293,14 @@ def _compute_consumable_cost(record: dict) -> dict:
 # Recipes
 # -----------------------------------------------------------------------------
 
-def get_recipes() -> list[dict]:
+def get_recipes(include_sub_recipes: bool = False) -> list[dict]:
+    """Return recipes. Sub-recipes (intermediate components) are excluded
+    by default so they do not appear in pricing, catalogue or calculator."""
     sb = get_client()
-    result = sb.table("recipes").select("*").order("name").execute()
-    return result.data or []
+    q = sb.table("recipes").select("*").order("name")
+    if not include_sub_recipes:
+        q = q.eq("is_sub_recipe", False)
+    return q.execute().data or []
 
 
 def get_recipe(recipe_id: str) -> dict:

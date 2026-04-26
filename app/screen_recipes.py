@@ -65,7 +65,7 @@ multiples — no numeric size codes needed.
 
     col_list, col_detail = st.columns([1, 2.5])
 
-    recipes     = db.get_recipes()
+    recipes     = db.get_recipes(include_sub_recipes=True)
     cake_codes  = db.get_cake_codes()
     ingredients = db.get_ingredients()
     settings    = db.get_settings()
@@ -94,6 +94,13 @@ multiples — no numeric size codes needed.
 
         selected_id = st.session_state.get("selected_recipe_id")
 
+        # Split into sellable recipes and sub-recipes
+        sellable   = [r for r in filtered if not r.get("is_sub_recipe")]
+        sub_recipes = [r for r in filtered if r.get("is_sub_recipe")]
+
+        assigned   = [r for r in sellable if r.get("cake_code_id")]
+        unassigned = [r for r in sellable if not r.get("cake_code_id")]
+
         if assigned:
             st.caption("Assigned")
             for r in assigned:
@@ -115,6 +122,21 @@ multiples — no numeric size codes needed.
                     type="primary" if selected_id == r["id"] else "secondary"
                 ):
                     _load_recipe(r["id"], code_options)
+
+        # Sub-recipes hidden by default
+        if sub_recipes:
+            show_subs = st.toggle(
+                f"🔧 Components ({len(sub_recipes)})",
+                value=False, key="show_sub_recipes"
+            )
+            if show_subs:
+                for r in sub_recipes:
+                    if st.button(
+                        f"🔧 {r['name']}", key=f"btn_{r['id']}",
+                        use_container_width=True,
+                        type="primary" if selected_id == r["id"] else "secondary"
+                    ):
+                        _load_recipe(r["id"], code_options)
 
         st.divider()
         if st.button("➕ New recipe", use_container_width=True):
@@ -165,7 +187,7 @@ multiples — no numeric size codes needed.
             )
             selected_code_id = code_options.get(selected_code_label)
 
-        c3, c4 = st.columns(2)
+        c3, c4, c5 = st.columns([1, 1, 1])
         with c3:
             version = st.text_input(
                 "Version", key=f"field_version_{p}",
@@ -176,6 +198,21 @@ multiples — no numeric size codes needed.
             size_type = st.selectbox(
                 "Size type", ["diameter", "weight", "portions"],
                 key=f"field_size_type_{p}"
+            )
+        with c5:
+            is_sub_recipe = st.checkbox(
+                "🔧 Component recipe",
+                key=f"field_is_sub_recipe_{p}",
+                help="Tick for intermediate components (pastry dough, "
+                     "mousse, etc.) used as ingredients in other recipes. "
+                     "These are excluded from pricing analysis and catalogue."
+            )
+
+        if is_sub_recipe:
+            st.info(
+                "🔧 Component recipe — this will not appear in the pricing "
+                "analysis, calculator or catalogue. It will only be accessible "
+                "from the recipe list under Components."
             )
 
         st.markdown("**Reference dimensions**")
@@ -214,7 +251,8 @@ multiples — no numeric size codes needed.
         )
 
         # ── Formats & labour ──────────────────────────────────────────────────
-        with st.expander("📦 Formats & labour times"):
+        if not is_sub_recipe:
+         with st.expander("📦 Formats & labour times"):
             st.caption(
                 "Enable smaller formats and set production batch times. "
                 "The calculator uses these to derive per-unit labour costs."
@@ -320,19 +358,6 @@ multiples — no numeric size codes needed.
             else:
                 bocado_prep_hours = 0.0
                 bocado_oven_hours = 0.0
-                
-            # ── Kitchen cross-contamination ───────────────────────────────────────
-            st.markdown("**Puede contener (cocina)**")
-            st.caption(
-                "Riesgos de contaminación cruzada por equipos compartidos "
-                "o entorno de producción. Se añade a la declaración del ficha."
-            )
-            kitchen_may_contain = st.text_input(
-                "Puede contener",
-                key=f"field_kitchen_may_contain_{p}",
-                placeholder="e.g. soja y derivados, mostaza y derivados",
-                label_visibility="collapsed"
-            )
 
         # ── Ingredient lines ──────────────────────────────────────────────────
         st.markdown("#### Ingredients")
@@ -397,22 +422,7 @@ multiples — no numeric size codes needed.
                     )
                     cost_per_unit = ing_data.get("cost_per_unit")
                 if cost_per_unit and amount:
-                    # Apply fruit unit conversion if needed
-                    _UNIT_TO_G = {
-                        "limones": 100.0, "limas": 67.0,
-                        "naranja": 180.0, "manzanas": 182.0,
-                    }
-                    pack_unit  = (ing_data.get("pack_unit") or "g").lower()
-                    eff_amount = amount
-                    if pack_unit in ("kg", "g"):
-                        name_lower  = selected_ing.lower()
-                        unit_weight = next(
-                            (w for key, w in _UNIT_TO_G.items()
-                             if key in name_lower), None
-                        )
-                        if unit_weight and amount < 20:
-                            eff_amount = amount * unit_weight
-                    line_cost   = cost_per_unit * eff_amount
+                    line_cost   = cost_per_unit * amount
                     total_cost += line_cost
                     st.markdown(f"`€ {line_cost:.4f}`")
                 else:
@@ -479,15 +489,15 @@ multiples — no numeric size codes needed.
                         "ref_batch_size":         ref_batch_size or None,
                         "ref_prep_hours":         ref_prep_hours or None,
                         "ref_oven_hours":         ref_oven_hours or None,
-                        "has_individual":         has_individual,
-                        "has_bocado":             has_bocado,
-                        "individual_weight_g":    individual_weight,
-                        "bocado_weight_g":        bocado_weight,
-                        "small_batch_prep_hours": small_prep_hours or None,
-                        "small_batch_oven_hours": small_oven_hours or None,
-                        "bocado_batch_prep_hours": bocado_prep_hours or None,
-                        "bocado_batch_oven_hours": bocado_oven_hours or None,
-                        "kitchen_may_contain": kitchen_may_contain or None,
+                        "is_sub_recipe":          is_sub_recipe,
+                        "has_individual":         has_individual if not is_sub_recipe else False,
+                        "has_bocado":             has_bocado if not is_sub_recipe else False,
+                        "individual_weight_g":    individual_weight if not is_sub_recipe else None,
+                        "bocado_weight_g":        bocado_weight if not is_sub_recipe else None,
+                        "small_batch_prep_hours": small_prep_hours or None if not is_sub_recipe else None,
+                        "small_batch_oven_hours": small_oven_hours or None if not is_sub_recipe else None,
+                        "bocado_batch_prep_hours": bocado_prep_hours or None if not is_sub_recipe else None,
+                        "bocado_batch_oven_hours": bocado_oven_hours or None if not is_sub_recipe else None,
                     })
                     clean_lines = [
                         {"ingredient_id": l["ingredient_id"],
@@ -550,7 +560,7 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_bocado_weight_{p}"]      = 30.0
         st.session_state[f"field_bocado_prep_{p}"]        = 0.0
         st.session_state[f"field_bocado_oven_{p}"]        = 0.0
-        st.session_state[f"field_kitchen_may_contain_{p}"] = ""
+        st.session_state[f"field_is_sub_recipe_{p}"]      = False
     else:
         recipe = db.get_recipe(recipe_id)
 
@@ -582,8 +592,7 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_bocado_weight_{p}"]     = float(recipe.get("bocado_weight_g") or 30)
         st.session_state[f"field_bocado_prep_{p}"]       = float(recipe.get("bocado_batch_prep_hours") or 0.0)
         st.session_state[f"field_bocado_oven_{p}"]       = float(recipe.get("bocado_batch_oven_hours") or 0.0)
-        st.session_state[f"field_kitchen_may_contain_{p}"] = \
-            recipe.get("kitchen_may_contain") or ""
+        st.session_state[f"field_is_sub_recipe_{p}"]     = bool(recipe.get("is_sub_recipe"))
 
     st.rerun()
 
