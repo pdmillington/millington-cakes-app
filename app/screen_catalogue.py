@@ -55,7 +55,8 @@ def screen_catalogue():
     recipes      = db.get_recipes()
     all_variants = db.get_all_variants_full()
     settings     = db.get_settings()
-    all_variants = db.get_all_variants_full()
+
+    recipe_by_id = {r["id"]: r for r in recipes}
 
     # Build variant lookup: {recipe_id: {format: variant}}
     var_lookup: dict[str, dict[str, dict]] = {}
@@ -172,6 +173,12 @@ def screen_catalogue():
             "Incluir condiciones de pedido", value=True,
             key="cat_conditions"
         )
+        include_fichas = st.checkbox(
+            "Incluir fichas técnicas", value=True,
+            key="cat_fichas",
+            help="Si no se incluyen, se añade una nota indicando que "
+                 "las fichas están disponibles bajo petición."
+        )
 
     # ── Resolve final prices ───────────────────────────────────────────────────
     # If client_name is set, fetch their overrides and apply.
@@ -268,15 +275,16 @@ def screen_catalogue():
                     full_var_lookup.setdefault(v["recipe_id"], {})[v["format"]] = v
 
                 pdf_bytes = _generate_pdf(
-                    rows          = resolved_rows,
-                    settings      = settings,
-                    title         = catalogue_title,
-                    cat_date      = catalogue_date,
-                    client_name   = client_name.strip() or None,
-                    include_cond  = include_conditions,
-                    cond_allergen = custom_allergen,
-                    cond_avail    = custom_availability,
-                    cond_returns  = custom_returns,
+                    rows           = resolved_rows,
+                    settings       = settings,
+                    title          = catalogue_title,
+                    cat_date       = catalogue_date,
+                    client_name    = client_name.strip() or None,
+                    include_cond   = include_conditions,
+                    include_fichas = include_fichas,
+                    cond_allergen  = custom_allergen,
+                    cond_avail     = custom_availability,
+                    cond_returns   = custom_returns,
                     var_lookup    = full_var_lookup,
                 )
                 fname = (
@@ -357,6 +365,7 @@ def _generate_pdf(
     cond_allergen: str,
     cond_avail: str,
     cond_returns: str,
+    include_fichas: bool = True,
     var_lookup: dict = None,
 ) -> bytes:
     from reportlab.platypus import (
@@ -616,7 +625,15 @@ def _generate_pdf(
     ))
 
     # ── Fichas ─────────────────────────────────────────────────────────────────
-    if var_lookup and rows:
+    if not include_fichas:
+        story.append(Spacer(1, 0.3*cm))
+        story.append(Paragraph(
+            "<i>Las fichas técnicas de todos los productos están disponibles "
+            "bajo petición.</i>",
+            ps("fon", size=8, leading=11,
+               color=colors.HexColor("#6b7280"), sa=0)
+        ))
+    elif var_lookup and rows:
         for row in rows:
             rid     = row["recipe_id"]
             fmt_key = row["fmt_key"]
@@ -624,10 +641,24 @@ def _generate_pdf(
             if not variant:
                 continue
 
+            # Build ficha title with size and format
+            fmt_label = {"standard": "Tarta estándar",
+                         "individual": "Individual",
+                         "bocado": "Bocado"}.get(fmt_key, "")
+            size_desc = variant.get("size_description") or ""
+            if fmt_key == "standard" and size_desc:
+                ficha_title = f"{row['name']} — {size_desc}"
+            elif fmt_key != "standard":
+                ficha_title = f"{row['name']} — {fmt_label}"
+                if size_desc:
+                    ficha_title += f" ({size_desc})"
+            else:
+                ficha_title = row["name"]
+
             story.append(PageBreak())
             _add_ficha_page(
                 story        = story,
-                recipe_name  = row["name"],
+                recipe_name  = ficha_title,
                 variant      = variant,
                 ps           = ps,
                 body_font    = body_font,
@@ -676,8 +707,20 @@ def _add_ficha_page(
     recipe_id    = variant.get("recipe_id")
     is_approved  = bool(variant.get("label_approved"))
     size_desc    = variant.get("size_description") or "—"
-    weight_g     = variant.get("ref_weight_g")
-    weight_str   = f"{weight_g:.0f} g" if weight_g else "—"
+    weight_g = variant.get("ref_weight_g")
+
+    # Fallback: estimate weight from recipe lines, rounded to nearest 50g
+    if not weight_g and recipe_id:
+        try:
+            lines    = db.get_recipe_lines(recipe_id)
+            result   = db.estimate_recipe_weight(lines)
+            est      = result.get("weight_g") or None
+            if est:
+                weight_g = round(est / 50) * 50  # round to nearest 50g
+        except Exception:
+            weight_g = None
+
+    weight_str = f"{int(weight_g)} g" if weight_g else "—"
     description  = variant.get("description_es") or ""
     packaging    = variant.get("packaging_desc") or "Caja de cartón"
     storage      = variant.get("storage_instructions") or "Refrigerada entre 0 - 5°C"
