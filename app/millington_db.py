@@ -1114,3 +1114,55 @@ def get_client_prices_for_catalogue(client_name: str) -> dict[str, dict]:
         .execute()
     )
     return {r["variant_id"]: r for r in (result.data or [])}
+
+# -----------------------------------------------------------------------------
+# Holded year cache
+# Persistent cache for Holded invoice data. One row per calendar year.
+# Historical years are written once and never updated automatically.
+# -----------------------------------------------------------------------------
+
+def get_holded_cache_index() -> list[dict]:
+    """
+    Return one summary row per cached year:
+      { year, invoice_count, synced_at }
+    Used by holded_api.py to know which years are already stored.
+    """
+    sb     = get_client()
+    result = (
+        sb.table("holded_year_cache")
+        .select("year, invoice_count, synced_at")
+        .order("year")
+        .execute()
+    )
+    return result.data or []
+
+
+def get_holded_year_cache(year: int) -> list[dict]:
+    """
+    Return the cached list of invoice dicts for a given year.
+    Returns [] if the year is not cached.
+    """
+    sb     = get_client()
+    result = (
+        sb.table("holded_year_cache")
+        .select("invoices")
+        .eq("year", year)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return []
+    return result.data[0].get("invoices") or []
+
+
+def save_holded_year_cache(year: int, invoices: list[dict]) -> None:
+    """
+    Upsert invoice data for a given year into the Supabase cache.
+    Called once per historical year; never called for the current year.
+    """
+    sb = get_client()
+    sb.table("holded_year_cache").upsert({
+        "year":      year,
+        "invoices":  invoices,
+        "synced_at": "now()",
+    }).execute()

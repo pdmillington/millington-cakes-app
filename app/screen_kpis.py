@@ -744,3 +744,410 @@ def screen_kpis():
 
     with tabs[3]:
         _tab_ingredients(line_items, sku_map, recipe_names, name_id_map)
+
+
+# =============================================================================
+# REPLACEMENT / ADDITIONS — paste these over the existing equivalents
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Replace _revenue_by_month with this version that uses invoice subtotal
+# -----------------------------------------------------------------------------
+
+def _revenue_by_month_invoices(invoices: list[dict]) -> dict[str, float]:
+    """
+    Sum revenue by month using invoice-level subtotal (ex-VAT).
+    This matches what Holded reports exactly, since subtotal is Holded's
+    own figure before any rounding or recalculation.
+    Only invoices with status != cancelled/void are included.
+    """
+    # Holded status codes observed: 0=draft, 1=pending, 2=overdue,
+    # 3=paid, 4=partially paid — all non-draft are valid revenue.
+    # Negative subtotals indicate credit notes — include them (they reduce revenue).
+    totals: dict[str, float] = defaultdict(float)
+    for inv in invoices:
+        if inv.get("draft"):
+            continue
+        d = _ts_to_date(inv.get("date", 0))
+        totals[_month_label(d)] += float(inv.get("subtotal") or 0)
+    return dict(totals)
+
+
+# -----------------------------------------------------------------------------
+# New: audit tab
+# -----------------------------------------------------------------------------
+
+def _tab_audit(invoices: list[dict], line_items: list[dict]):
+    st.markdown("### 🔍 Auditoría de datos")
+    st.caption(
+        "Compara nuestros cálculos con los totales de Holded para identificar "
+        "cualquier discrepancia antes de usar los KPIs."
+    )
+
+    # ── 1. Invoice count by year ───────────────────────────────────────────────
+    st.markdown("#### Facturas descargadas por año")
+
+    year_counts: dict[int, dict] = defaultdict(lambda: {"count": 0, "subtotal": 0.0})
+    statuses: dict[str, int] = defaultdict(int)
+
+    for inv in invoices:
+        d    = _ts_to_date(inv.get("date", 0))
+        sub  = float(inv.get("subtotal") or 0)
+        year_counts[d.year]["count"]    += 1
+        year_counts[d.year]["subtotal"] += sub
+        statuses[str(inv.get("status", "?"))] += 1
+
+    ydf = pd.DataFrame([
+        {
+            "Año":             y,
+            "Facturas":        v["count"],
+            "Total ex-IVA (€)": f"€{v['subtotal']:,.2f}",
+        }
+        for y, v in sorted(year_counts.items())
+    ] + [{
+        "Año":             "TOTAL",
+        "Facturas":        sum(v["count"] for v in year_counts.values()),
+        "Total ex-IVA (€)": f"€{sum(v['subtotal'] for v in year_counts.values()):,.2f}",
+    }])
+    st.dataframe(ydf, hide_index=True, use_container_width=True)
+
+    # ── 2. Status breakdown ────────────────────────────────────────────────────
+    with st.expander("Desglose por estado de factura"):
+        st.caption(
+            "Holded status: 0=borrador · 1=pendiente · 2=vencida · "
+            "3=pagada · 4=pago parcial. Negativos = abonos."
+        )
+        sdf = pd.DataFrame([
+            {"Estado": k, "Facturas": v}
+            for k, v in sorted(statuses.items())
+        ])
+        st.dataframe(sdf, hide_index=True, use_container_width=True)
+
+    st.divider()
+
+    # ── 3. Method comparison by month ─────────────────────────────────────────
+    st.markdown("#### Comparación de métodos de cálculo")
+    st.caption(
+        "**Método A** = suma de subtotal de facturas (igual a Holded).  \n"
+        "**Método B** = suma de precio × unidades de líneas de producto (excluye entregas).  \n"
+        "Si los totales difieren, usar Método A para los gráficos."
+    )
+
+    method_a = _revenue_by_month_invoices(invoices)
+    method_b = _revenue_by_month(line_items)   # product lines only
+
+    all_months = sorted(
+        set(list(method_a.keys()) + list(method_b.keys())),
+        key=lambda ml: datetime.strptime(ml, "%b %Y")
+    )
+
+    cmp_rows = []
+    for ml in all_months:
+        a   = method_a.get(ml, 0.0)
+        b   = method_b.get(ml, 0.0)
+        diff = a - b
+        cmp_rows.append({
+            "Mes":             ml,
+            "A: Subtotal (€)": a,
+            "B: Líneas (€)":   b,
+            "Diferencia (€)":  diff,
+            "% diferencia":    f"{diff/a*100:+.1f}%" if a else "—",
+        })
+
+    cdf = pd.DataFrame(cmp_rows)
+
+    # Highlight rows with large discrepancies
+    def _highlight_diff(row):
+        a = row["A: Subtotal (€)"]
+        b = row["B: Líneas (€)"]
+        if a and abs(a - b) / max(abs(a), 1) > 0.02:   # >2% difference
+            return ["background-color: #fff3cd"] * len(row)
+        return [""] * len(row)
+
+    fmt = {
+        "A: Subtotal (€)": "€{:.2f}",
+        "B: Líneas (€)":   "€{:.2f}",
+        "Diferencia (€)":  "€{:.2f}",
+    }
+    st.dataframe(
+        cdf.style.apply(_highlight_diff, axis=1).format(fmt),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    total_a = sum(method_a.values())
+    total_b = sum(method_b.values())
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Método A (subtotal)", f"€{total_a:,.2f}")
+    m2.metric("Total Método B (líneas)",   f"€{total_b:,.2f}")
+    m3.metric("Diferencia total",          f"€{total_a - total_b:,.2f}")
+
+    st.divider()
+
+    # ── 4. Individual invoice list ─────────────────────────────────────────────
+    st.markdown("#### Facturas individuales")
+
+    inv_rows = []
+    for inv in sorted(invoices, key=lambda x: x.get("date", 0), reverse=True):
+        d = _ts_to_date(inv.get("date", 0))
+        # sum our line calculation for this invoice
+        our_calc = sum(
+            r["line_revenue"] for r in line_items
+            if r["invoice_id"] == inv["id"]
+        )
+        holded_sub = float(inv.get("subtotal") or 0)
+        inv_rows.append({
+            "Fecha":          d.strftime("%Y-%m-%d"),
+            "Nº":             inv.get("docNumber", inv.get("id", "")[:8]),
+            "Cliente":        (inv.get("contactName") or "")[:35],
+            "Status":         inv.get("status", "?"),
+            "Subtotal Holded":holded_sub,
+            "Calc. líneas":   our_calc,
+            "Δ":              holded_sub - our_calc,
+            "Draft":          inv.get("draft", False),
+        })
+
+    idf = pd.DataFrame(inv_rows)
+    fmt2 = {
+        "Subtotal Holded": "€{:.2f}",
+        "Calc. líneas":    "€{:.2f}",
+        "Δ":               "€{:.2f}",
+    }
+
+    search = st.text_input("Filtrar por cliente o nº", placeholder="Buscar…",
+                           key="audit_search")
+    if search:
+        mask = (
+            idf["Cliente"].str.contains(search, case=False, na=False) |
+            idf["Nº"].str.contains(search, case=False, na=False)
+        )
+        idf = idf[mask]
+
+    only_diffs = st.checkbox("Mostrar solo facturas con discrepancia", key="audit_diffs")
+    if only_diffs:
+        idf = idf[idf["Δ"].abs() > 0.02]
+
+    st.dataframe(
+        idf.style.format(fmt2),
+        hide_index=True,
+        use_container_width=True,
+        height=400,
+    )
+
+    st.caption(
+        "Δ = Subtotal Holded − suma de líneas calculadas.  \n"
+        "Diferencias comunes: líneas de entrega (no marcadas como producto), "
+        "descuentos a nivel de factura, o abonos."
+    )
+
+
+# -----------------------------------------------------------------------------
+# Updated screen_kpis — add audit tab and switch revenue chart to Method A
+# -----------------------------------------------------------------------------
+
+def screen_kpis():
+    st.title("Business KPIs")
+    st.caption("Datos de ventas desde Holded · Costes de recetas desde Supabase")
+
+    synced = holded.last_synced()
+    col_sync, col_info = st.columns([1, 4])
+    with col_sync:
+        force = st.button("🔄 Actualizar datos", use_container_width=True)
+    with col_info:
+        if synced:
+            st.caption(f"Última sincronización: {synced}")
+        else:
+            st.caption("Datos no cargados aún — clic en Actualizar para sincronizar.")
+
+    try:
+        invoices = holded.get_invoices(force_refresh=force)
+        contacts = holded.get_contacts(force_refresh=force)
+    except Exception as e:
+        st.error(f"No se pudo conectar con Holded: {e}")
+        st.info("Comprueba que HOLDED_API_KEY está configurado en st.secrets / .env")
+        return
+
+    line_items = holded.get_line_items(invoices)
+
+    skus      = db.get_skus()
+    recipes   = db.get_recipes()
+    sku_map   = _build_sku_map(skus)
+    recipe_names, name_id_map = _build_fuzzy_map(recipes)
+
+    # Baseline using Method A (invoice subtotal) — matches Holded exactly
+    baseline_items  = [
+        inv for inv in invoices
+        if not inv.get("draft")
+        and BASELINE_START <= _ts_to_date(inv.get("date", 0)) <= BASELINE_END
+    ]
+    baseline_annual = sum(float(inv.get("subtotal") or 0) for inv in baseline_items)
+
+    tabs = st.tabs([
+        "📈 Ingresos vs Objetivo",
+        "🏅 Top Clientes",
+        "🆕 Nuevos Clientes",
+        "🧂 Ingredientes",
+        "🔍 Auditoría",
+    ])
+
+    with tabs[0]:
+        _tab_revenue_v2(invoices, line_items, baseline_annual)
+
+    with tabs[1]:
+        _tab_top_clients(line_items)
+
+    with tabs[2]:
+        _tab_new_clients(contacts)
+
+    with tabs[3]:
+        _tab_ingredients(line_items, sku_map, recipe_names, name_id_map)
+
+    with tabs[4]:
+        _tab_audit(invoices, line_items)
+
+
+def _tab_revenue_v2(invoices: list[dict], line_items: list[dict],
+                    baseline_annual: float):
+    """
+    Revenue chart using Method A (invoice subtotal) for accuracy.
+    Shows full history from inception plus the target year.
+    """
+    st.markdown("### Ingresos mensuales vs objetivo")
+
+    # All monthly revenue from inception using invoice subtotal
+    all_monthly = _revenue_by_month_invoices(invoices)
+
+    targets      = _monthly_targets(baseline_annual) if baseline_annual > 0 else []
+    target_by_ml = {t["month_label"]: t["target"] for t in targets}
+
+    all_months = sorted(
+        set(list(all_monthly.keys()) + list(target_by_ml.keys())),
+        key=lambda ml: datetime.strptime(ml, "%b %Y")
+    )
+
+    chart_rows = []
+    for ml in all_months:
+        d      = datetime.strptime(ml, "%b %Y").date()
+        actual = all_monthly.get(ml)
+        target = target_by_ml.get(ml)
+        period = (
+            "Período base"  if BASELINE_START <= d <= BASELINE_END else
+            "Año objetivo"  if TARGET_START   <= d <= TARGET_END   else
+            "Histórico"
+        )
+        chart_rows.append({
+            "Mes":          ml,
+            "Ingresos (€)": actual,
+            "Objetivo (€)": target,
+            "Período":      period,
+        })
+
+    df        = pd.DataFrame(chart_rows)
+    df_actual = df.dropna(subset=["Ingresos (€)"])
+    df_target = df.dropna(subset=["Objetivo (€)"])
+
+    # ── KPI metrics ───────────────────────────────────────────────────────────
+    if baseline_annual > 0:
+        today         = date.today()
+        ytd_invoices  = [
+            inv for inv in invoices
+            if not inv.get("draft")
+            and TARGET_START <= _ts_to_date(inv.get("date", 0)) <= today
+        ]
+        ytd_revenue   = sum(float(inv.get("subtotal") or 0) for inv in ytd_invoices)
+
+        elapsed       = max(1, (today.year - TARGET_START.year) * 12
+                               + today.month - TARGET_START.month + 1)
+        ytd_target    = sum(t["target"] for t in targets[:elapsed])
+        pct           = ytd_revenue / ytd_target * 100 if ytd_target else 0
+        label, _      = _scenario_status(ytd_revenue, ytd_target, baseline_annual)
+        annualised    = ytd_revenue / elapsed * 12
+        alto_thresh   = baseline_annual * ALTO_THRESHOLD
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Base anual (Abr25–Mar26)",      f"€{baseline_annual:,.0f}")
+        m2.metric("Ingresos YTD (desde Abr26)",    f"€{ytd_revenue:,.0f}")
+        m3.metric("Objetivo YTD acumulado",         f"€{ytd_target:,.0f}",
+                  delta=f"{pct - 100:+.0f}%")
+        m4.metric("Escenario",                      label)
+
+        st.caption(
+            f"Umbral Alto Rendimiento: **€{alto_thresh:,.0f}** · "
+            f"Ritmo anualizado: **€{annualised:,.0f}** "
+            f"({annualised/alto_thresh*100:.0f}% del umbral)"
+        )
+        st.progress(min(annualised / alto_thresh, 1.0))
+        st.divider()
+    else:
+        st.warning(
+            "Sin datos del período base (Abr 2025 – Mar 2026). "
+            "El objetivo contractual no puede calcularse aún."
+        )
+
+    # ── Chart ─────────────────────────────────────────────────────────────────
+    if df_actual.empty:
+        st.info("No hay datos de ingresos para mostrar.")
+        return
+
+    colour_scale = alt.Scale(
+        domain=["Histórico",    "Período base", "Año objetivo"],
+        range= ["#CBD5E0",      "#9BB0C5",      "#3A7FBF"]
+    )
+
+    bars = (
+        alt.Chart(df_actual)
+        .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+        .encode(
+            x=alt.X("Mes:N", sort=all_months,
+                    axis=alt.Axis(labelAngle=-45, title=None)),
+            y=alt.Y("Ingresos (€):Q",
+                    axis=alt.Axis(title="€ ex-IVA (subtotal factura)",
+                                  format=",.0f")),
+            color=alt.Color("Período:N", scale=colour_scale,
+                            legend=alt.Legend(title="Período")),
+            tooltip=[
+                alt.Tooltip("Mes:N"),
+                alt.Tooltip("Ingresos (€):Q", format=",.2f"),
+                alt.Tooltip("Período:N"),
+            ],
+        )
+    )
+
+    layers = [bars]
+
+    if not df_target.empty:
+        target_line = (
+            alt.Chart(df_target)
+            .mark_line(color="#E8413C", strokeWidth=2.5,
+                       strokeDash=[6, 3], interpolate="step-after",
+                       point=True)
+            .encode(
+                x=alt.X("Mes:N", sort=all_months),
+                y=alt.Y("Objetivo (€):Q"),
+                tooltip=[
+                    alt.Tooltip("Mes:N"),
+                    alt.Tooltip("Objetivo (€):Q", format=",.2f"),
+                ],
+            )
+        )
+        layers.append(target_line)
+
+    chart = (
+        alt.layer(*layers)
+        .properties(height=400)
+        .configure_axis(labelFontSize=11, titleFontSize=12)
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    st.caption(
+        "Ingresos = subtotal ex-IVA de cada factura (incluye entregas). "
+        "Línea roja = objetivo contractual mensual (rampa 1.2×→2.4×)."
+    )
+
+    if targets:
+        with st.expander("Ver desglose del objetivo mes a mes"):
+            tdf = pd.DataFrame(targets)[["month_label", "multiplier", "target"]]
+            tdf.columns = ["Mes", "Multiplicador", "Objetivo (€)"]
+            tdf["Objetivo (€)"]  = tdf["Objetivo (€)"].map(lambda x: f"€{x:,.2f}")
+            tdf["Multiplicador"] = tdf["Multiplicador"].map(lambda x: f"{x}×")
+            st.dataframe(tdf, hide_index=True, use_container_width=True)
