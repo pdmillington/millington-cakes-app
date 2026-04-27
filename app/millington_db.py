@@ -12,12 +12,23 @@
 # =============================================================================
 
 import os
+import re as _re
 import streamlit as st
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from rapidfuzz import process, fuzz
 
 load_dotenv()
+
+# SKU pattern embedded in Holded product names e.g. "Cookie Box - CO-03-DC-GW"
+_SKU_RE = _re.compile(r'\b([A-Z]{2}-\d{2}-[A-Z]{2}-[A-Z]{2,4}(?:-[A-Z]{2})?)\b')
+ 
+# Spanish month name → month number
+_MONTHS_ES = {
+    'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
+    'mayo': 5, 'junio': 6, 'julio': 7, 'agosto': 8,
+    'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12,
+}
 
 # Helpers
 
@@ -1167,3 +1178,281 @@ def save_holded_year_cache(year: int, invoices: list[dict],
         "invoices":  invoices,
         "synced_at": "now()",
     }).execute()
+
+# =============================================================================
+# Excel parsing helpers
+# =============================================================================
+ 
+def _parse_month_header(cell_value: str) -> tuple[int, int] | None:
+    """
+    Parse a Holded month column header like 'Enero 26' or 'Febrero 2026'
+    into (month_number, year). Returns None if not parseable.
+    """
+    if not cell_value:
+        return None
+    parts = str(cell_value).lower().split()
+    if len(parts) < 2:
+        return None
+    month_name = parts[0]
+    month = _MONTHS_ES.get(month_name)
+    if not month:
+        return None
+    try:
+        year_str = parts[1]
+        year = int(year_str) if len(year_str) == 4 else 2000 + int(year_str)
+        return month, year
+    except (ValueError, IndexError):
+        return None
+ 
+ 
+def _extract_sku(product_name: str) -> tuple[str, str | None]:
+    """
+    If the product name contains an embedded SKU (e.g. 'Cookie Box - CO-03-DC-GW'),
+    return (clean_name, sku). Otherwise return (product_name, None).
+    """
+    m = _SKU_RE.search(product_name)
+    if not m:
+        return product_name.strip(), None
+    sku = m.group(1)
+    # Remove the SKU and any trailing separator from the name
+    clean = _re.sub(r'\s*[-–]\s*' + _re.escape(sku) + r'\s*$', '', product_name).strip()
+    return clean, sku
+ 
+ 
+def parse_ventas_excel(file_bytes: bytes) -> list[dict]:
+    """
+    Parse a Holded 'Ventas' Excel export (monthly revenue totals).
+ 
+    Returns a list of dicts, one per month with data:
+      { year, month, ventas_ex_vat, tax, total_inc_vat, units }
+ 
+    Months with ventas_ex_vat == 0 are skipped (future months in the export).
+    """
+    import openpyxl
+    from io import BytesIO
+ 
+    wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+    ws = wb.active
+ 
+    # Build column index → (month, year) map from the header row
+    col_map: dict[int, tuple[int, int]] = {}
+    header_row_idx = None
+ 
+    rows = list(ws.iter_rows(values_only=True))
+    for row_idx, row in enumerate(rows):
+        for col_idx, cell in enumerate(row):
+            parsed = _parse_month_header(str(cell) if cell else "")
+            if parsed:
+                col_map[col_idx] = parsed
+                header_row_idx = row_idx
+        if col_map:
+            break
+ 
+    if not col_map:
+        raise ValueError("No se encontró la fila de cabecera de meses en el fichero de Ventas.")
+ 
+    # Extract metric rows
+    metric_map = {
+        'ventas':    'ventas_ex_vat',
+        'impuestos': 'tax',
+        'total':     'total_inc_vat',
+        'unidades':  'units',
+    }
+ 
+    # {(year, month): {metric: value}}
+    data: dict[tuple, dict] = {}
+ 
+    for row in rows[header_row_idx + 1:]:
+        if not row or not row[0]:
+            continue
+        label = str(row[0]).strip().lower()
+        field = metric_map.get(label)
+        if not field:
+            continue
+        for col_idx, (month, year) in col_map.items():
+            if col_idx >= len(row):
+                continue
+            val = row[col_idx]
+            try:
+                val = float(val or 0)
+            except (TypeError, ValueError):
+                val = 0.0
+            key = (year, month)
+            if key not in data:
+                data[key] = {'year': year, 'month': month,
+                             'ventas_ex_vat': 0.0, 'tax': 0.0,
+                             'total_inc_vat': 0.0, 'units': 0.0}
+            data[key][field] = val
+ 
+    # Only return months that have actual revenue (skip future zero months)
+    return [v for v in data.values() if v['ventas_ex_vat'] != 0 or v['total_inc_vat'] != 0]
+ 
+ 
+def parse_productos_excel(file_bytes: bytes) -> list[dict]:
+    """
+    Parse a Holded 'Ventas por producto' Excel export (units per product per month).
+ 
+    Returns a list of dicts:
+      { year, month, product_name, sku (or None), units }
+ 
+    Rows with zero units across all months are skipped.
+    'Total' row is skipped.
+    """
+    import openpyxl
+    from io import BytesIO
+ 
+    wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
+    ws = wb.active
+ 
+    rows = list(ws.iter_rows(values_only=True))
+ 
+    # Find header row
+    col_map: dict[int, tuple[int, int]] = {}
+    header_row_idx = None
+ 
+    for row_idx, row in enumerate(rows):
+        for col_idx, cell in enumerate(row):
+            parsed = _parse_month_header(str(cell) if cell else "")
+            if parsed:
+                col_map[col_idx] = parsed
+                header_row_idx = row_idx
+        if col_map:
+            break
+ 
+    if not col_map:
+        raise ValueError("No se encontró la fila de cabecera de meses en el fichero de Productos.")
+ 
+    results = []
+    skip_labels = {'total', 'informe creado'}
+ 
+    for row in rows[header_row_idx + 1:]:
+        if not row or not row[0]:
+            continue
+        raw_name = str(row[0]).strip()
+        if not raw_name:
+            continue
+        if any(raw_name.lower().startswith(s) for s in skip_labels):
+            continue
+ 
+        clean_name, sku = _extract_sku(raw_name)
+ 
+        for col_idx, (month, year) in col_map.items():
+            if col_idx >= len(row):
+                continue
+            val = row[col_idx]
+            try:
+                units = float(val or 0)
+            except (TypeError, ValueError):
+                units = 0.0
+            if units == 0:
+                continue
+            results.append({
+                'year':         year,
+                'month':        month,
+                'product_name': clean_name,
+                'sku':          sku,
+                'units':        units,
+            })
+ 
+    return results
+ 
+ 
+# =============================================================================
+# Supabase read/write — monthly revenue
+# =============================================================================
+ 
+def upsert_monthly_revenue(rows: list[dict]) -> int:
+    """
+    Upsert monthly revenue rows into holded_monthly_revenue.
+    Returns number of rows upserted.
+    """
+    if not rows:
+        return 0
+    sb = get_client()
+    payload = [
+        {
+            'year':          r['year'],
+            'month':         r['month'],
+            'ventas_ex_vat': r['ventas_ex_vat'],
+            'tax':           r['tax'],
+            'total_inc_vat': r['total_inc_vat'],
+            'units':         r['units'],
+            'uploaded_at':   'now()',
+        }
+        for r in rows
+    ]
+    sb.table('holded_monthly_revenue').upsert(payload).execute()
+    return len(payload)
+ 
+ 
+def get_monthly_revenue(year: int | None = None) -> list[dict]:
+    """
+    Return all monthly revenue rows, optionally filtered by year.
+    Sorted by year, month ascending.
+    """
+    sb = get_client()
+    q  = sb.table('holded_monthly_revenue').select('*').order('year').order('month')
+    if year is not None:
+        q = q.eq('year', year)
+    return q.execute().data or []
+ 
+ 
+def upsert_monthly_products(rows: list[dict]) -> int:
+    """
+    Upsert monthly product rows into holded_monthly_products.
+    Returns number of rows upserted.
+    """
+    if not rows:
+        return 0
+    sb = get_client()
+    payload = [
+        {
+            'year':         r['year'],
+            'month':        r['month'],
+            'product_name': r['product_name'],
+            'sku':          r.get('sku'),
+            'units':        r['units'],
+            'uploaded_at':  'now()',
+        }
+        for r in rows
+    ]
+    sb.table('holded_monthly_products').upsert(payload).execute()
+    return len(payload)
+ 
+ 
+def get_monthly_products(year: int | None = None,
+                         month: int | None = None) -> list[dict]:
+    """
+    Return product rows, optionally filtered by year and/or month.
+    """
+    sb = get_client()
+    q  = (sb.table('holded_monthly_products')
+            .select('*')
+            .order('year').order('month').order('units', desc=True))
+    if year  is not None: q = q.eq('year',  year)
+    if month is not None: q = q.eq('month', month)
+    return q.execute().data or []
+ 
+ 
+def get_upload_status() -> dict:
+    """
+    Return a summary of what data has been uploaded:
+      {
+        'months':      [(year, month), ...],   # all uploaded months
+        'latest_year': int | None,
+        'latest_month': int | None,
+      }
+    """
+    sb   = get_client()
+    rows = (sb.table('holded_monthly_revenue')
+              .select('year, month, uploaded_at')
+              .order('year', desc=True).order('month', desc=True)
+              .execute().data or [])
+    months = [(r['year'], r['month']) for r in rows]
+    return {
+        'months':       months,
+        'latest_year':  rows[0]['year']  if rows else None,
+        'latest_month': rows[0]['month'] if rows else None,
+        'latest_upload': rows[0]['uploaded_at'] if rows else None,
+    }
+ 
