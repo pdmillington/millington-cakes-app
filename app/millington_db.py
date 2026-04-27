@@ -1360,11 +1360,19 @@ def parse_productos_excel(file_bytes: bytes) -> list[dict]:
             })
  
     today = date.today()
-    return [
-        r for r in results
-        if not (r['year'] == today.year and r['month'] == today.month)
-    ]
-     
+    
+    # Deduplicate by (year, month, product_name) — sum units if duplicate
+    deduped: dict[tuple, dict] = {}
+    for r in results:
+        if r['year'] == today.year and r['month'] == today.month:
+            continue
+        key = (r['year'], r['month'], r['product_name'])
+        if key in deduped:
+            deduped[key]['units'] += r['units']
+        else:
+            deduped[key] = r
+    return list(deduped.values())
+
  
 # =============================================================================
 # Supabase read/write — monthly revenue
