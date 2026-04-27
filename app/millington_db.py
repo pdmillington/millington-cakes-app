@@ -443,6 +443,37 @@ def get_all_variants_full() -> list[dict]:
     )
     return result.data or []
 
+def get_ingredient_lines_all() -> list[dict]:
+    """
+    Return every recipe_ingredient_lines row joined with its ingredient's
+    name, cost_per_unit and pack_unit.
+ 
+    Used by screen_kpis.py to compute estimated ingredient spend from
+    Holded sales data without N+1 queries.
+ 
+    Returns a list of dicts with keys:
+      recipe_id, amount, ingredient_id, ingredient_name,
+      cost_per_unit, pack_unit
+    """
+    sb     = get_client()
+    result = (
+        sb.table("recipe_ingredient_lines")
+        .select(
+            "recipe_id, amount, "
+            "ingredients(id, name, cost_per_unit, pack_unit)"
+        )
+        .execute()
+    )
+    rows = []
+    for row in result.data or []:
+        ing = row.pop("ingredients", None) or {}
+        row["ingredient_id"]   = ing.get("id",             "")
+        row["ingredient_name"] = ing.get("name",           "Unknown")
+        row["cost_per_unit"]   = ing.get("cost_per_unit")
+        row["pack_unit"]       = ing.get("pack_unit",      "")
+        rows.append(row)
+    return rows
+
 # =============================================================================
 # ALLERGEN DECLARATION GENERATOR
 # Add these functions to millington_db.py

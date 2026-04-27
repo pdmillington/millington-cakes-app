@@ -23,7 +23,7 @@ from screen_settings    import screen_settings
 from screen_repricing   import screen_repricing
 from screen_catalogue   import screen_catalogue
 from screen_prices      import screen_prices
-
+from screen_kpis        import screen_kpis
 
 # =============================================================================
 # Page config
@@ -78,6 +78,8 @@ def sidebar() -> str:
             st.session_state.screen = "analysis"
         if st.button("Repricing analysis", use_container_width=True):
              st.session_state.screen = "repricing"
+        if st.button("Business KPIs", use_container_width=True):
+             st.session_state.screen = "kpis"
 
         st.divider()
         st.markdown("**Manage**")
@@ -259,6 +261,7 @@ SCREENS = {
     "repricing":   screen_repricing,
     "catalogue":   screen_catalogue,
     "prices":      screen_prices,
+    "kpis":        screen_kpis, 
 }
 
 

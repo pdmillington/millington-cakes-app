@@ -21,3 +21,6 @@ plotly>=5.0.0
 
 # PDF generation
 reportlab>=4.0.0
+
+# Screen KPIs
+altair>=5.0.0
