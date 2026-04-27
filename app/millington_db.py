@@ -1130,7 +1130,7 @@ def get_holded_cache_index() -> list[dict]:
     sb     = get_client()
     result = (
         sb.table("holded_year_cache")
-        .select("year, invoice_count, synced_at")
+        .select("year, synced_at")
         .order("year")
         .execute()
     )
