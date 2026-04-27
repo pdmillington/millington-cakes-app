@@ -13,6 +13,7 @@
 
 import os
 import re as _re
+from datetime import date
 import streamlit as st
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -1285,8 +1286,12 @@ def parse_ventas_excel(file_bytes: bytes) -> list[dict]:
             data[key][field] = val
  
     # Only return months that have actual revenue (skip future zero months)
-    return [v for v in data.values() if v['ventas_ex_vat'] != 0 or v['total_inc_vat'] != 0]
- 
+    today = date.today()
+    return [
+        v for v in data.values()
+        if v['ventas_ex_vat'] != 0 or v['total_inc_vat'] != 0
+        if not (v['year'] == today.year and v['month'] == today.month)
+    ]
  
 def parse_productos_excel(file_bytes: bytes) -> list[dict]:
     """
@@ -1354,8 +1359,12 @@ def parse_productos_excel(file_bytes: bytes) -> list[dict]:
                 'units':        units,
             })
  
-    return results
- 
+    today = date.today()
+    return [
+        r for r in results
+        if not (r['year'] == today.year and r['month'] == today.month)
+    ]
+     
  
 # =============================================================================
 # Supabase read/write — monthly revenue
