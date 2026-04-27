@@ -18,12 +18,14 @@ import os
 import time
 import requests
 import streamlit as st
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
 
-_BASE_URL  = "https://api.holded.com/api/invoicing/v1"
-_CACHE_TTL = 30 * 60   # 30 minutes in seconds
+_BASE_URL    = "https://api.holded.com/api/invoicing/v1"
+_CACHE_TTL   = 30 * 60          # 30 minutes
+_DATA_START  = 2023             # earliest year to fetch (Holded data from Aug 2023)
 
 
 # =============================================================================
@@ -41,12 +43,58 @@ def _headers() -> dict:
     return {"key": _api_key(), "Accept": "application/json"}
 
 
+def _year_bounds(year: int) -> tuple[int, int]:
+    """Return (start_unix, end_unix) for a full calendar year in UTC."""
+    start = int(datetime(year, 1,  1,  0,  0,  0, tzinfo=timezone.utc).timestamp())
+    end   = int(datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc).timestamp())
+    return start, end
+
+
+def _fetch_year(path: str, year: int) -> list:
+    """
+    Fetch all pages for a single calendar year.
+    Holded ignores date params without them the API returns only the most
+    recent invoices, so we must pass explicit starttdate/enddate per year.
+    """
+    start_ts, end_ts = _year_bounds(year)
+    results = []
+    page    = 1
+
+    while True:
+        r = requests.get(
+            f"{_BASE_URL}/{path}",
+            headers=_headers(),
+            params={
+                "starttdate": start_ts,
+                "enddate":    end_ts,
+                "page":       page,
+            },
+            timeout=20,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+        if isinstance(data, list):
+            batch = data
+        elif isinstance(data, dict):
+            batch = (
+                data.get("documents") or data.get("contacts") or
+                data.get("list")      or data.get("data") or []
+            )
+        else:
+            break
+
+        if not batch:
+            break
+
+        results.extend(batch)
+        page += 1
+
+    return results
+
+
 def _get_all_pages(path: str) -> list:
-    """
-    Paginate through a Holded list endpoint until an empty page is returned.
-    Holded ignores date-range params so we always fetch everything and
-    filter client-side.
-    """
+    """Simple paginator for endpoints that don't need date-range splitting (e.g. contacts)."""
     results = []
     page    = 1
     while True:
@@ -85,7 +133,10 @@ def _get_all_pages(path: str) -> list:
 def get_invoices(force_refresh: bool = False) -> list[dict]:
     """
     Return all non-draft invoices from Holded, cached in session_state.
-    Fetches every page; date filtering is done client-side by callers.
+
+    Fetches year-by-year from _DATA_START to the current year, because
+    Holded only returns recent invoices when no date range is supplied.
+    Deduplicates by invoice id in case of any overlap at year boundaries.
     """
     cache_key = "_holded_invoices"
     ts_key    = "_holded_invoices_ts"
@@ -98,11 +149,28 @@ def get_invoices(force_refresh: bool = False) -> list[dict]:
     ):
         return st.session_state[cache_key]
 
-    with st.spinner("Syncing invoices from Holded…"):
-        invoices = _get_all_pages("documents/invoice")
+    current_year = datetime.now().year
+    years        = range(_DATA_START, current_year + 1)
+    all_invoices = {}   # id → invoice, deduplicates naturally
 
-    # Drop drafts — they haven't been sent to clients yet
-    invoices = [inv for inv in invoices if not inv.get("draft")]
+    progress = st.progress(0, text="Sincronizando facturas de Holded…")
+
+    for i, year in enumerate(years):
+        progress.progress(
+            (i) / len(years),
+            text=f"Descargando {year}…"
+        )
+        for inv in _fetch_year("documents/invoice", year):
+            if not inv.get("draft"):
+                all_invoices[inv["id"]] = inv
+
+    progress.progress(1.0, text=f"✓ {len(all_invoices)} facturas cargadas")
+    time.sleep(0.4)
+    progress.empty()
+
+    invoices = list(all_invoices.values())
+    # Sort chronologically
+    invoices.sort(key=lambda x: x.get("date", 0))
 
     st.session_state[cache_key] = invoices
     st.session_state[ts_key]    = now
@@ -122,7 +190,7 @@ def get_contacts(force_refresh: bool = False) -> list[dict]:
     ):
         return st.session_state[cache_key]
 
-    with st.spinner("Syncing contacts from Holded…"):
+    with st.spinner("Sincronizando contactos de Holded…"):
         contacts = _get_all_pages("contacts")
 
     st.session_state[cache_key] = contacts
@@ -150,11 +218,10 @@ def get_line_items(invoices: list[dict]) -> list[dict]:
 
       invoice_id, doc_number, contact_id, contact_name, date (Unix ts),
       name, sku (str, "" if no SKU), price (ex-VAT unit), units, discount,
-      tax (%), line_revenue (ex-VAT, after discount), is_product (bool)
+      tax (%), line_revenue (ex-VAT after discount), is_product (bool)
 
     Delivery and non-product lines (Holded sets sku = 0) are included
-    with is_product=False so callers can easily exclude them from revenue
-    totals if needed (they are small and infrequent).
+    with is_product=False so callers can exclude them from revenue totals.
     """
     rows = []
     for inv in invoices:
@@ -165,7 +232,6 @@ def get_line_items(invoices: list[dict]) -> list[dict]:
 
         for line in (inv.get("products") or []):
             raw_sku = line.get("sku")
-            # Holded uses integer 0 for non-product lines (delivery etc.)
             sku = "" if (raw_sku is None or raw_sku == 0 or raw_sku == "0") \
                      else str(raw_sku).strip()
 
