@@ -799,7 +799,7 @@ def _tab_audit(invoices: list[dict], line_items: list[dict]):
 
     ydf = pd.DataFrame([
         {
-            "Año":             y,
+            "Año":             str(y),
             "Facturas":        v["count"],
             "Total ex-IVA (€)": f"€{v['subtotal']:,.2f}",
         }

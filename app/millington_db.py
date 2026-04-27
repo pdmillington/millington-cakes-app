@@ -1155,7 +1155,8 @@ def get_holded_year_cache(year: int) -> list[dict]:
     return result.data[0].get("invoices") or []
 
 
-def save_holded_year_cache(year: int, invoices: list[dict]) -> None:
+def save_holded_year_cache(year: int, invoices: list[dict],
+                           cache_version: int = 1) -> None:
     """
     Upsert invoice data for a given year into the Supabase cache.
     Called once per historical year; never called for the current year.
