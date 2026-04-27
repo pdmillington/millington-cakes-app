@@ -4,23 +4,15 @@
 # no other file talks to the Holded API directly.
 #
 # Caching strategy (two layers):
-#   1. Supabase holded_year_cache table  — persistent across sessions
-#      - Historical years (< current year): written once, never re-fetched
-#      - Current year: always refreshed from Holded on each sync
-#   2. st.session_state                  — in-memory within a browser session
-#      - Avoids repeated Supabase reads within the same session
-#      - TTL: 30 minutes
+#   1. Supabase holded_year_cache — persistent across sessions
+#      Historical years written once; current year always refreshed.
+#      Cache is versioned: bumping _CACHE_VERSION forces a full re-fetch
+#      of all years (needed when _DOC_TYPES changes).
+#   2. st.session_state — in-memory within a browser session (30-min TTL)
 #
-# On first ever run all years since DATA_START are fetched from Holded
-# and stored in Supabase (~10–15 seconds). Every subsequent load fetches
-# only the current year from Holded; historical data comes from Supabase.
-#
-# Public API:
-#   get_invoices(force_refresh)   →  list[dict]
-#   get_contacts(force_refresh)   →  list[dict]
-#   get_line_items(invoices)      →  list[dict]
-#   last_synced()                 →  str | None
-#   cache_status()                →  list[dict]   one row per cached year
+# Document types fetched:
+#   invoice      = Factura         (wholesale orders)
+#   salesreceipt = Ticket de venta (Shopify / retail orders)
 # =============================================================================
 
 import os
@@ -34,9 +26,13 @@ import millington_db as db
 
 load_dotenv()
 
-_BASE_URL    = "https://api.holded.com/api/invoicing/v1"
-_SESSION_TTL = 30 * 60      # 30 min session-state TTL
-_DATA_START  = 2023         # earliest year with Holded data
+_BASE_URL      = "https://api.holded.com/api/invoicing/v1"
+_SESSION_TTL   = 30 * 60    # 30 min session-state TTL
+_DATA_START    = 2023       # earliest year with Holded data
+_CACHE_VERSION = 3          # bump when _DOC_TYPES changes → forces full re-fetch
+
+# All Holded document types that count as sales revenue
+_DOC_TYPES = ["invoice", "salesreceipt", "creditnote"]
 
 
 # =============================================================================
@@ -60,18 +56,15 @@ def _year_bounds(year: int) -> tuple[int, int]:
     return start, end
 
 
-def _fetch_year_from_holded(year: int) -> list[dict]:
-    """
-    Pull all non-draft invoices for a single calendar year from the Holded API,
-    paginating until an empty page is returned.
-    """
+def _fetch_doc_type_year(doc_type: str, year: int) -> list[dict]:
+    """Fetch all pages of a single doc type for a single year."""
     start_ts, end_ts = _year_bounds(year)
-    results: dict[str, dict] = {}   # id → invoice, deduplicates within year
+    results: dict[str, dict] = {}
     page = 1
 
     while True:
         r = requests.get(
-            f"{_BASE_URL}/documents/invoice",
+            f"{_BASE_URL}/documents/{doc_type}",
             headers=_headers(),
             params={"starttdate": start_ts, "enddate": end_ts, "page": page},
             timeout=20,
@@ -86,13 +79,26 @@ def _fetch_year_from_holded(year: int) -> list[dict]:
         if not batch:
             break
 
-        for inv in batch:
-            if not inv.get("draft"):
-                results[inv["id"]] = inv
+        for doc in batch:
+            if not doc.get("draft"):
+                doc["_doc_type"] = doc_type   # tag so callers can distinguish
+                results[doc["id"]] = doc
 
         page += 1
 
     return list(results.values())
+
+
+def _fetch_year_from_holded(year: int) -> list[dict]:
+    """
+    Fetch all doc types for a given year and merge by id.
+    Each document is tagged with _doc_type ('invoice' or 'salesreceipt').
+    """
+    all_docs: dict[str, dict] = {}
+    for doc_type in _DOC_TYPES:
+        for doc in _fetch_doc_type_year(doc_type, year):
+            all_docs[doc["id"]] = doc
+    return list(all_docs.values())
 
 
 def _fetch_contacts_from_holded() -> list[dict]:
@@ -107,7 +113,7 @@ def _fetch_contacts_from_holded() -> list[dict]:
             timeout=20,
         )
         r.raise_for_status()
-        data = r.json()
+        data  = r.json()
         batch = (
             data if isinstance(data, list)
             else data.get("contacts") or data.get("list") or data.get("data") or []
@@ -125,22 +131,20 @@ def _fetch_contacts_from_holded() -> list[dict]:
 
 def get_invoices(force_refresh: bool = False) -> list[dict]:
     """
-    Return all non-draft invoices from DATA_START to today.
+    Return all non-draft sales documents (invoices + salesreceipts)
+    from _DATA_START to today.
 
-    Load order for each year:
-      1. st.session_state  (fastest — within session)
-      2. Supabase cache    (fast — historical years only)
-      3. Holded API        (slow — only when not cached or current year)
-
-    force_refresh=True clears session state and re-fetches current year
-    from Holded. Historical years are never re-fetched unless the Supabase
-    cache row is manually deleted.
+    Load order per year:
+      1. st.session_state  — fastest, within-session cache
+      2. Supabase cache    — persistent, historical years only
+                             invalidated if cache_version < _CACHE_VERSION
+      3. Holded API        — always used for current year; fallback otherwise
     """
     session_key = "_holded_invoices"
     ts_key      = "_holded_invoices_ts"
     now         = time.time()
 
-    # Session-state hit (fast path)
+    # Fast path: valid session cache
     if (
         not force_refresh
         and session_key in st.session_state
@@ -149,42 +153,46 @@ def get_invoices(force_refresh: bool = False) -> list[dict]:
         return st.session_state[session_key]
 
     current_year = datetime.now().year
-    all_invoices: dict[str, dict] = {}   # id → invoice
+    all_docs: dict[str, dict] = {}
 
-    # Load existing Supabase cache so we know which years are already stored
+    # Index of what's in Supabase: {year: {cache_version, ...}}
     cached_years = {row["year"]: row for row in db.get_holded_cache_index()}
 
-    years = list(range(_DATA_START, current_year + 1))
-    progress = st.progress(0.0, text="Cargando facturas…")
+    years    = list(range(_DATA_START, current_year + 1))
+    progress = st.progress(0.0, text="Cargando datos de ventas…")
 
     for i, year in enumerate(years):
-        is_current = (year == current_year)
-        label      = f"{year} {'(actualizando…)' if is_current else ''}"
-        progress.progress(i / len(years), text=f"Cargando {label}")
+        is_current   = (year == current_year)
+        cached       = cached_years.get(year)
+        cache_valid  = (
+            cached is not None
+            and cached.get("cache_version", 1) >= _CACHE_VERSION
+        )
 
-        if is_current or year not in cached_years:
-            # Fetch from Holded
-            invoices_year = _fetch_year_from_holded(year)
+        progress.progress(
+            i / len(years),
+            text=f"{'🔄' if (is_current or not cache_valid) else '✓'} {year}…"
+        )
 
+        if is_current or not cache_valid:
+            docs_year = _fetch_year_from_holded(year)
             if not is_current:
-                # Persist historical year to Supabase — will never be fetched again
-                db.save_holded_year_cache(year, invoices_year)
+                db.save_holded_year_cache(year, docs_year, _CACHE_VERSION)
         else:
-            # Load from Supabase cache
-            invoices_year = db.get_holded_year_cache(year)
+            docs_year = db.get_holded_year_cache(year)
 
-        for inv in invoices_year:
-            all_invoices[inv["id"]] = inv
+        for doc in docs_year:
+            all_docs[doc["id"]] = doc
 
-    progress.progress(1.0, text=f"✓ {len(all_invoices)} facturas cargadas")
+    progress.progress(1.0, text=f"✓ {len(all_docs)} documentos cargados")
     time.sleep(0.4)
     progress.empty()
 
-    invoices = sorted(all_invoices.values(), key=lambda x: x.get("date", 0))
+    docs = sorted(all_docs.values(), key=lambda x: x.get("date", 0))
 
-    st.session_state[session_key] = invoices
+    st.session_state[session_key] = docs
     st.session_state[ts_key]      = now
-    return invoices
+    return docs
 
 
 def get_contacts(force_refresh: bool = False) -> list[dict]:
@@ -209,23 +217,16 @@ def get_contacts(force_refresh: bool = False) -> list[dict]:
 
 
 def last_synced() -> str | None:
-    """Human-readable age of the current session cache, or None if not loaded."""
     ts = st.session_state.get("_holded_invoices_ts")
     if not ts:
         return None
     secs = int(time.time() - ts)
-    if secs < 60:
-        return "just now"
-    if secs < 3600:
-        return f"{secs // 60} min ago"
+    if secs < 60:   return "just now"
+    if secs < 3600: return f"{secs // 60} min ago"
     return f"{secs // 3600}h ago"
 
 
 def cache_status() -> list[dict]:
-    """
-    Return summary of what's in the Supabase cache.
-    Used in the KPI screen to show cache health.
-    """
     return db.get_holded_cache_index()
 
 
@@ -235,13 +236,10 @@ def cache_status() -> list[dict]:
 
 def get_line_items(invoices: list[dict]) -> list[dict]:
     """
-    Flatten invoices into one row per line item with invoice metadata.
+    Flatten all documents into one row per line item.
 
-    Fields per row:
-      invoice_id, doc_number, contact_id, contact_name, date (Unix ts),
-      name, sku (str, "" for non-product lines), price (ex-VAT unit),
-      units, discount (%), tax (%), line_revenue (ex-VAT after discount),
-      is_product (bool — False for delivery charges etc.)
+    Extra field vs original:
+      doc_type  — 'invoice (Factura), salesreceipt (Ticket de venta), creditnote (Venta rectificativa))
     """
     rows = []
     for inv in invoices:
@@ -249,6 +247,12 @@ def get_line_items(invoices: list[dict]) -> list[dict]:
         contact_id   = inv.get("contact", "")
         contact_name = (inv.get("contactName") or "").strip()
         doc_number   = inv.get("docNumber") or inv.get("id", "")
+        doc_type     = inv.get("_doc_type", "invoice")
+
+        is_credit = (doc_type == "creditnote")
+        # Credit notes link back to the invoice they correct
+        corrects   = (inv.get("from") or {})
+        corrects_id = corrects.get("id", "") if isinstance(corrects, dict) else ""
 
         for line in (inv.get("products") or []):
             raw_sku = line.get("sku")
@@ -260,22 +264,47 @@ def get_line_items(invoices: list[dict]) -> list[dict]:
             units    = float(line.get("units")    or 0)
             discount = float(line.get("discount") or 0)
             tax      = float(line.get("tax")      or 0)
-            line_rev = price * units * (1 - discount / 100)
+            # Negate line revenue for credit notes so they reduce totals
+            sign     = -1 if is_credit else 1
+            line_rev = sign * price * units * (1 - discount / 100)
 
             rows.append({
-                "invoice_id":   inv.get("id", ""),
-                "doc_number":   doc_number,
-                "contact_id":   contact_id,
-                "contact_name": contact_name,
-                "date":         date,
-                "name":         (line.get("name") or "").strip(),
-                "sku":          sku,
-                "price":        price,
-                "units":        units,
-                "discount":     discount,
-                "tax":          tax,
-                "line_revenue": line_rev,
-                "is_product":   bool(sku),
+                "invoice_id":        inv.get("id", ""),
+                "doc_number":        doc_number,
+                "doc_type":          doc_type,
+                "contact_id":        contact_id,
+                "contact_name":      contact_name,
+                "date":              date,
+                "name":              (line.get("name") or "").strip(),
+                "sku":               sku,
+                "price":             price,
+                "units":             units,
+                "discount":          discount,
+                "tax":               tax,
+                "line_revenue":      line_rev,
+                "is_product":        bool(sku),
+                "corrects_invoice":  corrects_id,
             })
 
     return rows
+
+
+# =============================================================================
+# Credit note sign handling
+# =============================================================================
+# Holded stores creditnote subtotals as positive numbers.
+# Call this to get the correctly-signed subtotal for revenue calculations.
+
+def signed_subtotal(doc: dict) -> float:
+    """
+    Return the ex-VAT revenue contribution of a document.
+
+    Holded stores all credit note fields as positive numbers — the docType
+    implies the deduction. We negate the subtotal so credit notes correctly
+    reduce monthly revenue totals. The `from` field on credit notes links
+    back to the original invoice being corrected (visible in audit tab).
+    """
+    subtotal = float(doc.get("subtotal") or 0)
+    if doc.get("_doc_type") == "creditnote":
+        return -subtotal
+    return subtotal
