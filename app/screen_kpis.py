@@ -838,7 +838,6 @@ def _tab_data():
             st.warning("Por favor selecciona al menos un fichero primero.")
         else:
             errors = []
-
             if file_ventas:
                 try:
                     rows = db.parse_ventas_excel(file_ventas.read())
@@ -847,7 +846,6 @@ def _tab_data():
                                f"({rows[0]['year'] if rows else '?'}–{rows[-1]['year'] if rows else '?'})")
                 except Exception as e:
                     errors.append(f"Fichero de Ventas: {e}")
-    
             if file_productos:
                 try:
                     rows = db.parse_productos_excel(file_productos.read())
@@ -855,10 +853,8 @@ def _tab_data():
                     st.success(f"✓ Productos: {n} filas de producto/mes subidas")
                 except Exception as e:
                     errors.append(f"Fichero de Productos: {e}")
-    
             for err in errors:
                 st.error(err)
-    
             if not errors:
                 st.cache_data.clear()
 
