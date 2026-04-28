@@ -870,15 +870,18 @@ def _tab_data():
         type=["xlsx"],
         key="upload_inventory",
     )
-    if st.button("⬆️ Subir inventario", type="primary", disabled=file_inv is None):
-        try:
-            rows = db.parse_inventory_excel(file_inv.read())
-            n    = db.upsert_holded_products(rows)
-            st.success(f"✓ Catálogo actualizado: {n} productos subidos")
-            st.cache_data.clear()
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error al procesar inventario: {e}")
+    if st.button("⬆️ Subir inventario", type="primary"):
+        if file_inv is None:
+            st.warning("Por favor selecciona un fichero primero")
+        else:
+            try:
+                rows = db.parse_inventory_excel(file_inv.read())
+                n    = db.upsert_holded_products(rows)
+                st.success(f"✓ Catálogo actualizado: {n} productos subidos")
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al procesar inventario: {e}")
 
     # Show current catalogue summary
     products = db.get_holded_products()
