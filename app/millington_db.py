@@ -1515,9 +1515,6 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
             return '-'.join(parts)
         return None
 
-    st.write(f"Regex test: {bool(SKU_RE.match('SC-01-LA-GW'))}")
-    st.write(f"Normalise test: {_normalise_sku('SC-01-LA-GW')}")
-
     seen: dict[tuple, dict] = {}
     skip_names = {'informe creado', 'none', ''}
 
@@ -1526,11 +1523,11 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
             continue
         raw_sku  = str(row[0]).strip() if row[0] else ''
         raw_name = str(row[1]).strip() if row[1] else ''
-        sku = _normalise_sku(raw_sku)
-        st.write(f"raw_sku={repr(raw_sku)} raw_name={repr(raw_name)} sku={sku} skip={any(raw_name.lower().startswith(s) for s in skip_names)}")
-        if not raw_name or any(raw_name.lower().startswith(s) for s in skip_names):
+        
+        if not raw_name or raw_name.lower() in skip_names:
             continue
 
+        sku = _normalise_sku(raw_sku)
         if not sku:
             continue
 
