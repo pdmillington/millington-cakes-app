@@ -1526,11 +1526,11 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
             continue
         raw_sku  = str(row[0]).strip() if row[0] else ''
         raw_name = str(row[1]).strip() if row[1] else ''
-
+        sku = _normalise_sku(raw_sku)
+        st.write(f"raw_sku={repr(raw_sku)} raw_name={repr(raw_name)} sku={sku} skip={any(raw_name.lower().startswith(s) for s in skip_names)}")
         if not raw_name or any(raw_name.lower().startswith(s) for s in skip_names):
             continue
 
-        sku = _normalise_sku(raw_sku)
         if not sku:
             continue
 
