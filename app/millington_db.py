@@ -1496,6 +1496,8 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
 
     st.write(f"Header found at row {header_idx}")
     st.write(f"First 3 data rows: {rows[header_idx+1:header_idx+4]}")
+    for row in rows[header_idx+1:header_idx+6]:
+        st.write(f"  raw[0]={repr(row[0])}  raw[1]={repr(row[1])}")
 
     SKU_RE = re.compile(
         r'^[A-Z]{2}-?\d{2}-?[A-Z]{2}-?[A-Z]{2,4}(?:-[A-Z]{2,4})?$'
