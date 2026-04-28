@@ -12,7 +12,7 @@
 # =============================================================================
 
 import os
-import re as _re
+import re
 from datetime import date
 import streamlit as st
 from supabase import create_client, Client
@@ -22,7 +22,7 @@ from rapidfuzz import process, fuzz
 load_dotenv()
 
 # SKU pattern embedded in Holded product names e.g. "Cookie Box - CO-03-DC-GW"
-_SKU_RE = _re.compile(r'\b([A-Z]{2}-\d{2}-[A-Z]{2}-[A-Z]{2,4}(?:-[A-Z]{2})?)\b')
+_SKU_RE = re.compile(r'\b([A-Z]{2}-\d{2}-[A-Z]{2}-[A-Z]{2,4}(?:-[A-Z]{2})?)\b')
  
 # Spanish month name → month number
 _MONTHS_ES = {
@@ -35,7 +35,7 @@ _MONTHS_ES = {
 
 def _normalise_name(name: str) -> str:
     """Strip leading/trailing whitespace and collapse internal spaces."""
-    return _re.sub(r'\s+', ' ', name).strip()
+    return re.sub(r'\s+', ' ', name).strip()
 
 def find_similar_names(name: str, existing_names: list[str], 
                         threshold: int = 85) -> list[tuple[str, int]]:
@@ -1215,7 +1215,7 @@ def _extract_sku(product_name: str) -> tuple[str, str | None]:
         return product_name.strip(), None
     sku = m.group(1)
     # Remove the SKU and any trailing separator from the name
-    clean = _re.sub(r'\s*[-–]\s*' + _re.escape(sku) + r'\s*$', '', product_name).strip()
+    clean = re.sub(r'\s*[-–]\s*' + re.escape(sku) + r'\s*$', '', product_name).strip()
     return clean, sku
  
  
@@ -1505,7 +1505,7 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
     if header_idx is None:
         raise ValueError("No se encontró la fila de cabecera 'SKU' en el fichero.")
  
-    SKU_RE = _re.compile(
+    SKU_RE = re.compile(
         r'^[A-Z]{2}-?\d{2}-?[A-Z]{2}-?[A-Z]{2,4}(?:-[A-Z]{2,4})?$'
     )
  
@@ -1518,7 +1518,7 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
         if SKU_RE.match(s):
             return s
         # Missing hyphens: try inserting them (e.g. LT01LAGW → LT-01-LA-GW)
-        m = _re.match(r'^([A-Z]{2})(\d{2})([A-Z]{2})([A-Z]{2,4})(?:([A-Z]{2,4}))?$', s)
+        m = re.match(r'^([A-Z]{2})(\d{2})([A-Z]{2})([A-Z]{2,4})(?:([A-Z]{2,4}))?$', s)
         if m:
             parts = [p for p in m.groups() if p]
             return '-'.join(parts)
