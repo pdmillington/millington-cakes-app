@@ -472,8 +472,9 @@ def _tab_products():
 # =============================================================================
 
 def _tab_ingredients():
-    st.markdown("### Ingredientes — coste estimado y peso consumido")
+    st.markdown("### Ingredientes — coste estimado y consumo")
 
+    # ── Period selector ────────────────────────────────────────────────────────
     col_p1, col_p2, _ = st.columns([1.5, 1.5, 3])
     with col_p1:
         year_sel = st.selectbox(
@@ -494,38 +495,41 @@ def _tab_ingredients():
         month_filter = datetime.strptime(month_sel, "%b %Y").month
 
     product_rows = db.get_monthly_products(year=year_sel, month=month_filter)
-
     if not product_rows:
         st.info("Sin datos de productos para el período seleccionado.")
         return
 
-    # Load matching data
-    skus         = db.get_skus()
-    recipes      = db.get_recipes()
-    sku_map      = _build_sku_map(skus)
+    # ── Load recipe matching data ──────────────────────────────────────────────
+    skus      = db.get_skus()
+    recipes   = db.get_recipes()
+    sku_map   = _build_sku_map(skus)
     recipe_names, name_id_map = _build_fuzzy_map(recipes)
 
     @st.cache_data(ttl=300)
     def _ing_lines():
         return db.get_ingredient_lines_all()
     ing_lines = _ing_lines()
-    
-    _UNIT_TO_G = {
-    "limones":  100.0,
-    "limas":     67.0,
-    "naranja":  180.0,
-    "manzanas": 182.0,
-}
 
-    # Build recipe → ingredient lookup
     recipe_ing: dict[str, list] = defaultdict(list)
-    unit_label: dict[str, str] = {}   # ingredient → display unit
-    
     for il in ing_lines:
         recipe_ing[il["recipe_id"]].append(il)
 
-    cost_acc:   dict[str, float] = defaultdict(float)
-    weight_acc: dict[str, float] = defaultdict(float)
+    # ── Unit conversions (count → grams) ──────────────────────────────────────
+    # Mirrors _UNIT_TO_G in screen_calculator.py
+    _UNIT_TO_G = {
+        "limones":  100.0,
+        "limas":     67.0,
+        "naranja":  180.0,
+        "manzanas": 182.0,
+    }
+
+    # Accumulators
+    cost_acc:    dict[str, float] = defaultdict(float)
+    # Separate buckets by unit type to avoid mixing incommensurable quantities
+    kg_acc:      dict[str, float] = defaultdict(float)  # solids in kg
+    litre_acc:   dict[str, float] = defaultdict(float)  # liquids in L
+    unit_acc:    dict[str, float] = defaultdict(float)  # countable items (eggs etc.)
+
     n_exact = n_fuzzy = n_unmatched = 0
 
     for row in product_rows:
@@ -536,15 +540,17 @@ def _tab_ingredients():
         if not recipe_id:
             n_unmatched += 1
             continue
-        n_exact  += match_type == "exact"
-        n_fuzzy  += match_type == "fuzzy"
-        units_sold = float(row["units"])
+        n_exact    += match_type == "exact"
+        n_fuzzy    += match_type == "fuzzy"
+        units_sold  = float(row["units"])
+
         for il in recipe_ing.get(recipe_id, []):
             ing_name  = il.get("ingredient_name", "Unknown")
             amount    = float(il.get("amount") or 0)
             cost_pu   = float(il.get("cost_per_unit") or 0)
             pack_unit = (il.get("pack_unit") or "").lower()
 
+            # Fruit/unit ingredients: amount is a count → convert to grams
             name_lower  = ing_name.lower()
             unit_weight = next(
                 (w for key, w in _UNIT_TO_G.items() if key in name_lower), None
@@ -553,45 +559,61 @@ def _tab_ingredients():
                 amount * unit_weight if (unit_weight and amount < 20) else amount
             )
 
+            # Cost: cpu is per gram/ml/unit — always correct as-is
             if cost_pu:
                 cost_acc[ing_name] += cost_pu * effective_amount * units_sold
 
-            # Weight/volume accumulation by pack_unit
+            # Volume/weight accumulation — split by unit type
             if pack_unit in ("g", "kg") or unit_weight:
-                # amount (or effective_amount) is in grams → output kg
-                weight_acc[ing_name] += (effective_amount / 1000) * units_sold
-                unit_label[ing_name] = "kg"
+                # Solid ingredients (and fruit converted to grams) → kg
+                kg_acc[ing_name] += (effective_amount / 1000) * units_sold
             elif pack_unit in ("l", "ml"):
-                # amount is in ml → output litres
-                weight_acc[ing_name] += (amount / 1000) * units_sold
-                unit_label[ing_name] = "L"
+                # Liquid ingredients: recipe amounts are in ml → litres
+                litre_acc[ing_name] += (amount / 1000) * units_sold
             elif pack_unit == "units":
-                # amount is a unit count (eggs etc.) → output as count
-                weight_acc[ing_name] += amount * units_sold
-                unit_label[ing_name] = "ud."
-    
+                # Pure unit-count ingredients (eggs etc.) → raw count
+                unit_acc[ing_name] += amount * units_sold
+            # null pack_unit → cost only, no volume tracked
+
     if not cost_acc:
         st.info("No se pudo calcular el consumo — sin coincidencias de ingredientes.")
         return
 
     n = st.slider("Top N ingredientes", 4, 20, 8, key="ing_n")
 
+    # Build main dataframe sorted by cost
+    all_ingredients = sorted(cost_acc.keys(), key=lambda k: cost_acc[k], reverse=True)
     df = pd.DataFrame({
-        "ingredient":   list(cost_acc.keys()),
-        "est_cost_eur": list(cost_acc.values()),
-        "weight_kg":    [weight_acc.get(k, 0) for k in cost_acc],
-    }).sort_values("est_cost_eur", ascending=False).reset_index(drop=True)
+        "ingredient":   all_ingredients,
+        "est_cost_eur": [cost_acc[k] for k in all_ingredients],
+        "kg":           [kg_acc.get(k, 0) for k in all_ingredients],
+        "litres":       [litre_acc.get(k, 0) for k in all_ingredients],
+    })
 
+    # ── Match quality ──────────────────────────────────────────────────────────
     ma, mb, mc = st.columns(3)
     ma.metric("SKU exacto",          n_exact)
     mb.metric("Coincidencia aprox.", n_fuzzy)
-    mc.metric("Sin identificar",     n_unmatched)
+    mc.metric("Sin identificar",     n_unmatched,
+              help="Incluidos en ingresos pero excluidos del cálculo de ingredientes")
     st.divider()
 
-    top_cost   = df.head(n)
-    top_weight = df[df["weight_kg"] > 0].nlargest(n, "weight_kg")
+    # ── Chart row: cost + kg/L volume ─────────────────────────────────────────
+    top_cost = df.head(n)
+
+    # Volume chart: combine kg and litres with a type label
+    vol_rows = []
+    for k in all_ingredients:
+        if kg_acc.get(k, 0) > 0:
+            vol_rows.append({"ingredient": k, "amount": kg_acc[k], "unit": "kg"})
+        if litre_acc.get(k, 0) > 0:
+            vol_rows.append({"ingredient": k, "amount": litre_acc[k], "unit": "L"})
+    df_vol = (pd.DataFrame(vol_rows)
+              .sort_values("amount", ascending=False)
+              .head(n) if vol_rows else pd.DataFrame())
 
     c1, c2 = st.columns(2)
+
     with c1:
         st.markdown("**Por coste estimado (€)**")
         st.altair_chart(
@@ -608,38 +630,64 @@ def _tab_ingredients():
         )
 
     with c2:
-        st.markdown("**Por peso consumido (kg)**")
-        if top_weight.empty:
-            st.info("Sin datos de peso — comprueba unidades en Supabase.")
+        st.markdown("**Por volumen/peso (kg y L)**")
+        if df_vol.empty:
+            st.info("Sin datos de volumen.")
         else:
             st.altair_chart(
-                alt.Chart(top_weight)
-                .mark_bar(color=C_BLUE, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                alt.Chart(df_vol)
+                .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                 .encode(
-                    x=alt.X("weight_kg:Q", axis=alt.Axis(title="kg", format=",.3f")),
+                    x=alt.X("amount:Q", axis=alt.Axis(title="Cantidad", format=",.3f")),
                     y=alt.Y("ingredient:N", sort="-x", axis=alt.Axis(title=None)),
+                    color=alt.Color("unit:N",
+                                    scale=alt.Scale(
+                                        domain=["kg", "L"],
+                                        range=[C_BLUE, C_LIGHT]
+                                    ),
+                                    legend=alt.Legend(title="Unidad")),
                     tooltip=[alt.Tooltip("ingredient:N", title="Ingrediente"),
-                             alt.Tooltip("weight_kg:Q", title="kg", format=",.3f")],
+                             alt.Tooltip("amount:Q", format=",.3f"),
+                             alt.Tooltip("unit:N", title="Unidad")],
                 )
                 .properties(height=max(200, n * 32)),
                 use_container_width=True
             )
 
+    # ── Unit-count ingredients (eggs etc.) ────────────────────────────────────
+    if unit_acc:
+        st.divider()
+        st.markdown("**Ingredientes por unidades**")
+        unit_df = pd.DataFrame([
+            {"Ingrediente": k, "Unidades": f"{v:,.0f} ud."}
+            for k, v in sorted(unit_acc.items(), key=lambda x: x[1], reverse=True)
+        ])
+        st.dataframe(unit_df, hide_index=True, use_container_width=True)
+
+    # ── Full detail table ──────────────────────────────────────────────────────
+    st.divider()
     with st.expander("Ver tabla completa"):
+        def _fmt_vol(row):
+            if row["kg"] > 0:
+                return f"{row['kg']:.3f} kg"
+            if row["litres"] > 0:
+                return f"{row['litres']:.3f} L"
+            k = row["ingredient"]
+            if unit_acc.get(k, 0) > 0:
+                return f"{unit_acc[k]:,.0f} ud."
+            return "—"
+
         display = df.copy()
+        display["Consumo"] = display.apply(_fmt_vol, axis=1)
         display["est_cost_eur"] = display["est_cost_eur"].map(lambda x: f"€{x:,.2f}")
-        display["weight_kg"] = display.apply(
-            lambda r: (
-                f"{r['weight_kg']:.3f} {unit_label.get(r['ingredient'], 'kg')}"
-                if r["weight_kg"] > 0 else "—"
-            ), axis=1
-        )
+        display = display[["ingredient", "est_cost_eur", "Consumo"]]
         display.columns = ["Ingrediente", "Coste est. (€)", "Consumo"]
         st.dataframe(display, hide_index=True, use_container_width=True)
 
     st.caption(
         "⚠️ Aproximación: usa la receta de referencia sin escalar por tamaño. "
-        "Útil para ranking relativo."
+        "Kg y L no son comparables — se muestran en gráficos separados por color. "
+        "Útil para ranking relativo y planificación de compras."
     )
 
 
