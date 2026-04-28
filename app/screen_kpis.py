@@ -524,6 +524,8 @@ def _tab_ingredients():
     sku_map        = _build_sku_map(skus)
     recipe_names, name_id_map = _build_fuzzy_map(recipes)
     name_to_sku    = db.get_name_to_sku_map()
+    products       = db.get_holded_products()
+    sku_to_pack    = {p["sku"]: p.get("units_per_pack", 1) for p in products}
 
     # Warn about ambiguous product names (same name, multiple SKUs)
     ambiguous = st.session_state.get('_holded_ambiguous_names', {})
@@ -581,7 +583,9 @@ def _tab_ingredients():
             continue
         n_exact    += match_type == "exact"
         n_fuzzy    += match_type == "fuzzy"
-        units_sold  = float(row["units"])
+        inv_sku    = name_to_sku.get(row["product_name"], row.get("sku") or "")
+        pack_size  = sku_to_pack.get(inv_sku, 1)
+        units_sold = float(row["units"]) * pack_size
 
         for il in recipe_ing.get(recipe_id, []):
             ing_name  = il.get("ingredient_name", "Unknown")
@@ -734,7 +738,8 @@ def _tab_ingredients():
         for row in product_rows:
             recipe_id, match_type = _match_recipe(
                 row.get("sku"), row["product_name"],
-                sku_map, recipe_names, name_id_map
+                sku_map, recipe_names, name_id_map,
+                name_to_sku=name_to_sku,
             )
             # Get fuzzy score for display
             score = None

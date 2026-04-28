@@ -1575,7 +1575,7 @@ def get_holded_products() -> list[dict]:
     sb = get_client()
     return (
         sb.table('holded_products')
-        .select('sku, name, price_ex_vat')
+        .select('sku, name, price_ex_vat, units_per_pack')
         .eq('active', True)
         .order('name')
         .execute()
