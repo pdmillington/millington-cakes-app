@@ -519,6 +519,8 @@ def _tab_ingredients():
 
     # Build recipe → ingredient lookup
     recipe_ing: dict[str, list] = defaultdict(list)
+    unit_label: dict[str, str] = {}   # ingredient → display unit
+    
     for il in ing_lines:
         recipe_ing[il["recipe_id"]].append(il)
 
@@ -554,9 +556,20 @@ def _tab_ingredients():
             if cost_pu:
                 cost_acc[ing_name] += cost_pu * effective_amount * units_sold
 
-            if unit_weight or pack_unit in ("g", "kg"):
+            # Weight/volume accumulation by pack_unit
+            if pack_unit in ("g", "kg") or unit_weight:
+                # amount (or effective_amount) is in grams → output kg
                 weight_acc[ing_name] += (effective_amount / 1000) * units_sold
-
+                unit_label[ing_name] = "kg"
+            elif pack_unit in ("l", "ml"):
+                # amount is in ml → output litres
+                weight_acc[ing_name] += (amount / 1000) * units_sold
+                unit_label[ing_name] = "L"
+            elif pack_unit == "units":
+                # amount is a unit count (eggs etc.) → output as count
+                weight_acc[ing_name] += amount * units_sold
+                unit_label[ing_name] = "ud."
+    
     if not cost_acc:
         st.info("No se pudo calcular el consumo — sin coincidencias de ingredientes.")
         return
@@ -615,10 +628,13 @@ def _tab_ingredients():
     with st.expander("Ver tabla completa"):
         display = df.copy()
         display["est_cost_eur"] = display["est_cost_eur"].map(lambda x: f"€{x:,.2f}")
-        display["weight_kg"]    = display["weight_kg"].map(
-            lambda x: f"{x:.3f} kg" if x > 0 else "—"
+        display["weight_kg"] = display.apply(
+            lambda r: (
+                f"{r['weight_kg']:.3f} {unit_label.get(r['ingredient'], 'kg')}"
+                if r["weight_kg"] > 0 else "—"
+            ), axis=1
         )
-        display.columns = ["Ingrediente", "Coste est. (€)", "Peso est. (kg)"]
+        display.columns = ["Ingrediente", "Coste est. (€)", "Consumo"]
         st.dataframe(display, hide_index=True, use_container_width=True)
 
     st.caption(
