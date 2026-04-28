@@ -536,10 +536,7 @@ def _tab_ingredients():
             cost_pu   = float(il.get("cost_per_unit") or 0)
             pack_unit = (il.get("pack_unit") or "").lower()
             cost_acc[ing_name]   += amount * cost_pu * units_sold
-            if pack_unit == "g":
-                weight_acc[ing_name] += (amount / 1000) * units_sold
-            elif pack_unit == "kg":
-                weight_acc[ing_name] += amount * units_sold
+            weight_acc[ing_name] += (amount / 1000) * units_sold
 
     if not cost_acc:
         st.info("No se pudo calcular el consumo — sin coincidencias de ingredientes.")
