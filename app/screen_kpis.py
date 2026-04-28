@@ -581,6 +581,64 @@ def _tab_ingredients():
 
     n = st.slider("Top N ingredientes", 4, 20, 8, key="ing_n")
 
+    # ── Mapping audit ─────────────────────────────────────────────────────────
+    with st.expander("🔍 Ver mapeo de productos → recetas"):
+        audit_rows = []
+        for row in product_rows:
+            recipe_id, match_type = _match_recipe(
+                row.get("sku"), row["product_name"],
+                sku_map, recipe_names, name_id_map
+            )
+            # Get fuzzy score for display
+            score = None
+            if match_type == "fuzzy" and recipe_names:
+                result = process.extractOne(
+                    row["product_name"], recipe_names,
+                    scorer=fuzz.token_sort_ratio
+                )
+                if result:
+                    score = result[1]
+
+            # Find matched recipe name
+            matched_recipe = None
+            if recipe_id:
+                matched_recipe = next(
+                    (r["name"] for r in recipes if r["id"] == recipe_id), recipe_id
+                )
+
+            audit_rows.append({
+                "Producto Holded":  row["product_name"],
+                "Receta mapeada":   matched_recipe or "— sin mapeo —",
+                "Tipo":             match_type,
+                "Score":            f"{score:.0f}" if score else ("SKU" if match_type == "exact" else "—"),
+                "Uds vendidas":     float(row["units"]),
+            })
+
+        adf = pd.DataFrame(audit_rows)
+        # Highlight fuzzy matches with low confidence
+        def _highlight(row):
+            if row["Tipo"] == "fuzzy":
+                try:
+                    s = float(row["Score"])
+                    if s < 85:
+                        return ["background-color: #fff3cd"] * len(row)
+                    return ["background-color: #d4edda"] * len(row)
+                except:
+                    pass
+            if row["Tipo"] == "none":
+                return ["background-color: #f8d7da"] * len(row)
+            return [""] * len(row)
+
+        st.dataframe(
+            adf.style.apply(_highlight, axis=1),
+            hide_index=True,
+            use_container_width=True
+        )
+        st.caption(
+            "🟡 Amarillo = coincidencia aproximada con score bajo (<85) — revisar. "
+            "🔴 Rojo = sin mapeo. 🟢 Verde = coincidencia aproximada con buen score."
+        )
+
     # Build main dataframe sorted by cost
     all_ingredients = sorted(cost_acc.keys(), key=lambda k: cost_acc[k], reverse=True)
     df = pd.DataFrame({
