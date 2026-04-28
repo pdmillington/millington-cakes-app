@@ -791,6 +791,11 @@ def _tab_ingredients():
 # =============================================================================
 
 def _tab_data():
+    if st.session_state.pop('_upload_success', False):
+        st.success("Datos actualizados correctamente.")
+    n_inv = st.session_state.pop('_inv_upload_success', None)
+    if n_inv:
+        st.success(f"✓ Catálogo actualizado: {n_inv} productos subidos")
     st.markdown("### Gestión de datos — subida de ficheros de Holded")
 
     # ── Freshness check ────────────────────────────────────────────────────────
@@ -854,6 +859,7 @@ def _tab_data():
 
         if not errors:
             st.cache_data.clear()
+            st.session_state['_upload success'] = True
             st.rerun()
 
     st.divider()
@@ -878,7 +884,7 @@ def _tab_data():
             try:
                 rows = db.parse_inventory_excel(file_inv.read())
                 n    = db.upsert_holded_products(rows)
-                st.success(f"✓ Catálogo actualizado: {n} productos subidos")
+                st.session_state['_inv_upload_success'] = n
                 st.cache_data.clear()
                 st.rerun()
             except Exception as e:
