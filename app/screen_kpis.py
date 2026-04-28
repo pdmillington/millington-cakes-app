@@ -871,6 +871,7 @@ def _tab_data():
         key="upload_inventory",
     )
     if st.button("⬆️ Subir inventario", type="primary"):
+        st.write("Button clicked")
         if file_inv is None:
             st.warning("Por favor selecciona un fichero primero")
         else:
