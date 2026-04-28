@@ -1494,8 +1494,6 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
     if header_idx is None:
         raise ValueError("No se encontró la fila de cabecera 'SKU' en el fichero.")
 
-    st.write(f"Header found at row {header_idx}")
-    st.write(f"First 3 data rows: {rows[header_idx+1:header_idx+4]}")
     for row in rows[header_idx+1:header_idx+6]:
         st.write(f"  raw[0]={repr(row[0])}  raw[1]={repr(row[1])}")
 
