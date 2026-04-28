@@ -873,16 +873,14 @@ def _tab_data():
         key="upload_inventory",
     )
     if st.button("⬆️ Subir inventario", type="primary"):
-        st.write("Button clicked")
         if file_inv is None:
             st.warning("Por favor selecciona un fichero primero")
         else:
             try:
                 rows = db.parse_inventory_excel(file_inv.read())
                 n    = db.upsert_holded_products(rows)
-                st.session_state['_inv_upload_success'] = n
+                st.success(f"✓ Catálogo actualizado: {n} productos subidos")
                 st.cache_data.clear()
-                st.rerun()
             except Exception as e:
                 st.error(f"Error al procesar inventario: {e}")
 
