@@ -35,7 +35,7 @@ _MONTHS_ES = {
 
 def _normalise_name(name: str) -> str:
     """Strip leading/trailing whitespace and collapse internal spaces."""
-    return re.sub(r'\s+', ' ', name).strip()
+    return _re.sub(r'\s+', ' ', name).strip()
 
 def find_similar_names(name: str, existing_names: list[str], 
                         threshold: int = 85) -> list[tuple[str, int]]:
@@ -1505,7 +1505,7 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
     if header_idx is None:
         raise ValueError("No se encontró la fila de cabecera 'SKU' en el fichero.")
  
-    SKU_RE = re.compile(
+    SKU_RE = _re.compile(
         r'^[A-Z]{2}-?\d{2}-?[A-Z]{2}-?[A-Z]{2,4}(?:-[A-Z]{2,4})?$'
     )
  
@@ -1518,7 +1518,7 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
         if SKU_RE.match(s):
             return s
         # Missing hyphens: try inserting them (e.g. LT01LAGW → LT-01-LA-GW)
-        m = re.match(r'^([A-Z]{2})(\d{2})([A-Z]{2})([A-Z]{2,4})(?:([A-Z]{2,4}))?$', s)
+        m = _re.match(r'^([A-Z]{2})(\d{2})([A-Z]{2})([A-Z]{2,4})(?:([A-Z]{2,4}))?$', s)
         if m:
             parts = [p for p in m.groups() if p]
             return '-'.join(parts)
