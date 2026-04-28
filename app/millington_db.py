@@ -1540,7 +1540,11 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
             }
 
     print(f"Parsed {len(seen)} products, first few: {list(seen.values())[:3]}")
-    return list(seen.values())
+    result = list(seen.values())
+    st.write(f"DEBUG: Parsed {len(result)} products")
+    if result:
+        st.write(f"First product: {result[0]}")
+    return result
  
  
 def upsert_holded_products(rows: list[dict]) -> int:
