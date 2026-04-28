@@ -1502,6 +1502,9 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
     SKU_RE = re.compile(
         r'^[A-Z]{2}-?\d{2}-?[A-Z]{2}-?[A-Z]{2,4}(?:-[A-Z]{2,4})?$'
     )
+    
+    st.write(f"Regex test: {bool(SKU_RE.match('SC-01-LA-GW'))}")
+    st.write(f"Normalise test: {_normalise_sku('SC-01-LA-GW')}")
 
     def _normalise_sku(raw: str) -> str | None:
         if not raw:
