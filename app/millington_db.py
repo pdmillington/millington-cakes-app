@@ -1478,74 +1478,59 @@ def get_upload_status() -> dict:
 # =============================================================================
  
 def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
-    """
-    Parse a Holded inventory Excel export into a list of product dicts:
-      { sku, name, price_ex_vat }
- 
-    Handles:
-    - Null SKUs (skipped)
-    - SKUs missing hyphens (normalised where possible)
-    - Duplicate SKU+name rows (deduplicated, keeping highest price)
-    - Header/footer rows (skipped)
-    """
     import openpyxl
     from io import BytesIO
- 
+
     wb   = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
     ws   = wb.active
     rows = list(ws.iter_rows(values_only=True))
- 
-    # Find header row (contains 'SKU')
+
     header_idx = None
     for i, row in enumerate(rows):
         if row and str(row[0]).strip().upper() == 'SKU':
             header_idx = i
             break
- 
+
     if header_idx is None:
         raise ValueError("No se encontró la fila de cabecera 'SKU' en el fichero.")
- 
+
     SKU_RE = re.compile(
         r'^[A-Z]{2}-?\d{2}-?[A-Z]{2}-?[A-Z]{2,4}(?:-[A-Z]{2,4})?$'
     )
- 
+
     def _normalise_sku(raw: str) -> str | None:
-        """Normalise SKU to XX-00-XX-XX format. Returns None if invalid."""
         if not raw:
             return None
         s = raw.strip().upper()
-        # Already correctly formatted
         if SKU_RE.match(s):
             return s
-        # Missing hyphens: try inserting them (e.g. LT01LAGW → LT-01-LA-GW)
         m = re.match(r'^([A-Z]{2})(\d{2})([A-Z]{2})([A-Z]{2,4})(?:([A-Z]{2,4}))?$', s)
         if m:
             parts = [p for p in m.groups() if p]
             return '-'.join(parts)
         return None
- 
-    seen: dict[tuple, dict] = {}   # (sku, name) → row
- 
+
+    seen: dict[tuple, dict] = {}
     skip_names = {'informe creado', 'none', ''}
- 
+
     for row in rows[header_idx + 1:]:
         if not row or not row[0]:
             continue
         raw_sku  = str(row[0]).strip() if row[0] else ''
         raw_name = str(row[1]).strip() if row[1] else ''
- 
+
         if not raw_name or any(raw_name.lower().startswith(s) for s in skip_names):
             continue
- 
+
         sku = _normalise_sku(raw_sku)
         if not sku:
-            continue   # skip null / unrecognisable SKUs
- 
+            continue
+
         try:
             price = float(row[4]) if row[4] and str(row[4]) not in ('-', 'None') else None
         except (TypeError, ValueError):
             price = None
- 
+
         key = (sku, raw_name)
         if key not in seen or (price and (seen[key]['price_ex_vat'] or 0) < price):
             seen[key] = {
@@ -1553,7 +1538,8 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
                 'name':         raw_name,
                 'price_ex_vat': price,
             }
- 
+
+    print(f"Parsed {len(seen)} products, first few: {list(seen.values())[:3]}")
     return list(seen.values())
  
  
@@ -1562,6 +1548,7 @@ def upsert_holded_products(rows: list[dict]) -> int:
     if not rows:
         return 0
     sb = get_client()
+    print(f"upserting {len(rows)} rows, first: {rows[0]}")
     payload = [
         {
             'sku':          r['sku'],
@@ -1571,7 +1558,8 @@ def upsert_holded_products(rows: list[dict]) -> int:
         }
         for r in rows
     ]
-    sb.table('holded_products').upsert(payload).execute()
+    result = sb.table('holded_products').upsert(payload).execute()
+    print(f"Result: {result}")
     return len(payload)
  
  
