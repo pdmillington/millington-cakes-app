@@ -833,34 +833,34 @@ def _tab_data():
             key="upload_productos",
         )
 
-    if st.button("⬆️ Subir ficheros de ventas", type="primary",
-                 disabled=(file_ventas is None and file_productos is None)):
-        errors = []
+    if st.button("⬆️ Subir ficheros de ventas", type="primary"):
+        if file_ventas is None and file_productos is None:
+            st.warning("Por favor selecciona al menos un fichero primero.")
+        else:
+            errors = []
 
-        if file_ventas:
-            try:
-                rows = db.parse_ventas_excel(file_ventas.read())
-                n    = db.upsert_monthly_revenue(rows)
-                st.success(f"✓ Ingresos: {n} meses subidos "
-                           f"({rows[0]['year'] if rows else '?'}–{rows[-1]['year'] if rows else '?'})")
-            except Exception as e:
-                errors.append(f"Fichero de Ventas: {e}")
-
-        if file_productos:
-            try:
-                rows = db.parse_productos_excel(file_productos.read())
-                n    = db.upsert_monthly_products(rows)
-                st.success(f"✓ Productos: {n} filas de producto/mes subidas")
-            except Exception as e:
-                errors.append(f"Fichero de Productos: {e}")
-
-        for err in errors:
-            st.error(err)
-
-        if not errors:
-            st.cache_data.clear()
-            st.session_state['_upload success'] = True
-            st.rerun()
+            if file_ventas:
+                try:
+                    rows = db.parse_ventas_excel(file_ventas.read())
+                    n    = db.upsert_monthly_revenue(rows)
+                    st.success(f"✓ Ingresos: {n} meses subidos "
+                               f"({rows[0]['year'] if rows else '?'}–{rows[-1]['year'] if rows else '?'})")
+                except Exception as e:
+                    errors.append(f"Fichero de Ventas: {e}")
+    
+            if file_productos:
+                try:
+                    rows = db.parse_productos_excel(file_productos.read())
+                    n    = db.upsert_monthly_products(rows)
+                    st.success(f"✓ Productos: {n} filas de producto/mes subidas")
+                except Exception as e:
+                    errors.append(f"Fichero de Productos: {e}")
+    
+            for err in errors:
+                st.error(err)
+    
+            if not errors:
+                st.cache_data.clear()
 
     st.divider()
 
