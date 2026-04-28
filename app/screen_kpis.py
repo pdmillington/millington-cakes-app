@@ -196,13 +196,32 @@ def _build_fuzzy_map(recipes: list[dict]) -> tuple[list[str], dict[str, str]]:
     return names, name_id
 
 
-def _match_recipe(sku, name, sku_map, recipe_names, name_id_map):
+def _match_recipe(sku, name, sku_map, recipe_names, name_id_map,
+                  name_to_sku: dict | None = None):
+    """
+    Resolve a Holded product name/sku to a recipe_id.
+
+    Priority order:
+      1. Exact SKU match (from product data or inventory table)
+      2. Name → SKU via holded_products inventory table (exact)
+      3. Fuzzy name match against recipe names (fallback for old/unknown products)
+    """
+    # 1. Direct SKU match
     if sku and sku in sku_map:
         return sku_map[sku], "exact"
+
+    # 2. Name → SKU via inventory table
+    if name and name_to_sku:
+        inv_sku = name_to_sku.get(name)
+        if inv_sku and inv_sku in sku_map:
+            return sku_map[inv_sku], "exact"
+
+    # 3. Fuzzy fallback
     if name and recipe_names:
         result = process.extractOne(name, recipe_names, scorer=fuzz.token_sort_ratio)
         if result and result[1] >= FUZZY_THRESHOLD:
             return name_id_map.get(result[0]), "fuzzy"
+
     return None, "none"
 
 
@@ -500,10 +519,29 @@ def _tab_ingredients():
         return
 
     # ── Load recipe matching data ──────────────────────────────────────────────
-    skus      = db.get_skus()
-    recipes   = db.get_recipes()
-    sku_map   = _build_sku_map(skus)
+    skus          = db.get_skus()
+    recipes        = db.get_recipes()
+    sku_map        = _build_sku_map(skus)
     recipe_names, name_id_map = _build_fuzzy_map(recipes)
+    name_to_sku    = db.get_name_to_sku_map()
+
+    # Warn about ambiguous product names (same name, multiple SKUs)
+    ambiguous = st.session_state.get('_holded_ambiguous_names', {})
+    if ambiguous:
+        with st.expander(
+            f"⚠️ {len(ambiguous)} producto(s) con nombre ambiguo — revisar en Holded",
+            expanded=False
+        ):
+            st.caption(
+                "Estos productos tienen el mismo nombre pero distintos SKUs en Holded. "
+                "El cálculo de ingredientes usa el primer SKU alfabético, lo que puede "
+                "ser incorrecto. Solución: asignar nombres únicos por variante en Holded."
+            )
+            amb_df = pd.DataFrame([
+                {"Nombre": name, "SKUs": ", ".join(skus), "Usado": skus[0]}
+                for name, skus in sorted(ambiguous.items())
+            ])
+            st.dataframe(amb_df, hide_index=True, use_container_width=True)
 
     @st.cache_data(ttl=300)
     def _ing_lines():
@@ -535,7 +573,8 @@ def _tab_ingredients():
     for row in product_rows:
         recipe_id, match_type = _match_recipe(
             row.get("sku"), row["product_name"],
-            sku_map, recipe_names, name_id_map
+            sku_map, recipe_names, name_id_map,
+            name_to_sku=name_to_sku,
         )
         if not recipe_id:
             n_unmatched += 1
@@ -580,64 +619,6 @@ def _tab_ingredients():
         return
 
     n = st.slider("Top N ingredientes", 4, 20, 8, key="ing_n")
-
-    # ── Mapping audit ─────────────────────────────────────────────────────────
-    with st.expander("🔍 Ver mapeo de productos → recetas"):
-        audit_rows = []
-        for row in product_rows:
-            recipe_id, match_type = _match_recipe(
-                row.get("sku"), row["product_name"],
-                sku_map, recipe_names, name_id_map
-            )
-            # Get fuzzy score for display
-            score = None
-            if match_type == "fuzzy" and recipe_names:
-                result = process.extractOne(
-                    row["product_name"], recipe_names,
-                    scorer=fuzz.token_sort_ratio
-                )
-                if result:
-                    score = result[1]
-
-            # Find matched recipe name
-            matched_recipe = None
-            if recipe_id:
-                matched_recipe = next(
-                    (r["name"] for r in recipes if r["id"] == recipe_id), recipe_id
-                )
-
-            audit_rows.append({
-                "Producto Holded":  row["product_name"],
-                "Receta mapeada":   matched_recipe or "— sin mapeo —",
-                "Tipo":             match_type,
-                "Score":            f"{score:.0f}" if score else ("SKU" if match_type == "exact" else "—"),
-                "Uds vendidas":     float(row["units"]),
-            })
-
-        adf = pd.DataFrame(audit_rows)
-        # Highlight fuzzy matches with low confidence
-        def _highlight(row):
-            if row["Tipo"] == "fuzzy":
-                try:
-                    s = float(row["Score"])
-                    if s < 85:
-                        return ["background-color: #fff3cd"] * len(row)
-                    return ["background-color: #d4edda"] * len(row)
-                except:
-                    pass
-            if row["Tipo"] == "none":
-                return ["background-color: #f8d7da"] * len(row)
-            return [""] * len(row)
-
-        st.dataframe(
-            adf.style.apply(_highlight, axis=1),
-            hide_index=True,
-            use_container_width=True
-        )
-        st.caption(
-            "🟡 Amarillo = coincidencia aproximada con score bajo (<85) — revisar. "
-            "🔴 Rojo = sin mapeo. 🟢 Verde = coincidencia aproximada con buen score."
-        )
 
     # Build main dataframe sorted by cost
     all_ingredients = sorted(cost_acc.keys(), key=lambda k: cost_acc[k], reverse=True)
@@ -783,14 +764,15 @@ def _tab_data():
 
     with col2:
         st.markdown("**2. Fichero de Ventas por producto**")
-        st.caption("Holded → Ventas → Informes → Ventas por producto → Exportar Excel")
+        st.caption("Holded → Ventas → Informes → Ventas por producto → "
+                   "seleccionar **Unidades** → Exportar Excel")
         file_productos = st.file_uploader(
             "Ventas por producto (unidades por mes)",
             type=["xlsx"],
             key="upload_productos",
         )
 
-    if st.button("⬆️ Subir ficheros", type="primary",
+    if st.button("⬆️ Subir ficheros de ventas", type="primary",
                  disabled=(file_ventas is None and file_productos is None)):
         errors = []
 
@@ -817,6 +799,42 @@ def _tab_data():
         if not errors:
             st.cache_data.clear()
             st.rerun()
+
+    st.divider()
+
+    # ── Inventory / product catalogue upload ──────────────────────────────────
+    st.markdown("#### Catálogo de productos (Inventario)")
+    st.caption(
+        "Sube el fichero de inventario de Holded para mapear nombres de productos a SKUs. "
+        "Actualiza cuando añadas nuevos productos. "
+        "Holded → Inventario → Exportar Excel."
+    )
+    file_inv = st.file_uploader(
+        "Inventario Holded (SKU + nombre)",
+        type=["xlsx"],
+        key="upload_inventory",
+    )
+    if st.button("⬆️ Subir inventario", type="primary", disabled=file_inv is None):
+        try:
+            rows = db.parse_inventory_excel(file_inv.read())
+            n    = db.upsert_holded_products(rows)
+            st.success(f"✓ Catálogo actualizado: {n} productos subidos")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al procesar inventario: {e}")
+
+    # Show current catalogue summary
+    products = db.get_holded_products()
+    if products:
+        st.caption(f"Catálogo actual: {len(products)} productos activos")
+        with st.expander("Ver catálogo completo"):
+            pdf = pd.DataFrame(products)[["sku", "name", "price_ex_vat"]]
+            pdf.columns = ["SKU", "Nombre", "Precio ex-IVA"]
+            pdf["Precio ex-IVA"] = pdf["Precio ex-IVA"].map(
+                lambda x: f"€{x:.2f}" if x else "—"
+            )
+            st.dataframe(pdf, hide_index=True, use_container_width=True)
 
     st.divider()
 
