@@ -509,6 +509,13 @@ def _tab_ingredients():
     def _ing_lines():
         return db.get_ingredient_lines_all()
     ing_lines = _ing_lines()
+    
+    _UNIT_TO_G = {
+    "limones":  100.0,
+    "limas":     67.0,
+    "naranja":  180.0,
+    "manzanas": 182.0,
+}
 
     # Build recipe → ingredient lookup
     recipe_ing: dict[str, list] = defaultdict(list)
@@ -535,8 +542,20 @@ def _tab_ingredients():
             amount    = float(il.get("amount") or 0)
             cost_pu   = float(il.get("cost_per_unit") or 0)
             pack_unit = (il.get("pack_unit") or "").lower()
-            cost_acc[ing_name]   += amount * cost_pu * units_sold
-            weight_acc[ing_name] += (amount / 1000) * units_sold
+
+            name_lower  = ing_name.lower()
+            unit_weight = next(
+                (w for key, w in _UNIT_TO_G.items() if key in name_lower), None
+            )
+            effective_amount = (
+                amount * unit_weight if (unit_weight and amount < 20) else amount
+            )
+
+            if cost_pu:
+                cost_acc[ing_name] += cost_pu * effective_amount * units_sold
+
+            if unit_weight or pack_unit in ("g", "kg"):
+                weight_acc[ing_name] += (effective_amount / 1000) * units_sold
 
     if not cost_acc:
         st.info("No se pudo calcular el consumo — sin coincidencias de ingredientes.")
