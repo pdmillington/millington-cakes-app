@@ -556,10 +556,18 @@ def _tab_ingredients():
         recipe_ing[il["recipe_id"]].append(il)
 
     # ── Recipe total weights (sum of ingredient amounts ≈ recipe weight in g) ─
-    recipe_total_g: dict[str, float] = {
-        rid: sum(float(il.get("amount") or 0) for il in lines)
-        for rid, lines in recipe_ing.items()
-    }
+    recipe_total_g: dict[str, float] = {}
+    for rid, lines in recipe_ing.items():
+        total = 0.0
+        for il in lines:
+            amount   = float(il.get("amount") or 0)
+            pack_unit = (il.get("pack_unit") or "").lower()
+            # Units-based ingredients (eggs etc.) — approximate weight 50g each
+            if pack_unit == "units":
+                total += amount * 50.0
+            else:
+                total += amount
+        recipe_total_g[rid] = total
 
     # ── Recipe individual/bocado weights from recipes table ───────────────────
     recipe_by_id = {r["id"]: r for r in recipes}
