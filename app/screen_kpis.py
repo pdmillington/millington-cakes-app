@@ -377,7 +377,7 @@ def _tab_revenue():
             tdf.columns = ["Mes", "Multiplicador", "Objetivo (€)"]
             tdf["Objetivo (€)"]  = tdf["Objetivo (€)"].map(lambda x: f"€{x:,.2f}")
             tdf["Multiplicador"] = tdf["Multiplicador"].map(lambda x: f"{x}×")
-            st.dataframe(tdf, hide_index=True, use_container_width=True)
+            st.dataframe(tdf, hide_index=True, width='stretch')
 
 
 # =============================================================================
@@ -473,7 +473,7 @@ def _tab_products():
             f"Uds {ly}":       f"{units_ly:.1f}" if units_ly else "—",
             "Variación":       f"{change:+.1f}%" if change is not None else "nuevo",
         })
-    st.dataframe(pd.DataFrame(detail), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(detail), hide_index=True, width='stretch')
 
     # Period info
     uploaded_cy = [(r["year"], r["month"]) for r in _get_all_revenue() if r["year"] == cy]
@@ -544,7 +544,7 @@ def _tab_ingredients():
                 {"Nombre": name, "SKUs": ", ".join(skus), "Usado": skus[0]}
                 for name, skus in sorted(ambiguous.items())
             ])
-            st.dataframe(amb_df, hide_index=True, use_container_width=True)
+            st.dataframe(amb_df, hide_index=True, width='stretch')
 
     @st.cache_data(ttl=300)
     def _ing_lines():
@@ -734,7 +734,7 @@ def _tab_ingredients():
             {"Ingrediente": k, "Unidades": f"{v:,.0f} ud."}
             for k, v in sorted(unit_acc.items(), key=lambda x: x[1], reverse=True)
         ])
-        st.dataframe(unit_df, hide_index=True, use_container_width=True)
+        st.dataframe(unit_df, hide_index=True, width='stretch')
 
     # ── Full detail table ──────────────────────────────────────────────────────
     st.divider()
@@ -754,7 +754,7 @@ def _tab_ingredients():
         display["est_cost_eur"] = display["est_cost_eur"].map(lambda x: f"€{x:,.2f}")
         display = display[["ingredient", "est_cost_eur", "Consumo"]]
         display.columns = ["Ingrediente", "Coste est. (€)", "Consumo"]
-        st.dataframe(display, hide_index=True, use_container_width=True)
+        st.dataframe(display, hide_index=True, width='stretch')
 
     st.caption(
         "⚠️ Aproximación: usa la receta de referencia sin escalar por tamaño. "
@@ -812,7 +812,7 @@ def _tab_ingredients():
         st.dataframe(
             adf.style.apply(_highlight, axis=1),
             hide_index=True,
-            use_container_width=True
+            width='stretch'
         )
         st.caption(
             "🟡 Amarillo = coincidencia aproximada con score bajo (<85) — revisar. "
@@ -923,7 +923,7 @@ def _tab_data():
             pdf["Precio ex-IVA"] = pdf["Precio ex-IVA"].map(
                 lambda x: f"€{x:.2f}" if x else "—"
             )
-            st.dataframe(pdf, hide_index=True, use_container_width=True)
+            st.dataframe(pdf, hide_index=True, width='stretch')
 
     st.divider()
 
@@ -953,7 +953,7 @@ def _tab_data():
         }
         for year, v in sorted(by_year.items())
     ])
-    st.dataframe(summary, hide_index=True, use_container_width=True)
+    st.dataframe(summary, hide_index=True, width='stretch')
 
     # API supplement status
     supp = holded.get_current_month_supplement()
