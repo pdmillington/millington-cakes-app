@@ -318,23 +318,6 @@ def _slot_editor(
             key=f"{p}_shelf"
         )
 
-    # ── Prices ─────────────────────────────────────────────────────────────────
-    st.markdown("#### Precios")
-    pr1, pr2 = st.columns(2)
-    with pr1:
-        ws_price = st.number_input(
-            "Mayorista ex-IVA (€)",
-            value=float(_v(variant, "ws_price_ex_vat", 0.0)),
-            min_value=0.0, format="%.4f",
-            key=f"{p}_ws"
-        )
-    with pr2:
-        rt_price = st.number_input(
-            "Minorista inc-IVA (€)",
-            value=float(_v(variant, "rt_price_inc_vat", 0.0)),
-            min_value=0.0, format="%.4f",
-            key=f"{p}_rt"
-        )
 
     # ── Ingredient label text ──────────────────────────────────────────────────
     st.markdown("#### Lista de ingredientes (etiqueta)")
@@ -455,8 +438,6 @@ def _slot_editor(
                 "packaging_desc":       effective_packaging,
                 "storage_instructions": storage_instructions or None,
                 "shelf_life_hours":     shelf_life_hours,
-                "ws_price_ex_vat":      ws_price or None,
-                "rt_price_inc_vat":     rt_price or None,
                 "ingredient_label_es":  ingredient_label_es or None,
                 "label_approved":       label_approved,
                 "size_code":            size_code or None,
