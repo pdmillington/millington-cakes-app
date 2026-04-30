@@ -723,7 +723,7 @@ def _tab_ingredients():
                              alt.Tooltip("unit:N", title="Unidad")],
                 )
                 .properties(height=max(200, n * 32)),
-                use_container_width=True
+                width='stretch'
             )
 
     # ── Unit-count ingredients (eggs etc.) ────────────────────────────────────
