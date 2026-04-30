@@ -328,7 +328,8 @@ def save_recipe(record: dict) -> dict:
         sb.table("recipes").update(record).eq("id", record["id"]).execute()
         result = sb.table("recipes").select("*").eq("id", record["id"]).execute()
     else:
-        result = sb.table("recipes").insert(record).execute()
+        insert_record = {k: v for k, v in record.items() if k != "id"}
+        result = sb.table("recipes").insert(insert_record).execute()
     return result.data[0] if result.data else {}
 
 
