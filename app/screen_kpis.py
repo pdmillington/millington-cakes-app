@@ -793,6 +793,11 @@ def _tab_ingredients():
                 matched_recipe = next(
                     (r["name"] for r in recipes if r["id"] == recipe_id), recipe_id
                 )
+            
+            inv_sku_audit = name_to_sku.get(row["product_name"], row.get("sku") or "")
+            pack_sz       = sku_to_pack.get(inv_sku_audit, 1)
+            scale_f       = _scale_factor(recipe_id, inv_sku_audit) if recipe_id else None
+            total_g_val   = recipe_total_g.get(recipe_id, 0) if recipe_id else 0
 
             audit_rows.append({
                 "Producto Holded":  row["product_name"],
@@ -800,6 +805,9 @@ def _tab_ingredients():
                 "Tipo":             match_type,
                 "Score":            f"{score:.0f}" if score else ("SKU" if match_type == "exact" else "—"),
                 "Uds vendidas":     float(row["units"]),
+                "Pack size":        pack_sz,
+                "Scale":            f"{scale_f:.4f}" if scale_f is not None else "—",
+                "Recipe g":         f"{total_g_val:.0f}" if total_g_val else "—",
             })
 
         adf = pd.DataFrame(audit_rows)
