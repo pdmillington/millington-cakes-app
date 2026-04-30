@@ -945,21 +945,75 @@ def save_sku(record: dict) -> dict:
 
 def get_sku_to_recipe_map() -> list[dict]:
     """
-    Return all SKU → recipe_id mappings from product_variants.
-    Both sku_ws (wholesale) and sku_gw (retail) are included.
-    Format matches get_skus() so _build_sku_map() works unchanged.
+    Build a complete SKU → recipe_id map using two sources:
+ 
+    Source A (primary): holded_products table
+      SKU format: CC-01-SS-CH (e.g. LP-01-LA-GW)
+      CC = cake code → look up recipe via cake_codes table
+      Covers all 90 products in the inventory without manual variant entry.
+ 
+    Source B (override): product_variants table (sku_ws / sku_gw)
+      Explicit per-variant SKUs entered via the variants screen.
+      Overrides Source A for any SKU that has been manually defined.
+ 
+    Format matches get_skus() so _build_sku_map() in screen_kpis.py
+    works unchanged.
     """
-    sb     = get_client()
-    result = (sb.table("product_variants")
-                .select("recipe_id, sku_ws, sku_gw")
-                .execute())
-    rows = []
-    for r in result.data or []:
-        if r.get("sku_ws"):
-            rows.append({"sku_code": r["sku_ws"], "recipe_id": r["recipe_id"]})
-        if r.get("sku_gw"):
-            rows.append({"sku_code": r["sku_gw"], "recipe_id": r["recipe_id"]})
-    return rows
+    sb = get_client()
+ 
+    # ── Build cake_code → recipe_id lookup ────────────────────────────────────
+    # Use the latest version of each recipe per cake code
+    cake_codes = get_cake_codes()
+    code_by_id = {cc["id"]: cc["code"] for cc in cake_codes}
+ 
+    recipes = (sb.table("recipes")
+                 .select("id, cake_code_id, version")
+                 .eq("is_sub_recipe", False)
+                 .order("version", desc=True)
+                 .execute()
+                 .data or [])
+ 
+    # cake_code_str → recipe_id  (first encountered = latest version)
+    code_to_recipe: dict[str, str] = {}
+    for r in recipes:
+        if r.get("cake_code_id"):
+            code = code_by_id.get(r["cake_code_id"])
+            if code and code not in code_to_recipe:
+                code_to_recipe[code] = r["id"]
+ 
+    # ── Source A: holded_products ──────────────────────────────────────────────
+    rows: dict[str, dict] = {}   # sku_code → row
+ 
+    products = (sb.table("holded_products")
+                  .select("sku")
+                  .eq("active", True)
+                  .execute()
+                  .data or [])
+ 
+    for p in products:
+        sku   = (p.get("sku") or "").strip()
+        parts = sku.split("-")
+        if len(parts) < 2:
+            continue
+        cake_code = parts[0].upper()
+        recipe_id = code_to_recipe.get(cake_code)
+        if recipe_id:
+            rows[sku] = {"sku_code": sku, "recipe_id": recipe_id}
+ 
+    # ── Source B: product_variants (overrides Source A) ────────────────────────
+    variants = (sb.table("product_variants")
+                  .select("recipe_id, sku_ws, sku_gw")
+                  .execute()
+                  .data or [])
+ 
+    for v in variants:
+        for field in ("sku_ws", "sku_gw"):
+            sku = (v.get(field) or "").strip()
+            if sku and v.get("recipe_id"):
+                rows[sku] = {"sku_code": sku, "recipe_id": v["recipe_id"]}
+ 
+    return list(rows.values())
+ 
 
 
 # -----------------------------------------------------------------------------
