@@ -524,6 +524,8 @@ def _tab_ingredients():
     sku_map        = _build_sku_map(skus)
     recipe_names, name_id_map = _build_fuzzy_map(recipes)
     name_to_sku    = db.get_name_to_sku_map()
+    products    = db.get_holded_products()
+    sku_to_pack = {p["sku"]: p.get("units_per_pack", 1) for p in products}
 
     # Warn about ambiguous product names (same name, multiple SKUs)
     ambiguous = st.session_state.get('_holded_ambiguous_names', {})
