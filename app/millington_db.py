@@ -1591,6 +1591,8 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
         if not raw:
             return None
         s = raw.strip().upper()
+        # Correct common OCR/typo: digit 0 in position 0 or 1 replaced with letter O
+        s = s[:2].replace('0', 'O') + s[2:]
         if SKU_RE.match(s):
             return s
         m = re.match(r'^([A-Z]{2})(\d{2})([A-Z]{2})([A-Z]{2,4})(?:([A-Z]{2,4}))?$', s)
