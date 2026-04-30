@@ -305,10 +305,12 @@ def _compute_consumable_cost(record: dict) -> dict:
 # -----------------------------------------------------------------------------
 
 def get_recipes(include_sub_recipes: bool = False) -> list[dict]:
-    """Return recipes. Sub-recipes (intermediate components) are excluded
-    by default so they do not appear in pricing, catalogue or calculator."""
+    """Return recipes joined with cake_codes so screens can read the
+    cake code string without a second DB call."""
     sb = get_client()
-    q = sb.table("recipes").select("*").order("name")
+    q  = (sb.table("recipes")
+            .select("*, cake_codes(code, name)")
+            .order("name"))
     if not include_sub_recipes:
         q = q.eq("is_sub_recipe", False)
     return q.execute().data or []
@@ -904,6 +906,18 @@ def get_price_channels() -> list[dict]:
     result = sb.table("price_channels").select("*").order("code").execute()
     return result.data or []
 
+def save_cake_code(code: str, name: str) -> dict:
+    """
+    Insert a new cake code. Returns the created row.
+    Raises if code already exists (unique constraint).
+    """
+    sb     = get_client()
+    result = (sb.table("cake_codes")
+                .insert({"code": code.strip().upper(),
+                         "name": name.strip()})
+                .execute())
+    return result.data[0] if result.data else {}
+ 
 
 # -----------------------------------------------------------------------------
 # SKUs
@@ -928,6 +942,24 @@ def save_sku(record: dict) -> dict:
     else:
         result = sb.table("skus").insert(record).execute()
     return result.data[0] if result.data else {}
+
+def get_sku_to_recipe_map() -> list[dict]:
+    """
+    Return all SKU → recipe_id mappings from product_variants.
+    Both sku_ws (wholesale) and sku_gw (retail) are included.
+    Format matches get_skus() so _build_sku_map() works unchanged.
+    """
+    sb     = get_client()
+    result = (sb.table("product_variants")
+                .select("recipe_id, sku_ws, sku_gw")
+                .execute())
+    rows = []
+    for r in result.data or []:
+        if r.get("sku_ws"):
+            rows.append({"sku_code": r["sku_ws"], "recipe_id": r["recipe_id"]})
+        if r.get("sku_gw"):
+            rows.append({"sku_code": r["sku_gw"], "recipe_id": r["recipe_id"]})
+    return rows
 
 
 # -----------------------------------------------------------------------------

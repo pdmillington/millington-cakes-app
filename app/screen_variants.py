@@ -154,21 +154,81 @@ def _slot_editor(
 
     # ── SKUs ──────────────────────────────────────────────────────────────────
     st.markdown("#### SKUs")
+ 
+    # Derive cake code from recipe (requires get_recipes to join cake_codes)
+    cake_codes_data = recipe.get("cake_codes") or {}
+    cake_code       = cake_codes_data.get("code", "")
+ 
+    # Size options per format — controls middle segment of SKU
+    SIZE_OPTIONS = {
+        "standard":   {"LA": "Large (22cm)", "XL": "XLarge (24-26cm)",
+                       "XX": "XXLarge (28-30cm)", "DC": "Desayuno/Caja"},
+        "individual": {"TI": "Individual (1 ud)", "IN": "Individual ×4",
+                       "BO": "Bocado ×25"},
+        "bocado":     {"MI": "Bocado individual", "BO": "Bocado ×25"},
+    }
+    size_opts  = SIZE_OPTIONS.get(fmt, {"LA": "Large"})
+    default_sz = _v(variant, "size_code", list(size_opts.keys())[0])
+    if default_sz not in size_opts:
+        default_sz = list(size_opts.keys())[0]
+ 
+    size_code = st.selectbox(
+        "Tamaño / formato SKU",
+        options=list(size_opts.keys()),
+        format_func=lambda x: f"{x} — {size_opts[x]}",
+        index=list(size_opts.keys()).index(default_sz),
+        key=f"{p}_size_code",
+        help="Determina el segmento de tamaño en el SKU (p.ej. LA, TI, BO)"
+    )
+ 
+    # Auto-generate SKUs — editable, auto-filled if empty
+    if cake_code:
+        auto_ws = f"{cake_code}-01-{size_code}-WS"
+        auto_gw = f"{cake_code}-01-{size_code}-GW"
+    else:
+        auto_ws = ""
+        auto_gw = ""
+ 
+    # Use stored value if it exists, otherwise auto-generate
+    default_sku_ws = _v(variant, "sku_ws", auto_ws)
+    default_sku_gw = _v(variant, "sku_gw", auto_gw)
+ 
+    # If size_code just changed, regenerate (only if stored value matches
+    # the old auto-pattern — don't overwrite manual edits)
+    stored_size = _v(variant, "size_code", "")
+    if stored_size and stored_size != size_code and cake_code:
+        # Size changed — update if current value was auto-generated
+        old_ws = f"{cake_code}-01-{stored_size}-WS"
+        old_gw = f"{cake_code}-01-{stored_size}-GW"
+        if default_sku_ws == old_ws:
+            default_sku_ws = auto_ws
+        if default_sku_gw == old_gw:
+            default_sku_gw = auto_gw
+ 
     sk1, sk2 = st.columns(2)
     with sk1:
         sku_ws = st.text_input(
-            "SKU Mayorista",
-            value=_v(variant, "sku_ws", ""),
+            "SKU Mayorista (WS)",
+            value=default_sku_ws,
             key=f"{p}_sku_ws",
-            placeholder="e.g. LP-01-TI-WS"
+            placeholder="e.g. LP-01-TI-WS",
+            help=f"Auto-generado: {auto_ws}" if auto_ws else "Introduce el código manualmente",
         )
     with sk2:
         sku_gw = st.text_input(
-            "SKU Minorista",
-            value=_v(variant, "sku_gw", ""),
+            "SKU Minorista (GW)",
+            value=default_sku_gw,
             key=f"{p}_sku_gw",
-            placeholder="e.g. LP-01-TI-GW"
+            placeholder="e.g. LP-01-TI-GW",
+            help=f"Auto-generado: {auto_gw}" if auto_gw else "Introduce el código manualmente",
         )
+ 
+    if not cake_code:
+        st.caption(
+            "⚠️ Esta receta no tiene un código de tarta asignado — "
+            "asigna uno en la pantalla de Recetas para auto-generar los SKUs."
+        )
+ 
 
     # ── Size & weight ──────────────────────────────────────────────────────────
     st.markdown("#### Tamaño y peso")
@@ -399,6 +459,7 @@ def _slot_editor(
                 "rt_price_inc_vat":     rt_price or None,
                 "ingredient_label_es":  ingredient_label_es or None,
                 "label_approved":       label_approved,
+                "size_code":            size_code or None,
             }
             if vid:
                 record["id"] = vid

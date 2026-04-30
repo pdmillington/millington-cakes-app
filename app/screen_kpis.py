@@ -519,7 +519,7 @@ def _tab_ingredients():
         return
 
     # ── Load recipe matching data ──────────────────────────────────────────────
-    skus          = db.get_skus()
+    skus          = db.get_sku_to_recipe_map()
     recipes        = db.get_recipes()
     sku_map        = _build_sku_map(skus)
     recipe_names, name_id_map = _build_fuzzy_map(recipes)

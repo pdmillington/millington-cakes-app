@@ -138,7 +138,39 @@ multiples — no numeric size codes needed.
                     ):
                         _load_recipe(r["id"], code_options)
 
+        # ── New cake code ─────────────────────────────────────────────────────
+        with st.expander("➕ New cake code"):
+            nc1, nc2 = st.columns(2)
+            with nc1:
+                new_code = st.text_input(
+                    "Code (2 letters)",
+                    max_chars=2,
+                    placeholder="e.g. RV",
+                    key="new_cake_code_code",
+                ).upper().strip()
+            with nc2:
+                new_name = st.text_input(
+                    "Name",
+                    placeholder="e.g. Red Velvet",
+                    key="new_cake_code_name",
+                ).strip()
+ 
+            if st.button("Save cake code", key="save_cake_code",
+                         type="primary",
+                         disabled=len(new_code) != 2 or not new_name):
+                try:
+                    db.save_cake_code(new_code, new_name)
+                    st.success(f"✓ {new_code} — {new_name} saved. "
+                               "Refresh the page to see it in the list.")
+                except Exception as e:
+                    if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                        st.error(f"Code '{new_code}' already exists.")
+                    else:
+                        st.error(f"Error: {e}")
+
+
         st.divider()
+
         if st.button("➕ New recipe", use_container_width=True):
             _load_recipe("new", code_options)
 
