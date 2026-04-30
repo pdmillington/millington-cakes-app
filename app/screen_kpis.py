@@ -574,10 +574,6 @@ def _tab_ingredients():
 
     # ── Scale factor by SKU size code ─────────────────────────────────────────
     def _scale_factor(recipe_id: str, sku: str) -> float:
-        """
-        Scale full-recipe ingredient amounts to the actual size sold.
-        LA/XL/XX/DC = 1.0 (full recipe); TI/IN/MI/BO use weight ratios.
-        """
         parts = (sku or "").split("-")
         size  = parts[2].upper() if len(parts) >= 3 else "LA"
         if size in ("LA", "XL", "XX", "DC"):
@@ -588,11 +584,13 @@ def _tab_ingredients():
         recipe = recipe_by_id.get(recipe_id, {})
         ind_g  = float(recipe.get("individual_weight_g") or 100)
         boc_g  = float(recipe.get("bocado_weight_g")     or 30)
+        # pack_size already handles ×4 for IN and ×25 for BO
+        # so scale just needs the per-item fraction
         return {
             "TI": ind_g / total_g,
-            "IN": (ind_g * 4) / total_g,
+            "IN": ind_g / total_g,
             "MI": boc_g / total_g,
-            "BO": (boc_g * 25) / total_g,
+            "BO": boc_g / total_g,
         }.get(size, 1.0)
 
     # ── Unit conversions (count → grams) ──────────────────────────────────────
