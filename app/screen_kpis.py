@@ -519,13 +519,11 @@ def _tab_ingredients():
         return
 
     # ── Load recipe matching data ──────────────────────────────────────────────
-    skus          = db.get_sku_to_recipe_map()
+    skus          = db.get_skus()
     recipes        = db.get_recipes()
     sku_map        = _build_sku_map(skus)
     recipe_names, name_id_map = _build_fuzzy_map(recipes)
     name_to_sku    = db.get_name_to_sku_map()
-    products       = db.get_holded_products()
-    sku_to_pack    = {p["sku"]: p.get("units_per_pack", 1) for p in products}
 
     # Warn about ambiguous product names (same name, multiple SKUs)
     ambiguous = st.session_state.get('_holded_ambiguous_names', {})
@@ -554,8 +552,39 @@ def _tab_ingredients():
     for il in ing_lines:
         recipe_ing[il["recipe_id"]].append(il)
 
+    # ── Recipe total weights (sum of ingredient amounts ≈ recipe weight in g) ─
+    recipe_total_g: dict[str, float] = {
+        rid: sum(float(il.get("amount") or 0) for il in lines)
+        for rid, lines in recipe_ing.items()
+    }
+
+    # ── Recipe individual/bocado weights from recipes table ───────────────────
+    recipe_by_id = {r["id"]: r for r in recipes}
+
+    # ── Scale factor by SKU size code ─────────────────────────────────────────
+    def _scale_factor(recipe_id: str, sku: str) -> float:
+        """
+        Scale full-recipe ingredient amounts to the actual size sold.
+        LA/XL/XX/DC = 1.0 (full recipe); TI/IN/MI/BO use weight ratios.
+        """
+        parts = (sku or "").split("-")
+        size  = parts[2].upper() if len(parts) >= 3 else "LA"
+        if size in ("LA", "XL", "XX", "DC"):
+            return 1.0
+        total_g = recipe_total_g.get(recipe_id, 0)
+        if total_g <= 0:
+            return 1.0
+        recipe = recipe_by_id.get(recipe_id, {})
+        ind_g  = float(recipe.get("individual_weight_g") or 100)
+        boc_g  = float(recipe.get("bocado_weight_g")     or 30)
+        return {
+            "TI": ind_g / total_g,
+            "IN": (ind_g * 4) / total_g,
+            "MI": boc_g / total_g,
+            "BO": (boc_g * 25) / total_g,
+        }.get(size, 1.0)
+
     # ── Unit conversions (count → grams) ──────────────────────────────────────
-    # Mirrors _UNIT_TO_G in screen_calculator.py
     _UNIT_TO_G = {
         "limones":  100.0,
         "limas":     67.0,
@@ -564,11 +593,10 @@ def _tab_ingredients():
     }
 
     # Accumulators
-    cost_acc:    dict[str, float] = defaultdict(float)
-    # Separate buckets by unit type to avoid mixing incommensurable quantities
-    kg_acc:      dict[str, float] = defaultdict(float)  # solids in kg
-    litre_acc:   dict[str, float] = defaultdict(float)  # liquids in L
-    unit_acc:    dict[str, float] = defaultdict(float)  # countable items (eggs etc.)
+    cost_acc:  dict[str, float] = defaultdict(float)
+    kg_acc:    dict[str, float] = defaultdict(float)
+    litre_acc: dict[str, float] = defaultdict(float)
+    unit_acc:  dict[str, float] = defaultdict(float)
 
     n_exact = n_fuzzy = n_unmatched = 0
 
@@ -581,11 +609,13 @@ def _tab_ingredients():
         if not recipe_id:
             n_unmatched += 1
             continue
-        n_exact    += match_type == "exact"
-        n_fuzzy    += match_type == "fuzzy"
+        n_exact   += match_type == "exact"
+        n_fuzzy   += match_type == "fuzzy"
+
         inv_sku    = name_to_sku.get(row["product_name"], row.get("sku") or "")
         pack_size  = sku_to_pack.get(inv_sku, 1)
-        units_sold = float(row["units"]) * pack_size
+        scale      = _scale_factor(recipe_id, inv_sku)
+        units_sold = float(row["units"]) * pack_size * scale
 
         for il in recipe_ing.get(recipe_id, []):
             ing_name  = il.get("ingredient_name", "Unknown")
@@ -593,7 +623,6 @@ def _tab_ingredients():
             cost_pu   = float(il.get("cost_per_unit") or 0)
             pack_unit = (il.get("pack_unit") or "").lower()
 
-            # Fruit/unit ingredients: amount is a count → convert to grams
             name_lower  = ing_name.lower()
             unit_weight = next(
                 (w for key, w in _UNIT_TO_G.items() if key in name_lower), None
@@ -602,13 +631,10 @@ def _tab_ingredients():
                 amount * unit_weight if (unit_weight and amount < 20) else amount
             )
 
-            # Cost: cpu is per gram/ml/unit — always correct as-is
             if cost_pu:
                 cost_acc[ing_name] += cost_pu * effective_amount * units_sold
 
-            # Volume/weight accumulation — split by unit type
             if pack_unit in ("g", "kg") or unit_weight:
-                # Solid ingredients (and fruit converted to grams) → kg
                 kg_acc[ing_name] += (effective_amount / 1000) * units_sold
             elif pack_unit in ("l", "ml"):
                 # Liquid ingredients: recipe amounts are in ml → litres
@@ -732,75 +758,13 @@ def _tab_ingredients():
         "Kg y L no son comparables — se muestran en gráficos separados por color. "
         "Útil para ranking relativo y planificación de compras."
     )
-    # ── Mapping audit ─────────────────────────────────────────────────────────
-    with st.expander("🔍 Ver mapeo de productos → recetas"):
-        audit_rows = []
-        for row in product_rows:
-            recipe_id, match_type = _match_recipe(
-                row.get("sku"), row["product_name"],
-                sku_map, recipe_names, name_id_map,
-                name_to_sku=name_to_sku,
-            )
-            # Get fuzzy score for display
-            score = None
-            if match_type == "fuzzy" and recipe_names:
-                result = process.extractOne(
-                    row["product_name"], recipe_names,
-                    scorer=fuzz.token_sort_ratio
-                )
-                if result:
-                    score = result[1]
 
-            # Find matched recipe name
-            matched_recipe = None
-            if recipe_id:
-                matched_recipe = next(
-                    (r["name"] for r in recipes if r["id"] == recipe_id), recipe_id
-                )
-
-            audit_rows.append({
-                "Producto Holded":  row["product_name"],
-                "Receta mapeada":   matched_recipe or "— sin mapeo —",
-                "Tipo":             match_type,
-                "Score":            f"{score:.0f}" if score else ("SKU" if match_type == "exact" else "—"),
-                "Uds vendidas":     float(row["units"]),
-            })
-
-        adf = pd.DataFrame(audit_rows)
-        # Highlight fuzzy matches with low confidence
-        def _highlight(row):
-            if row["Tipo"] == "fuzzy":
-                try:
-                    s = float(row["Score"])
-                    if s < 85:
-                        return ["background-color: #fff3cd"] * len(row)
-                    return ["background-color: #d4edda"] * len(row)
-                except:
-                    pass
-            if row["Tipo"] == "none":
-                return ["background-color: #f8d7da"] * len(row)
-            return [""] * len(row)
-
-        st.dataframe(
-            adf.style.apply(_highlight, axis=1),
-            hide_index=True,
-            use_container_width=True
-        )
-        st.caption(
-            "🟡 Amarillo = coincidencia aproximada con score bajo (<85) — revisar. "
-            "🔴 Rojo = sin mapeo. 🟢 Verde = coincidencia aproximada con buen score."
-        )
 
 # =============================================================================
 # Tab 4 — Data Management
 # =============================================================================
 
 def _tab_data():
-    if st.session_state.pop('_upload_success', False):
-        st.success("Datos actualizados correctamente.")
-    n_inv = st.session_state.pop('_inv_upload_success', None)
-    if n_inv:
-        st.success(f"✓ Catálogo actualizado: {n_inv} productos subidos")
     st.markdown("### Gestión de datos — subida de ficheros de Holded")
 
     # ── Freshness check ────────────────────────────────────────────────────────
@@ -838,30 +802,33 @@ def _tab_data():
             key="upload_productos",
         )
 
-    if st.button("⬆️ Subir ficheros de ventas", type="primary"):
-        if file_ventas is None and file_productos is None:
-            st.warning("Por favor selecciona al menos un fichero primero.")
-        else:
-            errors = []
-            if file_ventas:
-                try:
-                    rows = db.parse_ventas_excel(file_ventas.read())
-                    n    = db.upsert_monthly_revenue(rows)
-                    st.success(f"✓ Ingresos: {n} meses subidos "
-                               f"({rows[0]['year'] if rows else '?'}–{rows[-1]['year'] if rows else '?'})")
-                except Exception as e:
-                    errors.append(f"Fichero de Ventas: {e}")
-            if file_productos:
-                try:
-                    rows = db.parse_productos_excel(file_productos.read())
-                    n    = db.upsert_monthly_products(rows)
-                    st.success(f"✓ Productos: {n} filas de producto/mes subidas")
-                except Exception as e:
-                    errors.append(f"Fichero de Productos: {e}")
-            for err in errors:
-                st.error(err)
-            if not errors:
-                st.cache_data.clear()
+    if st.button("⬆️ Subir ficheros de ventas", type="primary",
+                 disabled=(file_ventas is None and file_productos is None)):
+        errors = []
+
+        if file_ventas:
+            try:
+                rows = db.parse_ventas_excel(file_ventas.read())
+                n    = db.upsert_monthly_revenue(rows)
+                st.success(f"✓ Ingresos: {n} meses subidos "
+                           f"({rows[0]['year'] if rows else '?'}–{rows[-1]['year'] if rows else '?'})")
+            except Exception as e:
+                errors.append(f"Fichero de Ventas: {e}")
+
+        if file_productos:
+            try:
+                rows = db.parse_productos_excel(file_productos.read())
+                n    = db.upsert_monthly_products(rows)
+                st.success(f"✓ Productos: {n} filas de producto/mes subidas")
+            except Exception as e:
+                errors.append(f"Fichero de Productos: {e}")
+
+        for err in errors:
+            st.error(err)
+
+        if not errors:
+            st.cache_data.clear()
+            st.rerun()
 
     st.divider()
 
@@ -877,17 +844,15 @@ def _tab_data():
         type=["xlsx"],
         key="upload_inventory",
     )
-    if st.button("⬆️ Subir inventario", type="primary"):
-        if file_inv is None:
-            st.warning("Por favor selecciona un fichero primero")
-        else:
-            try:
-                rows = db.parse_inventory_excel(file_inv.read())
-                n    = db.upsert_holded_products(rows)
-                st.success(f"✓ Catálogo actualizado: {n} productos subidos")
-                st.cache_data.clear()
-            except Exception as e:
-                st.error(f"Error al procesar inventario: {e}")
+    if st.button("⬆️ Subir inventario", type="primary", disabled=file_inv is None):
+        try:
+            rows = db.parse_inventory_excel(file_inv.read())
+            n    = db.upsert_holded_products(rows)
+            st.success(f"✓ Catálogo actualizado: {n} productos subidos")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al procesar inventario: {e}")
 
     # Show current catalogue summary
     products = db.get_holded_products()
