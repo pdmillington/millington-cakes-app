@@ -364,7 +364,7 @@ def _tab_revenue():
     st.altair_chart(
         alt.layer(*layers).properties(height=400)
         .configure_axis(labelFontSize=11, titleFontSize=12),
-        use_container_width=True
+        width='stretch'
     )
     st.caption(
         "Barras semitransparentes = datos vía API (mes actual, pueden ser parciales). "
@@ -459,7 +459,7 @@ def _tab_products():
         )
         .properties(height=360)
     )
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width='stretch')
 
     st.divider()
     st.markdown("**Detalle**")
@@ -704,7 +704,7 @@ def _tab_ingredients():
                          alt.Tooltip("est_cost_eur:Q", title="€", format=",.2f")],
             )
             .properties(height=max(200, n * 32)),
-            use_container_width=True
+            width='stretch'
         )
 
     with c2:
