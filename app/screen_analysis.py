@@ -13,7 +13,8 @@ from millington_db import (
     get_ingredient_label_text,
     ALLERGEN_DISPLAY_ES,
 )
-from core.constants import UNIT_TO_G
+from core.constants import UNIT_TO_G, FORMAT_TIER_CODES
+from core.settings import load_settings
 
 
 def screen_analysis():
@@ -25,23 +26,14 @@ def screen_analysis():
 
     # ── Load data ─────────────────────────────────────────────────────────────
     recipes     = db.get_recipes()
-    settings    = db.get_settings()
     ingredients = db.get_ingredients()
     presets     = db.get_packaging_presets()
     cake_codes  = db.get_cake_codes()
+    s = load_settings()
 
     recipe_map  = {r["name"]: r for r in recipes}
     ing_map     = {i["name"]: i for i in ingredients}
     code_by_id  = {cc["id"]: cc["code"] for cc in cake_codes}
-
-    # Settings
-    default_labour  = float(settings.get("default_labour_rate") or 30.0)
-    default_oven    = float(settings.get("default_oven_rate") or 2.0)
-    labour_power    = float(settings.get("labour_power") or 0.7)
-    ws_margin       = float(settings.get("ws_margin") or 2.0)
-    ws_batch_large  = int(settings.get("ws_batch_large") or 20)
-    rt_batch_large  = int(settings.get("rt_batch_large") or 1)
-    rt_margin_large = float(settings.get("rt_margin_large") or 3.0)
 
     # ── Selectors ─────────────────────────────────────────────────────────────
     col_sel1, col_sel2 = st.columns(2)
@@ -145,16 +137,16 @@ def screen_analysis():
         """Returns (prep_cost, oven_cost) for a given batch size."""
         if ref_batch_size > 0:
             qty_factor = (
-                (batch_size / ref_batch_size) ** labour_power
+                (batch_size / ref_batch_size) ** s.labour_power
             ) / batch_size
         else:
             qty_factor = 1.0 / max(batch_size, 1)
-        prep_cost = ref_prep_hours * qty_factor * default_labour
-        oven_cost = ref_oven_hours * qty_factor * default_oven
+        prep_cost = ref_prep_hours * qty_factor * s.default_labour_rate
+        oven_cost = ref_oven_hours * qty_factor * s.default_oven_rate
         return prep_cost, oven_cost
 
-    ws_labour, ws_oven = calc_labour(ws_batch_large)
-    rt_labour, rt_oven = calc_labour(rt_batch_large)
+    ws_labour, ws_oven = calc_labour(s.ws_batch_large)
+    rt_labour, rt_oven = calc_labour(s.rt_batch_large)
 
     ws_total = ingredient_cost + ws_labour + ws_oven + packaging_cost
     rt_total = ingredient_cost + rt_labour + rt_oven + packaging_cost
@@ -169,7 +161,7 @@ def screen_analysis():
             p for p in live_prices
             if p["channel"] in ("WS", "MD")
             and any(f"-{fc}-" in p["sku_code"]
-                    for fc in ["LA", "XL", "XX", "DC"])
+                    for fc in FORMAT_TIER_CODES['Standard'])
         ]
         if not matches:
             return None, None
@@ -181,7 +173,7 @@ def screen_analysis():
             p for p in live_prices
             if p["channel"] == "GW"
             and any(f"-{fc}-" in p["sku_code"]
-                    for fc in ["LA", "XL", "XX", "DC"])
+                    for fc in FORMAT_TIER_CODES['Standard'])
         ]
         if not matches:
             return None, None
@@ -254,7 +246,7 @@ def screen_analysis():
             st.plotly_chart(fig, width='stretch')
 
         st.caption(
-            f"Labour: batch of {ws_batch_large} · "
+            f"Labour: batch of {s.ws_batch_large} · "
             f"€ {ws_labour:.4f} labour + € {ws_oven:.4f} oven"
         )
 
@@ -274,7 +266,7 @@ def screen_analysis():
             st.plotly_chart(fig, width='stretch')
 
         st.caption(
-            f"Labour: batch of {rt_batch_large} · "
+            f"Labour: batch of {s.rt_batch_large} · "
             f"€ {rt_labour:.4f} labour + € {rt_oven:.4f} oven"
         )
 
