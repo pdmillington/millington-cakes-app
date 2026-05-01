@@ -282,54 +282,21 @@ multiples — no numeric size codes needed.
             placeholder="Optional — storage instructions, allergen notes, etc."
         )
 
-        # ── Formats & labour ──────────────────────────────────────────────────
-        if not is_sub_recipe:
-         with st.expander("📦 Formats & labour times"):
+# ── Labour reference times — all recipes ──────────────────────────────
+        with st.expander("⏱️ Labour reference times"):
             st.caption(
-                "Enable smaller formats and set production batch times. "
+                "Production batch times at reference size. "
                 "The calculator uses these to derive per-unit labour costs."
             )
 
-            # ── Format availability ───────────────────────────────────────────
-            has_individual = st.checkbox(
-                "Available as Individual",
-                key=f"field_has_individual_{p}"
-            )
-            if has_individual:
-                individual_weight = st.number_input(
-                    "Individual weight (g)", min_value=1.0,
-                    key=f"field_individual_weight_{p}",
-                    help="Typical weight per individual portion"
-                )
-            else:
-                individual_weight = None
-
-            has_bocado = st.checkbox(
-                "Available as Bocado",
-                key=f"field_has_bocado_{p}"
-            )
-            if has_bocado:
-                bocado_weight = st.number_input(
-                    "Bocado weight (g)", min_value=1.0,
-                    key=f"field_bocado_weight_{p}",
-                    help="Typical weight per bocado piece"
-                )
-            else:
-                bocado_weight = None
-
-            # ── Labour table ──────────────────────────────────────────────────
-            st.markdown("**Labour reference times**")
-
-            # Header
             lh0, lh1, lh2, lh3 = st.columns([1.2, 0.8, 1, 1])
             lh0.markdown("**Format**")
             lh1.markdown("**Batch**")
             lh2.markdown("**Prep hrs**")
             lh3.markdown("**Oven hrs**")
 
-            # Standard row — always shown
             ls0, ls1, ls2, ls3 = st.columns([1.2, 0.8, 1, 1])
-            ls0.markdown("Standard")
+            ls0.markdown("Standard" if not is_sub_recipe else "Batch")
             with ls1:
                 ref_batch_size = st.number_input(
                     "batch_std", min_value=0,
@@ -349,48 +316,88 @@ multiples — no numeric size codes needed.
                     key=f"field_oven_hours_{p}"
                 )
 
-            # Individual row — only if has_individual ticked
-            if has_individual:
-                li0, li1, li2, li3 = st.columns([1.2, 0.8, 1, 1])
-                li0.markdown("Individual")
-                li1.markdown(f"`{ws_batch_ind}`")
-                with li2:
-                    small_prep_hours = st.number_input(
-                        "prep_ind", min_value=0.0, step=0.25,
-                        label_visibility="collapsed",
-                        key=f"field_small_prep_{p}"
-                    )
-                with li3:
-                    small_oven_hours = st.number_input(
-                        "oven_ind", min_value=0.0, step=0.25,
-                        label_visibility="collapsed",
-                        key=f"field_small_oven_{p}"
-                    )
-            else:
-                small_prep_hours = 0.0
-                small_oven_hours = 0.0
+        # ── Formats — sellable recipes only ───────────────────────────────────
+        if not is_sub_recipe:
+            with st.expander("📦 Formats"):
+                st.caption(
+                    "Enable smaller formats and set their production batch times."
+                )
 
-            # Bocado row — only if has_bocado ticked
-            if has_bocado:
-                lb0, lb1, lb2, lb3 = st.columns([1.2, 0.8, 1, 1])
-                lb0.markdown("Bocado")
-                lb1.markdown(f"`{ws_batch_boc}`")
-                with lb2:
-                    bocado_prep_hours = st.number_input(
-                        "prep_boc", min_value=0.0, step=0.25,
-                        label_visibility="collapsed",
-                        key=f"field_bocado_prep_{p}"
+                has_individual = st.checkbox(
+                    "Available as Individual",
+                    key=f"field_has_individual_{p}"
+                )
+                if has_individual:
+                    individual_weight = st.number_input(
+                        "Individual weight (g)", min_value=1.0,
+                        key=f"field_individual_weight_{p}",
+                        help="Typical weight per individual portion"
                     )
-                with lb3:
-                    bocado_oven_hours = st.number_input(
-                        "oven_boc", min_value=0.0, step=0.25,
-                        label_visibility="collapsed",
-                        key=f"field_bocado_oven_{p}"
-                    )
-            else:
-                bocado_prep_hours = 0.0
-                bocado_oven_hours = 0.0
+                else:
+                    individual_weight = None
 
+                has_bocado = st.checkbox(
+                    "Available as Bocado",
+                    key=f"field_has_bocado_{p}"
+                )
+                if has_bocado:
+                    bocado_weight = st.number_input(
+                        "Bocado weight (g)", min_value=1.0,
+                        key=f"field_bocado_weight_{p}",
+                        help="Typical weight per bocado piece"
+                    )
+                else:
+                    bocado_weight = None
+
+                # Individual labour row
+                if has_individual:
+                    li0, li1, li2, li3 = st.columns([1.2, 0.8, 1, 1])
+                    li0.markdown("Individual")
+                    li1.markdown(f"`{ws_batch_ind}`")
+                    with li2:
+                        small_prep_hours = st.number_input(
+                            "prep_ind", min_value=0.0, step=0.25,
+                            label_visibility="collapsed",
+                            key=f"field_small_prep_{p}"
+                        )
+                    with li3:
+                        small_oven_hours = st.number_input(
+                            "oven_ind", min_value=0.0, step=0.25,
+                            label_visibility="collapsed",
+                            key=f"field_small_oven_{p}"
+                        )
+                else:
+                    small_prep_hours = 0.0
+                    small_oven_hours = 0.0
+
+                # Bocado labour row
+                if has_bocado:
+                    lb0, lb1, lb2, lb3 = st.columns([1.2, 0.8, 1, 1])
+                    lb0.markdown("Bocado")
+                    lb1.markdown(f"`{ws_batch_boc}`")
+                    with lb2:
+                        bocado_prep_hours = st.number_input(
+                            "prep_boc", min_value=0.0, step=0.25,
+                            label_visibility="collapsed",
+                            key=f"field_bocado_prep_{p}"
+                        )
+                    with lb3:
+                        bocado_oven_hours = st.number_input(
+                            "oven_boc", min_value=0.0, step=0.25,
+                            label_visibility="collapsed",
+                            key=f"field_bocado_oven_{p}"
+                        )
+                else:
+                    bocado_prep_hours = 0.0
+                    bocado_oven_hours = 0.0
+
+        else:
+            # Sub-recipe — no formats
+            has_individual = has_bocado = False
+            individual_weight = bocado_weight = None
+            small_prep_hours = small_oven_hours = 0.0
+            bocado_prep_hours = bocado_oven_hours = 0.0
+            
         # ── Ingredient lines ──────────────────────────────────────────────────
         st.markdown("#### Ingredients")
         st.caption(
