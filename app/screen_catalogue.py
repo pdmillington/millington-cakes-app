@@ -694,8 +694,8 @@ def _generate_pdf(
             logo_w = 5 * cm          # max width; aspect ratio preserved
             canvas.drawImage(
                 logo_path,
-                2.5 * cm,             # left-aligned with page margin
-                A4[1] - 2.4 * cm,     # top of logo
+                (A4[0] - logo_w) / 2,  # centred horizontally
+                A4[1] - 2.4 * cm,      # top of logo
                 width=logo_w,
                 height=logo_h,
                 preserveAspectRatio=True,
