@@ -404,7 +404,7 @@ def _generate_pdf(
     doc    = SimpleDocTemplate(
         buffer, pagesize=A4,
         leftMargin=2.5*cm, rightMargin=2.5*cm,
-        topMargin=2*cm,    bottomMargin=2.5*cm,
+        topMargin=3.5*cm,  bottomMargin=2.2*cm,
     )
 
     def ps(name, font=None, size=10, leading=14, align=0,
@@ -419,38 +419,50 @@ def _generate_pdf(
         )
 
     story = []
-
-    # ── Logo ───────────────────────────────────────────────────────────────────
     logo_path = os.path.join(DATA_DIR, "Logo.png")
-    if os.path.exists(logo_path):
-        logo = Image(logo_path, width=8*cm, height=3*cm, kind='proportional')
-        logo.hAlign = 'CENTER'
-        story.append(logo)
-        story.append(Spacer(1, 0.3*cm))
 
-    # ── Title block ────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # COVER PAGE
+    # ══════════════════════════════════════════════════════════════════════════
+    # Push the block roughly to vertical centre of the page
+    story.append(Spacer(1, 6*cm))
+
+    if os.path.exists(logo_path):
+        cover_logo = Image(logo_path, width=10*cm, height=4*cm, kind='proportional')
+        cover_logo.hAlign = 'CENTER'
+        story.append(cover_logo)
+        story.append(Spacer(1, 1.2*cm))
+
     story.append(Paragraph(
         title,
-        ps("T", font=bold_font, size=18, leading=22, align=1, sb=6, sa=4)
+        ps("T", font=bold_font, size=22, leading=28, align=1, sb=6, sa=6)
     ))
     story.append(Paragraph(
         "Millington Cakes",
-        ps("S", size=11, align=1, color=colors.HexColor("#6b7280"), sa=2)
+        ps("S", size=13, align=1, color=colors.HexColor("#6b7280"), sa=4)
     ))
     if client_name:
         story.append(Paragraph(
             f"Preparado para: {client_name}",
-            ps("C", size=10, align=1, color=colors.HexColor("#6b7280"), sa=2)
+            ps("C", size=11, align=1, color=colors.HexColor("#6b7280"), sa=4)
         ))
-    story.append(Paragraph(
-        cat_date,
-        ps("D", size=9, align=1, color=colors.HexColor("#6b7280"), sa=12)
-    ))
+    story.append(Spacer(1, 0.4*cm))
     story.append(HRFlowable(
-        width="100%", thickness=0.5,
-        color=colors.HexColor("#d1c9be")
+        width="40%", thickness=0.5,
+        color=colors.HexColor("#d1c9be"), hAlign='CENTER'
     ))
     story.append(Spacer(1, 0.4*cm))
+    story.append(Paragraph(
+        cat_date,
+        ps("D", size=11, align=1, color=colors.HexColor("#9ca3af"), sa=0)
+    ))
+
+    # End of cover — subsequent content starts on page 2
+    story.append(PageBreak())
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PAGE 2+  —  price table
+    # ══════════════════════════════════════════════════════════════════════════
 
     # ── Price table ────────────────────────────────────────────────────────────
     groups_order = ["Tarta", "Tarta Individual", "Bocados", "Otros"]
@@ -611,19 +623,6 @@ def _generate_pdf(
                 f"<b>{heading}:</b> {text}", cond_ps
             ))
 
-    # ── Footer ─────────────────────────────────────────────────────────────────
-    story.append(Spacer(1, 0.5*cm))
-    story.append(HRFlowable(
-        width="100%", thickness=0.5,
-        color=colors.HexColor("#d1c9be")
-    ))
-    story.append(Paragraph(
-        "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid  ·  "
-        "637 773 669  ·  www.millingtons.es",
-        ps("ft", size=8, leading=10, align=1,
-           color=colors.HexColor("#9ca3af"), sa=0)
-    ))
-
     # ── Fichas ─────────────────────────────────────────────────────────────────
     if not include_fichas:
         story.append(Spacer(1, 0.3*cm))
@@ -668,14 +667,59 @@ def _generate_pdf(
                 border_col   = colors.HexColor("#9ca3af"),
             )
 
-    # ── Build with background ──────────────────────────────────────────────────
-    def on_page(canvas, doc):
+    # ── Page callbacks ─────────────────────────────────────────────────────────
+    address_line = (
+        "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid  ·  "
+        "637 773 669  ·  www.millingtons.es"
+    )
+
+    def on_cover(canvas, doc):
+        """First page: background only — story supplies all cover content."""
         canvas.saveState()
         canvas.setFillColor(bg_color)
         canvas.rect(0, 0, A4[0], A4[1], fill=1, stroke=0)
         canvas.restoreState()
 
-    doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
+    def on_later_pages(canvas, doc):
+        """Page 2+: background + logo header + address footer."""
+        canvas.saveState()
+
+        # Background
+        canvas.setFillColor(bg_color)
+        canvas.rect(0, 0, A4[0], A4[1], fill=1, stroke=0)
+
+        # ── Header: logo ───────────────────────────────────────────────────
+        if os.path.exists(logo_path):
+            logo_h = 1.4 * cm
+            logo_w = 5 * cm          # max width; aspect ratio preserved
+            canvas.drawImage(
+                logo_path,
+                2.5 * cm,             # left-aligned with page margin
+                A4[1] - 2.4 * cm,     # top of logo
+                width=logo_w,
+                height=logo_h,
+                preserveAspectRatio=True,
+                mask='auto',
+            )
+
+        # Thin rule under header
+        rule_y = A4[1] - 2.7 * cm
+        canvas.setStrokeColor(colors.HexColor("#d1c9be"))
+        canvas.setLineWidth(0.5)
+        canvas.line(2.5 * cm, rule_y, A4[0] - 2.5 * cm, rule_y)
+
+        # ── Footer: address ────────────────────────────────────────────────
+        footer_y = 1.3 * cm
+        canvas.setStrokeColor(colors.HexColor("#d1c9be"))
+        canvas.line(2.5 * cm, footer_y + 0.45 * cm,
+                    A4[0] - 2.5 * cm, footer_y + 0.45 * cm)
+        canvas.setFont(body_font, 7.5)
+        canvas.setFillColor(colors.HexColor("#9ca3af"))
+        canvas.drawCentredString(A4[0] / 2, footer_y, address_line)
+
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=on_cover, onLaterPages=on_later_pages)
     return buffer.getvalue()
 
 
@@ -804,17 +848,7 @@ def _add_ficha_page(
         border_col=border_col,
     ))
 
-    # Footer
-    from reportlab.platypus import Paragraph as P2
-    from reportlab.lib.styles import ParagraphStyle as PS2
     story.append(Spacer(1, 0.5*cm))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=rule))
-    story.append(P2(
-        "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid  ·  "
-        "637 773 669  ·  www.millingtons.es",
-        PS2("ftf", fontName=body_font, fontSize=8, leading=10,
-            alignment=1, textColor=grey, spaceAfter=0)
-    ))
 
 
 def _ficha_box(
