@@ -9,8 +9,9 @@
 
 import streamlit as st
 import millington_db as db
-from core.constants import UNIT_TO_G, FORMAT_DISPLAY, VAT_MULTIPLIER
+from core.constants import FORMAT_DISPLAY, VAT_MULTIPLIER
 from core.settings import load_settings
+from core.pricing_engine import calc_ingredient_cost, calc_labour_cost
 
 
 def screen_repricing():
@@ -91,11 +92,13 @@ def screen_repricing():
         lines = lines_cache[rid]
 
         if rid not in weight_cache:
-            result = db.estimate_recipe_weight(lines)
-            weight_cache[rid] = float(result.get("weight_g") or 0)
+            weight_result = db.estimate_recipe_weight(lines)
+            weight_cache[rid] = float(weight_result.get("weight_g") or 0)
         ref_weight_g = weight_cache[rid]
 
-        full_ing_cost, missing = _calc_ingredient_cost(lines, ing_map)
+        ing_result     = calc_ingredient_cost(lines, ing_map)
+        full_ing_cost  = ing_result.total
+        missing        = ing_result.missing_prices
         has_missing = len(missing) > 0
 
         if not show_incomplete and has_missing:
@@ -125,9 +128,25 @@ def screen_repricing():
         ing_cost = full_ing_cost * scale
 
         # ── Labour costs ──────────────────────────────────────────────────────
-        ws_labour, ws_oven = _calc_labour(recipe, fmt, s, channel="ws")
-        rt_labour, rt_oven = _calc_labour(recipe, fmt, s, channel="rt")
+        if fmt == "standard":
+            ref_b    = float(recipe.get("ref_batch_size") or 20)
+            prep_hrs = float(recipe.get("ref_prep_hours") or 1.0)
+            oven_hrs = float(recipe.get("ref_oven_hours") or 1.0)
+        elif fmt == "individual":
+            ref_b    = float(s.ws_batch_individual)
+            prep_hrs = float(recipe.get("small_batch_prep_hours") or recipe.get("ref_prep_hours") or 1.0)
+            oven_hrs = float(recipe.get("small_batch_oven_hours") or recipe.get("ref_oven_hours") or 1.0)
+        else:
+            ref_b    = float(s.ws_batch_bocado)
+            prep_hrs = float(recipe.get("bocado_batch_prep_hours") or recipe.get("ref_prep_hours") or 1.0)
+            oven_hrs = float(recipe.get("bocado_batch_oven_hours") or recipe.get("ref_oven_hours") or 1.0)
+
         
+        ws = calc_labour_cost(s.ws_batch(fmt), ref_b, prep_hrs, oven_hrs, s)
+        rt = calc_labour_cost(s.rt_batch(fmt), ref_b, prep_hrs, oven_hrs, s)
+        ws_labour, ws_oven = ws.labour_cost, ws.oven_cost
+        rt_labour, rt_oven = rt.labour_cost, rt.oven_cost
+                
         ws_cost = ing_cost + ws_labour + ws_oven
         rt_cost = ing_cost + rt_labour + rt_oven
 
@@ -406,54 +425,4 @@ def _f(val) -> float | None:
         return None
 
 
-def _active_formats(recipe: dict) -> list[str]:
-    formats = ["standard"]
-    if recipe.get("has_individual"):
-        formats.append("individual")
-    if recipe.get("has_bocado"):
-        formats.append("bocado")
-    return formats
 
-
-def _calc_ingredient_cost(lines, ing_map):
-    total, missing = 0.0, []
-    for line in lines:
-        ing_name  = line.get("ingredient_name", "")
-        amount    = float(line.get("amount") or 0)
-        ing       = ing_map.get(ing_name, {})
-        cpu       = ing.get("cost_per_unit")
-        pack_unit = (ing.get("pack_unit") or "g").lower()
-        if cpu:
-            eff = amount
-            if pack_unit in ("kg", "g"):
-                uw = next(
-                    (w for k, w in UNIT_TO_G.items()
-                     if k in ing_name.lower()), None
-                )
-                if uw and amount < 20:
-                    eff = amount * uw
-            total += cpu * eff
-        elif ing_name:
-            missing.append(ing_name)
-    return total, missing
-
-
-def _calc_labour(recipe, fmt, s, channel="ws"):
-    batch = s.ws_batch(fmt) if channel == "ws" else s.rt_batch(fmt)
-    if fmt == "standard":
-        ref_b    = float(recipe.get("ref_batch_size") or 20)
-        prep_hrs = float(recipe.get("ref_prep_hours") or 1.0)
-        oven_hrs = float(recipe.get("ref_oven_hours") or 1.0)
-    elif fmt == "individual":
-        ref_b    = float(s.ws_batch_individual)
-        prep_hrs = float(recipe.get("small_batch_prep_hours") or recipe.get("ref_prep_hours") or 1.0)
-        oven_hrs = float(recipe.get("small_batch_oven_hours") or recipe.get("ref_oven_hours") or 1.0)
-    else:
-        ref_b    = float(s.ws_batch_bocado)
-        prep_hrs = float(recipe.get("bocado_batch_prep_hours") or recipe.get("ref_prep_hours") or 1.0)
-        oven_hrs = float(recipe.get("bocado_batch_oven_hours") or recipe.get("ref_oven_hours") or 1.0)
-
-    if ref_b <= 0:
-        return 0.0, 0.0
-    qty_factor = ((batch / ref_b) ** s.labour_power) / batch
-    return prep_hrs * qty_factor * s.default_labour_rate, oven_hrs * qty_factor * s.default_oven_rate
