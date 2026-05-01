@@ -5,6 +5,7 @@ import millington_db as db
 from core.constants import FORMAT_TIER_CODES, VAT_MULTIPLIER
 from core.settings import load_settings
 from core.pricing_engine import calc_ingredient_cost, calc_labour_cost
+from ui.components import missing_prices_warning, cost_breakdown_metrics, weight_estimate_expander
 
 
 def screen_calculator():
@@ -162,16 +163,9 @@ def screen_calculator():
             f"reference ≈ {ref_weight_g:.0f}g — "
             f"scale: **{scale:.4f}×**"
         )
-        if _weight_notes or _weight_excl:
-            with st.expander("Weight estimate detail"):
-                st.caption(f"Estimated recipe weight: {ref_weight_g:.0f}g")
-                for note in _weight_notes:
-                    st.caption(f"  {note}")
-                if _weight_excl:
-                    st.warning(
-                        f"Excluded (unknown unit weight): "
-                        f"{', '.join(_weight_excl)}"
-                    )
+        
+        weight_estimate_expander(ref_weight_g, _weight_notes, _weight_excl)
+        
         if not small_prep_hours:
             st.warning(
                 "⚠️ No individual labour times set — using large format "
@@ -193,16 +187,9 @@ def screen_calculator():
             f"reference ≈ {ref_weight_g:.0f}g — "
             f"scale: **{scale:.4f}×**"
         )
-        if _weight_notes or _weight_excl:
-            with st.expander("Weight estimate detail"):
-                st.caption(f"Estimated recipe weight: {ref_weight_g:.0f}g")
-                for note in _weight_notes:
-                    st.caption(f"  {note}")
-                if _weight_excl:
-                    st.warning(
-                        f"Excluded (unknown unit weight): "
-                        f"{', '.join(_weight_excl)}"
-                    )
+        
+        weight_estimate_expander(ref_weight_g, _weight_notes, _weight_excl)
+        
         if not bocado_prep_hours:
             st.warning(
                 "⚠️ No bocado labour times set — using large format "
@@ -348,11 +335,7 @@ def screen_calculator():
         st.markdown("---")
         st.markdown(f"### {selected_name} — {selected_format} — {channel}")
 
-        if missing_prices:
-            st.warning(
-                f"⚠️ Missing prices for: {', '.join(missing_prices)}. "
-                "Ingredient cost is understated."
-            )
+        missing_prices_warning(missing_prices)
 
         # Cost per unit — always shown
         st.metric("Cost per unit", f"€ {cost_per_unit:.2f}")
@@ -455,12 +438,8 @@ def screen_calculator():
 
         # ── Cost breakdown ────────────────────────────────────────────────────
         st.divider()
-        st.markdown("**Cost breakdown**")
-        col_c, col_d, col_e, col_f = st.columns(4)
-        col_c.metric("Ingredients", f"€ {ingredient_cost:.4f}")
-        col_d.metric("Labour",      f"€ {labour_cost:.4f}")
-        col_e.metric("Oven",        f"€ {oven_cost:.4f}")
-        col_f.metric("Packaging",   f"€ {packaging_cost:.4f}")
+        
+        cost_breakdown_metrics(ingredient_cost, labour_cost, oven_cost, packaging_cost)
 
         with st.expander("Labour calculation detail"):
             st.markdown(f"""
