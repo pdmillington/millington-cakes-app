@@ -6,7 +6,6 @@
 # =============================================================================
 
 import streamlit as st
-from math import pi
 import millington_db as db
 from millington_db import (
     get_allergen_declaration,
@@ -16,7 +15,7 @@ from millington_db import (
 from core.constants import FORMAT_TIER_CODES
 from core.settings import load_settings
 from core.pricing_engine import calc_ingredient_cost, calc_labour_cost
-
+from ui.components import missing_prices_warning
 
 def screen_analysis():
     st.title("Recipe analysis")
@@ -85,10 +84,7 @@ def screen_analysis():
     missing_prices  = result.missing_prices
 
     if missing_prices:
-        st.warning(
-            f"⚠️ Missing prices for: {', '.join(missing_prices)}. "
-            "Ingredient cost is understated."
-        )
+        missing_prices_warning(missing_prices)
 
     # ── Packaging cost ────────────────────────────────────────────────────────
     packaging_cost = 0.0
