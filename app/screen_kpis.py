@@ -39,7 +39,7 @@ from rapidfuzz import fuzz, process
 
 import holded_api as holded
 import millington_db as db
-from core.game import UNIT_TO_G
+from core.constants import UNIT_TO_G
 
 # =============================================================================
 # Constants
