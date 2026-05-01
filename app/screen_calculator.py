@@ -2,8 +2,9 @@
 import streamlit as st
 from math import pi
 import millington_db as db
-from core.constants import UNIT_TO_G, FORMAT_TIER_CODES, VAT_MULTIPLIER
+from core.constants import FORMAT_TIER_CODES, VAT_MULTIPLIER
 from core.settings import load_settings
+from core.pricing_engine import calc_ingredient_cost, calc_labour_cost
 
 
 def screen_calculator():
@@ -274,48 +275,20 @@ def screen_calculator():
         lines = db.get_recipe_lines(recipe["id"])
 
         # ── Ingredient cost per unit ──────────────────────────────────────────
-        ingredient_cost = 0.0
-        missing_prices  = []
-
-        for line in lines:
-            ing_name  = line.get("ingredient_name", "")
-            amount    = float(line.get("amount") or 0)
-            ing       = ing_map.get(ing_name, {})
-            cpu       = ing.get("cost_per_unit")  # always per gram/ml/unit
-            pack_unit = (ing.get("pack_unit") or "g").lower()
-        
-            if cpu:
-                effective_amount = amount
-                # If ingredient is bought by weight (kg/g) but recipe amount
-                # is in units, convert using known fruit weights.
-                # Guard of < 20 ensures e.g. 150g of juice is not
-                # misread as 150 lemons.
-                if pack_unit in ("kg", "g"):
-                    name_lower = ing_name.lower()
-                    unit_weight = next(
-                        (w for key, w in UNIT_TO_G.items()
-                         if key in name_lower),
-                        None
-                    )
-                    if unit_weight and amount < 20:
-                        effective_amount = amount * unit_weight
-                ingredient_cost += cpu * effective_amount * scale
-            elif ing_name:
-                missing_prices.append(ing_name)
+        ing_result      = calc_ingredient_cost(lines, ing_map)
+        ingredient_cost = ing_result.total * scale    # scale applied HERE, not inside the loop
+        missing_prices  = ing_result.missing_prices
 
         # ── Labour cost per unit ──────────────────────────────────────────────
-        if labour_ref_batch > 0:
-            qty_factor = (
-                (batch_size / labour_ref_batch) ** s.labour_power
-            ) / batch_size
-        else:
-            qty_factor = 1.0 / max(batch_size, 1)
-
-        prep_per_unit = labour_ref_prep * qty_factor * size_labour_factor
-        oven_per_unit = labour_ref_oven * qty_factor
-
-        labour_cost = prep_per_unit * s.default_labour_rate
-        oven_cost   = oven_per_unit * s.default_oven_rate
+        labour = calc_labour_cost(
+            batch_size, labour_ref_batch, labour_ref_prep, labour_ref_oven, s,
+            size_labour_factor=size_labour_factor
+        )
+        labour_cost   = labour.labour_cost
+        oven_cost     = labour.oven_cost
+        qty_factor    = labour.qty_factor       # needed for the detail expander
+        prep_per_unit = labour.prep_per_unit
+        oven_per_unit = labour.oven_per_unit
 
         # ── Packaging cost per unit ───────────────────────────────────────────
         packaging_cost = 0.0
