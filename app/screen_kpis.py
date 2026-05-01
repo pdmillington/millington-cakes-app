@@ -39,6 +39,7 @@ from rapidfuzz import fuzz, process
 
 import holded_api as holded
 import millington_db as db
+from core.game import UNIT_TO_G
 
 # =============================================================================
 # Constants
@@ -593,14 +594,6 @@ def _tab_ingredients():
             "BO": boc_g / total_g,
         }.get(size, 1.0)
 
-    # ── Unit conversions (count → grams) ──────────────────────────────────────
-    _UNIT_TO_G = {
-        "limones":  100.0,
-        "limas":     67.0,
-        "naranja":  180.0,
-        "manzanas": 182.0,
-    }
-
     # Accumulators
     cost_acc:  dict[str, float] = defaultdict(float)
     kg_acc:    dict[str, float] = defaultdict(float)
@@ -634,7 +627,7 @@ def _tab_ingredients():
 
             name_lower  = ing_name.lower()
             unit_weight = next(
-                (w for key, w in _UNIT_TO_G.items() if key in name_lower), None
+                (w for key, w in UNIT_TO_G.items() if key in name_lower), None
             )
             effective_amount = (
                 amount * unit_weight if (unit_weight and amount < 20) else amount

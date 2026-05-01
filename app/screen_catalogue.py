@@ -21,6 +21,7 @@ import millington_db as db
 import os
 import io
 from datetime import date
+from core.constants import FORMAT_DISPLAY
 
 
 FORMAT_GROUPS = [
@@ -33,12 +34,6 @@ OTROS_RECIPES = {
     "Cookies", "Brownie", "Blondie", "Brioche - canela",
     "Brioche - chocolate", "Scones", "Scone con pasas",
     "Trufas chocolate negro",
-}
-
-FORMAT_DISPLAY = {
-    "standard":   "Tarta estándar",
-    "individual": "Individual",
-    "bocado":     "Bocado",
 }
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")

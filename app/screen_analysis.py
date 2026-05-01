@@ -13,14 +13,7 @@ from millington_db import (
     get_ingredient_label_text,
     ALLERGEN_DISPLAY_ES,
 )
-
-# Fruit unit-to-gram conversion (same as calculator)
-_UNIT_TO_G = {
-    "limones":  100.0,
-    "limas":     67.0,
-    "naranja":  180.0,
-    "manzanas": 182.0,
-}
+from core.constants import UNIT_TO_G
 
 
 def screen_analysis():
@@ -109,7 +102,7 @@ def screen_analysis():
             if pack_unit in ("kg", "g"):
                 name_lower  = ing_name.lower()
                 unit_weight = next(
-                    (w for key, w in _UNIT_TO_G.items()
+                    (w for key, w in UNIT_TO_G.items()
                      if key in name_lower), None
                 )
                 if unit_weight and amount < 20:

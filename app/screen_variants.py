@@ -13,17 +13,12 @@
 
 import streamlit as st
 import millington_db as db
+from core.constants import FORMAT_DISPLAY
 
 PACKAGING_DEFAULTS = {
     "standard":   "Caja de cartón y base de cartón",
     "individual": "Caja de cartón",
     "bocado":     "Caja de cartón",
-}
-
-FORMAT_DISPLAY = {
-    "standard":   "Tarta estándar",
-    "individual": "Individual",
-    "bocado":     "Bocado",
 }
 
 STORAGE_DEFAULT = "Refrigerada entre 0 - 5°C"

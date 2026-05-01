@@ -2,6 +2,7 @@
 import streamlit as st
 from math import pi
 import millington_db as db
+from core.constants import FORMAT_TIER_CODES
 
 
 def screen_calculator():
@@ -372,12 +373,8 @@ def screen_calculator():
         code_by_id   = {cc["id"]: cc["code"] for cc in cake_codes}
         code_str     = code_by_id.get(cake_code_id, "")
 
-        format_tier_codes = {
-            "Standard":   ["LA", "XL", "XX", "DC"],
-            "Individual": ["TI", "IN"],
-            "Bocado":     ["MI", "BO"],
-        }
-        relevant_codes = format_tier_codes.get(selected_format, [])
+
+        relevant_codes = FORMAT_TIER_CODES.get(selected_format, [])
         live_prices    = db.get_current_prices(code_str) if code_str else []
 
         def find_price(chan):

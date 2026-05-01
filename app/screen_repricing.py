@@ -9,13 +9,8 @@
 
 import streamlit as st
 import millington_db as db
+from core.game import UNIT_TO_G
 
-_UNIT_TO_G = {
-    "limones":  100.0,
-    "limas":     67.0,
-    "naranja":  180.0,
-    "manzanas": 182.0,
-}
 
 FORMAT_DISPLAY = {
     "standard":   "Estándar",
@@ -460,7 +455,7 @@ def _calc_ingredient_cost(lines, ing_map):
             eff = amount
             if pack_unit in ("kg", "g"):
                 uw = next(
-                    (w for k, w in _UNIT_TO_G.items()
+                    (w for k, w in UNIT_TO_G.items()
                      if k in ing_name.lower()), None
                 )
                 if uw and amount < 20:
