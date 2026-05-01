@@ -1,8 +1,9 @@
-# screen_calculator.py
+
 import streamlit as st
 from math import pi
 import millington_db as db
-from core.constants import FORMAT_TIER_CODES
+from core.constants import UNIT_TO_G, FORMAT_TIER_CODES, VAT_MULTIPLIER
+from core.settings import load_settings
 
 
 def screen_calculator():
@@ -11,30 +12,13 @@ def screen_calculator():
 
     # ── Load reference data ───────────────────────────────────────────────────
     recipes     = db.get_recipes()
-    settings    = db.get_settings()
     presets     = db.get_packaging_presets()
     consumables = db.get_consumables()
     ingredients = db.get_ingredients()
+    s = load_settings()
 
     recipe_map = {r["name"]: r for r in recipes}
     ing_map    = {i["name"]: i for i in ingredients}
-
-    # Settings
-    default_labour  = float(settings.get("default_labour_rate") or 30.0)
-    default_oven    = float(settings.get("default_oven_rate") or 2.0)
-    labour_power    = float(settings.get("labour_power") or 0.7)
-    ws_margin       = float(settings.get("ws_margin") or 2.0)
-    rt_margin_large = float(settings.get("rt_margin_large") or 3.0)
-    rt_margin_ind   = float(settings.get("rt_margin_individual") or 3.0)
-    rt_margin_boc   = float(settings.get("rt_margin_bocado") or 3.0)
-    ws_batch_large  = int(settings.get("ws_batch_large") or 20)
-    ws_batch_ind    = int(settings.get("ws_batch_individual") or 100)
-    ws_batch_boc    = int(settings.get("ws_batch_bocado") or 250)
-    rt_batch_large  = int(settings.get("rt_batch_large") or 1)
-    rt_batch_ind    = int(settings.get("rt_batch_individual") or 4)
-    rt_batch_boc    = int(settings.get("rt_batch_bocado") or 25)
-    ind_weight_g    = float(settings.get("individual_weight_g") or 100)
-    boc_weight_g    = float(settings.get("bocado_weight_g") or 30)
 
     # ── Section 1: Recipe ─────────────────────────────────────────────────────
     st.markdown("### 1 — Recipe")
@@ -54,8 +38,8 @@ def screen_calculator():
     ref_portions   = int(recipe.get("ref_portions") or 1)
     has_individual = bool(recipe.get("has_individual"))
     has_bocado     = bool(recipe.get("has_bocado"))
-    ind_weight     = float(recipe.get("individual_weight_g") or ind_weight_g)
-    boc_weight     = float(recipe.get("bocado_weight_g") or boc_weight_g)
+    ind_weight     = float(recipe.get("individual_weight_g") or s.individual_weight_g)
+    boc_weight     = float(recipe.get("bocado_weight_g") or s.bocado_weight_g)
 
     # Labour reference times
     ref_batch_size    = float(recipe.get("ref_batch_size") or 20)
@@ -107,8 +91,8 @@ def screen_calculator():
 
     # ── Parameters from format + channel ─────────────────────────────────────
     if selected_format == "Standard":
-        batch_size       = ws_batch_large if channel == "Wholesale" else rt_batch_large
-        margin           = ws_margin if channel == "Wholesale" else rt_margin_large
+        batch_size       = s.ws_batch_large if channel == "Wholesale" else s.rt_batch_large
+        margin           = s.ws_margin if channel == "Wholesale" else s.rt_margin_large
         labour_ref_prep  = ref_prep_hours
         labour_ref_oven  = ref_oven_hours
         labour_ref_batch = ref_batch_size
@@ -164,11 +148,11 @@ def screen_calculator():
                     f"{ref_portions} = **{scale:.3f}×**")
 
     elif selected_format == "Individual":
-        batch_size       = ws_batch_ind if channel == "Wholesale" else rt_batch_ind
-        margin           = ws_margin if channel == "Wholesale" else rt_margin_ind
+        batch_size       = s.ws_batch_individual if channel == "Wholesale" else s.rt_batch_individual
+        margin           = s.ws_margin if channel == "Wholesale" else s.rt_margin_individual
         labour_ref_prep  = small_prep_hours if small_prep_hours else ref_prep_hours
         labour_ref_oven  = small_oven_hours if small_oven_hours else ref_oven_hours
-        labour_ref_batch = ws_batch_ind
+        labour_ref_batch = s.ws_batch_individual
         scale              = ind_weight / ref_weight_g if ref_weight_g else 0
         size_labour_factor = 1.0
 
@@ -195,11 +179,11 @@ def screen_calculator():
             )
 
     else:  # Bocado
-        batch_size       = ws_batch_boc if channel == "Wholesale" else rt_batch_boc
-        margin           = ws_margin if channel == "Wholesale" else rt_margin_boc
+        batch_size       = s.ws_batch_bocado if channel == "Wholesale" else s.rt_batch_bocado
+        margin           = s.ws_margin if channel == "Wholesale" else s.rt_margin_bocado
         labour_ref_prep  = bocado_prep_hours if bocado_prep_hours else ref_prep_hours
         labour_ref_oven  = bocado_oven_hours if bocado_oven_hours else ref_oven_hours
-        labour_ref_batch = ws_batch_boc
+        labour_ref_batch = s.ws_batch_bocado
         scale              = boc_weight / ref_weight_g if ref_weight_g else 0
         size_labour_factor = 1.0
 
@@ -293,16 +277,6 @@ def screen_calculator():
         ingredient_cost = 0.0
         missing_prices  = []
 
-        # Average weights in grams for fruit bought by the unit.
-        # Used for COST calculation only — we pay for the whole fruit
-        # regardless of how much is used in the recipe.
-        _UNIT_TO_G = {
-            "limones":  100.0,
-            "limas":     67.0,
-            "naranja":  180.0,
-            "manzanas": 182.0,
-        }
-        
         for line in lines:
             ing_name  = line.get("ingredient_name", "")
             amount    = float(line.get("amount") or 0)
@@ -319,7 +293,7 @@ def screen_calculator():
                 if pack_unit in ("kg", "g"):
                     name_lower = ing_name.lower()
                     unit_weight = next(
-                        (w for key, w in _UNIT_TO_G.items()
+                        (w for key, w in UNIT_TO_G.items()
                          if key in name_lower),
                         None
                     )
@@ -332,7 +306,7 @@ def screen_calculator():
         # ── Labour cost per unit ──────────────────────────────────────────────
         if labour_ref_batch > 0:
             qty_factor = (
-                (batch_size / labour_ref_batch) ** labour_power
+                (batch_size / labour_ref_batch) ** s.labour_power
             ) / batch_size
         else:
             qty_factor = 1.0 / max(batch_size, 1)
@@ -340,8 +314,8 @@ def screen_calculator():
         prep_per_unit = labour_ref_prep * qty_factor * size_labour_factor
         oven_per_unit = labour_ref_oven * qty_factor
 
-        labour_cost = prep_per_unit * default_labour
-        oven_cost   = oven_per_unit * default_oven
+        labour_cost = prep_per_unit * s.default_labour_rate
+        oven_cost   = oven_per_unit * s.default_oven_rate
 
         # ── Packaging cost per unit ───────────────────────────────────────────
         packaging_cost = 0.0
@@ -419,7 +393,7 @@ def screen_calculator():
                 st.metric(
                     "Suggested wholesale (ex-VAT)",
                     f"€ {price_per_unit:.2f}",
-                    help=f"Cost × {ws_margin:.1f}× margin"
+                    help=f"Cost × {s.ws_margin:.1f}× margin"
                 )
             with c2:
                 if current_ws_ex:
@@ -454,12 +428,12 @@ def screen_calculator():
         else:
             # ── Retail view ───────────────────────────────────────────────────
             rt_margin_used = (
-                rt_margin_large if selected_format == "Standard"
-                else rt_margin_ind if selected_format == "Individual"
-                else rt_margin_boc
+                s.rt_margin_large if selected_format == "Standard"
+                else s.rt_margin_individual if selected_format == "Individual"
+                else s.rt_margin_bocado
             )
             rt_price_ex  = cost_per_unit * rt_margin_used
-            rt_price_inc = rt_price_ex * 1.10
+            rt_price_inc = rt_price_ex * VAT_MULTIPLIER
 
             c1, c2 = st.columns(2)
             with c1:
@@ -484,7 +458,7 @@ def screen_calculator():
                     )
                     st.metric(
                         "Current price inc-VAT",
-                        f"€ {current_gw_ex * 1.10:.2f}"
+                        f"€ {current_gw_ex * VAT_MULTIPLIER:.2f}"
                     )
                 else:
                     st.metric("Current retail price", "—")
@@ -521,11 +495,11 @@ def screen_calculator():
 
 **Labour reference:** {labour_ref_batch:.0f} units — 
 {labour_ref_prep:.2f}h prep · {labour_ref_oven:.2f}h oven
-(rates from settings: €{default_labour:.2f}/hr labour · €{default_oven:.2f}/hr oven)
+(rates from settings: €{s.default_labour_rate:.2f}/hr labour · €{s.default_oven_rate:.2f}/hr oven)
 
 **Pricing batch:** {batch_size} units
 
-- qty_factor: ({batch_size} / {labour_ref_batch:.0f})^{labour_power} 
+- qty_factor: ({batch_size} / {labour_ref_batch:.0f})^{s.labour_power} 
   / {batch_size} = **{qty_factor:.5f}**
 - Size labour factor: **{size_labour_factor:.3f}**
 - Prep per unit: {labour_ref_prep:.2f} × {qty_factor:.5f} × 
@@ -540,7 +514,7 @@ def screen_calculator():
             """)
 
         st.caption(
-            f"Labour: €{default_labour:.2f}/hr · "
-            f"Oven: €{default_oven:.2f}/hr · "
+            f"Labour: €{s.default_labour_rate:.2f}/hr · "
+            f"Oven: €{s.default_oven_rate:.2f}/hr · "
             f"Scale: {scale:.4f}×"
         )
