@@ -9,14 +9,8 @@
 
 import streamlit as st
 import millington_db as db
-from core.game import UNIT_TO_G
-
-
-FORMAT_DISPLAY = {
-    "standard":   "Estándar",
-    "individual": "Individual",
-    "bocado":     "Bocado",
-}
+from core.constants import UNIT_TO_G, FORMAT_DISPLAY, VAT_MULTIPLIER
+from core.settings import load_settings
 
 
 def screen_repricing():
@@ -29,31 +23,14 @@ def screen_repricing():
 
     # ── Load data ─────────────────────────────────────────────────────────────
     recipes      = db.get_recipes()
-    settings     = db.get_settings()
     ingredients  = db.get_ingredients()
     all_variants = db.get_all_variants_full()
+    s = load_settings()
 
     ing_map    = {i["name"]: i for i in ingredients}
     var_lookup: dict[str, dict[str, dict]] = {}
     for v in all_variants:
         var_lookup.setdefault(v["recipe_id"], {})[v["format"]] = v
-
-    # Settings
-    default_labour  = float(settings.get("default_labour_rate") or 30.0)
-    default_oven    = float(settings.get("default_oven_rate")    or 2.0)
-    labour_power    = float(settings.get("labour_power")         or 0.7)
-    ws_margin       = float(settings.get("ws_margin")            or 2.0)
-    rt_margin_large = float(settings.get("rt_margin_large")      or 3.0)
-    rt_margin_ind   = float(settings.get("rt_margin_individual") or 3.0)
-    rt_margin_boc   = float(settings.get("rt_margin_bocado")     or 3.0)
-    ws_batch_large  = int(settings.get("ws_batch_large")         or 20)
-    ws_batch_ind    = int(settings.get("ws_batch_individual")    or 100)
-    ws_batch_boc    = int(settings.get("ws_batch_bocado")        or 250)
-    rt_batch_large  = int(settings.get("rt_batch_large")         or 1)
-    rt_batch_ind    = int(settings.get("rt_batch_individual")    or 4)
-    rt_batch_boc    = int(settings.get("rt_batch_bocado")        or 25)
-    ind_weight_g    = float(settings.get("individual_weight_g")  or 100)
-    boc_weight_g    = float(settings.get("bocado_weight_g")      or 30)
 
     # ── Filters ───────────────────────────────────────────────────────────────
     col_f1, col_f2, col_f3 = st.columns(3)
@@ -126,10 +103,10 @@ def screen_repricing():
 
         # ── Ingredient scale ──────────────────────────────────────────────────
         if fmt == "individual":
-            iw    = float(recipe.get("individual_weight_g") or ind_weight_g)
+            iw    = float(recipe.get("individual_weight_g") or s.individual_weight_g)
             scale = iw / ref_weight_g if ref_weight_g > 0 else 0
         elif fmt == "bocado":
-            bw    = float(recipe.get("bocado_weight_g") or boc_weight_g)
+            bw    = float(recipe.get("bocado_weight_g") or s.bocado_weight_g)
             scale = bw / ref_weight_g if ref_weight_g > 0 else 0
         else:
             # Standard — scale by volume if variant has its own diameter
@@ -148,35 +125,30 @@ def screen_repricing():
         ing_cost = full_ing_cost * scale
 
         # ── Labour costs ──────────────────────────────────────────────────────
-        ws_labour, ws_oven = _calc_labour(
-            recipe, fmt, default_labour, default_oven, labour_power,
-            ws_batch_large, ws_batch_ind, ws_batch_boc
-        )
-        rt_labour, rt_oven = _calc_labour(
-            recipe, fmt, default_labour, default_oven, labour_power,
-            rt_batch_large, rt_batch_ind, rt_batch_boc
-        )
+        ws_labour, ws_oven = _calc_labour(recipe, fmt, s, channel="ws")
+        rt_labour, rt_oven = _calc_labour(recipe, fmt, s, channel="rt")
+        
         ws_cost = ing_cost + ws_labour + ws_oven
         rt_cost = ing_cost + rt_labour + rt_oven
 
-        target_ws = ws_margin
+        target_ws = s.ws_margin
         target_rt = (
-            rt_margin_large if fmt == "standard"
-            else rt_margin_ind if fmt == "individual"
-            else rt_margin_boc
+            s.rt_margin_large if fmt == "standard"
+            else s.rt_margin_individual if fmt == "individual"
+            else s.rt_margin_bocado
         )
 
         # ── Prices ────────────────────────────────────────────────────────────
         variant_id   = variant.get("id")
         ws_price_ex  = _f(variant.get("ws_price_ex_vat"))
         rt_price_inc = _f(variant.get("rt_price_inc_vat"))
-        rt_price_ex  = rt_price_inc / 1.10 if rt_price_inc else None
+        rt_price_ex  = rt_price_inc / VAT_MULTIPLIER if rt_price_inc else None
 
         ws_margin_ach = (ws_price_ex / ws_cost) if (ws_price_ex and ws_cost > 0) else None
         rt_margin_ach = (rt_price_ex / rt_cost) if (rt_price_ex and rt_cost > 0) else None
 
         ws_suggested     = ws_cost * target_ws
-        rt_suggested_inc = rt_cost * target_rt * 1.10
+        rt_suggested_inc = rt_cost * target_rt * VAT_MULTIPLIER
         ws_gap           = (ws_price_ex - ws_suggested) if ws_price_ex else None
 
         # ── Traffic light ─────────────────────────────────────────────────────
@@ -259,12 +231,12 @@ def screen_repricing():
         )
 
     def row_style(row):
-        s = row["Status"]
-        if "🔴" in s:
+        status = row["Status"]
+        if "🔴" in status:
             return ["background-color: #fee2e2"] * len(row)
-        elif "🟡" in s:
+        elif "🟡" in status:
             return ["background-color: #fef9c3"] * len(row)
-        elif "🟢" in s:
+        elif "🟢" in status:
             return ["background-color: #dcfce7"] * len(row)
         return [""] * len(row)
 
@@ -371,7 +343,7 @@ def screen_repricing():
                     # Show implied margin
                     rt_cost_val = matching.get("RT total cost")
                     if rt_cost_val and isinstance(rt_cost_val, float) and rt_cost_val > 0 and new_rt > 0:
-                        implied_rt = (new_rt / 1.10) / rt_cost_val
+                        implied_rt = (new_rt / VAT_MULTIPLIER) / rt_cost_val
                         st.caption(f"Implied RT margin (ex-VAT): {implied_rt:.2f}×")
 
                 if st.button("💾 Save prices", type="primary",
@@ -418,7 +390,7 @@ def screen_repricing():
         "WS cost: wholesale batch assumptions · "
         "RT cost: retail batch assumptions · "
         "Packaging excluded. "
-        "RT margins shown ex-VAT (price ÷ 1.10 ÷ cost)."
+        f"RT margins shown ex-VAT (price ÷ {VAT_MULTIPLIER} ÷ cost)."
     )
 
 
@@ -466,37 +438,22 @@ def _calc_ingredient_cost(lines, ing_map):
     return total, missing
 
 
-def _calc_labour(recipe, fmt, labour_rate, oven_rate, power,
-                 batch_large, batch_ind, batch_boc):
+def _calc_labour(recipe, fmt, s, channel="ws"):
+    batch = s.ws_batch(fmt) if channel == "ws" else s.rt_batch(fmt)
     if fmt == "standard":
         ref_b    = float(recipe.get("ref_batch_size") or 20)
         prep_hrs = float(recipe.get("ref_prep_hours") or 1.0)
         oven_hrs = float(recipe.get("ref_oven_hours") or 1.0)
-        batch    = batch_large
     elif fmt == "individual":
-        ref_b    = float(batch_ind)
-        prep_hrs = float(
-            recipe.get("small_batch_prep_hours") or
-            recipe.get("ref_prep_hours") or 1.0
-        )
-        oven_hrs = float(
-            recipe.get("small_batch_oven_hours") or
-            recipe.get("ref_oven_hours") or 1.0
-        )
-        batch = batch_ind
+        ref_b    = float(s.ws_batch_individual)
+        prep_hrs = float(recipe.get("small_batch_prep_hours") or recipe.get("ref_prep_hours") or 1.0)
+        oven_hrs = float(recipe.get("small_batch_oven_hours") or recipe.get("ref_oven_hours") or 1.0)
     else:
-        ref_b    = float(batch_boc)
-        prep_hrs = float(
-            recipe.get("bocado_batch_prep_hours") or
-            recipe.get("ref_prep_hours") or 1.0
-        )
-        oven_hrs = float(
-            recipe.get("bocado_batch_oven_hours") or
-            recipe.get("ref_oven_hours") or 1.0
-        )
-        batch = batch_boc
+        ref_b    = float(s.ws_batch_bocado)
+        prep_hrs = float(recipe.get("bocado_batch_prep_hours") or recipe.get("ref_prep_hours") or 1.0)
+        oven_hrs = float(recipe.get("bocado_batch_oven_hours") or recipe.get("ref_oven_hours") or 1.0)
 
     if ref_b <= 0:
         return 0.0, 0.0
-    qty_factor = ((batch / ref_b) ** power) / batch
-    return prep_hrs * qty_factor * labour_rate, oven_hrs * qty_factor * oven_rate
+    qty_factor = ((batch / ref_b) ** s.labour_power) / batch
+    return prep_hrs * qty_factor * s.default_labour_rate, oven_hrs * qty_factor * s.default_oven_rate
