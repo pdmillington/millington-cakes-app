@@ -13,8 +13,9 @@ from millington_db import (
     get_ingredient_label_text,
     ALLERGEN_DISPLAY_ES,
 )
-from core.constants import UNIT_TO_G, FORMAT_TIER_CODES
+from core.constants import FORMAT_TIER_CODES
 from core.settings import load_settings
+from core.pricing_engine import calc_ingredient_cost, calc_labour_cost
 
 
 def screen_analysis():
@@ -78,38 +79,10 @@ def screen_analysis():
 
     # ── Ingredient cost at reference size ─────────────────────────────────────
     lines           = db.get_recipe_lines(recipe["id"])
-    ingredient_cost = 0.0
-    missing_prices  = []
-    ing_breakdown   = []  # for the table
-
-    for line in lines:
-        ing_name  = line.get("ingredient_name", "")
-        amount    = float(line.get("amount") or 0)
-        ing       = ing_map.get(ing_name, {})
-        cpu       = ing.get("cost_per_unit")
-        pack_unit = (ing.get("pack_unit") or "g").lower()
-
-        if cpu:
-            eff_amount  = amount
-            if pack_unit in ("kg", "g"):
-                name_lower  = ing_name.lower()
-                unit_weight = next(
-                    (w for key, w in UNIT_TO_G.items()
-                     if key in name_lower), None
-                )
-                if unit_weight and amount < 20:
-                    eff_amount = amount * unit_weight
-            line_cost        = cpu * eff_amount
-            ingredient_cost += line_cost
-            ing_breakdown.append({
-                "name":      ing_name,
-                "amount":    amount,
-                "unit":      pack_unit,
-                "cpu":       cpu,
-                "line_cost": line_cost,
-            })
-        elif ing_name:
-            missing_prices.append(ing_name)
+    result          = calc_ingredient_cost(lines, ing_map)
+    ingredient_cost = result.total          # scale is 1.0 — analysis always uses reference size
+    ing_breakdown   = result.breakdown
+    missing_prices  = result.missing_prices
 
     if missing_prices:
         st.warning(
@@ -132,21 +105,11 @@ def screen_analysis():
                 qty = float(pl.get("quantity") or 1)
                 packaging_cost += (cpu * qty) / units_per_pack
 
-    # ── Labour cost — wholesale and retail ────────────────────────────────────
-    def calc_labour(batch_size: int) -> tuple[float, float]:
-        """Returns (prep_cost, oven_cost) for a given batch size."""
-        if ref_batch_size > 0:
-            qty_factor = (
-                (batch_size / ref_batch_size) ** s.labour_power
-            ) / batch_size
-        else:
-            qty_factor = 1.0 / max(batch_size, 1)
-        prep_cost = ref_prep_hours * qty_factor * s.default_labour_rate
-        oven_cost = ref_oven_hours * qty_factor * s.default_oven_rate
-        return prep_cost, oven_cost
-
-    ws_labour, ws_oven = calc_labour(s.ws_batch_large)
-    rt_labour, rt_oven = calc_labour(s.rt_batch_large)
+    # ── Labour cost — wholesale and retail ────────────────────────────────────    
+    ws = calc_labour_cost(s.ws_batch_large, ref_batch_size, ref_prep_hours, ref_oven_hours, s)
+    rt = calc_labour_cost(s.rt_batch_large, ref_batch_size, ref_prep_hours, ref_oven_hours, s)
+    ws_labour, ws_oven = ws.labour_cost, ws.oven_cost
+    rt_labour, rt_oven = rt.labour_cost, rt.oven_cost
 
     ws_total = ingredient_cost + ws_labour + ws_oven + packaging_cost
     rt_total = ingredient_cost + rt_labour + rt_oven + packaging_cost
