@@ -74,9 +74,9 @@ def sidebar() -> str:
         st.markdown("**Daily use**")
         if st.button("Cost calculator", use_container_width=True):
             st.session_state.screen = "calculator"
-        if st.button("Recipe analysis", use_container_width=True):
+        if st.button("Recipe cost breakdown", use_container_width=True):
             st.session_state.screen = "analysis"
-        if st.button("Repricing analysis", use_container_width=True):
+        if st.button("Price review", use_container_width=True):
              st.session_state.screen = "repricing"
         if st.button("Business KPIs", use_container_width=True):
              st.session_state.screen = "kpis"
@@ -98,7 +98,7 @@ def sidebar() -> str:
         st.divider()
         st.markdown("**Config**")
 
-        if st.button("Product variants", use_container_width=True):
+        if st.button("Product formats", use_container_width=True):
             st.session_state.screen = "variants"
         if st.button("Packaging presets", use_container_width=True):
             st.session_state.screen = "packaging"
