@@ -20,6 +20,8 @@ import streamlit as st
 import millington_db as db
 import os
 import io
+import re
+import random
 from datetime import date
 from core.constants import FORMAT_DISPLAY
 
@@ -37,6 +39,70 @@ OTROS_RECIPES = {
 }
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+
+
+PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
+
+# Size code for each format — used to build the variant-level photo prefix
+_FORMAT_SIZE_CODE = {
+    "individual": "in",
+    "bocado":     "bo",
+    # "standard" intentionally omitted — falls straight to recipe-level prefix
+}
+
+
+def _build_photo_index(photos_dir: str) -> dict[str, list[str]]:
+    """
+    Scan photos_dir for *.jpg / *.jpeg files and group them by prefix.
+
+    Filename convention:
+        {prefix}_{n}.jpg   e.g. sc-01-la_1.jpg  →  prefix = 'sc-01-la'
+        {prefix}.jpg       e.g. sc-01_1.jpg     →  prefix = 'sc-01'
+
+    Returns {prefix_lower: [absolute_path, ...]}
+    """
+    index: dict[str, list[str]] = {}
+    if not os.path.isdir(photos_dir):
+        return index
+    for fname in os.listdir(photos_dir):
+        if not fname.lower().endswith((".jpg", ".jpeg")):
+            continue
+        stem = os.path.splitext(fname)[0]
+        # Strip trailing _<digits> suffix
+        prefix = re.sub(r"_\d+$", "", stem).lower()
+        index.setdefault(prefix, []).append(
+            os.path.join(photos_dir, fname)
+        )
+    return index
+
+
+def _find_photo(
+    index: dict[str, list[str]],
+    cake_code: str,
+    version: str,
+    fmt_key: str,
+) -> str | None:
+    """
+    Return a randomly chosen photo path for this variant, or None.
+
+    Lookup order:
+      1. {code}-{ver}-{size_code}   (variant-level, e.g. 'sc-01-bo')
+      2. {code}-{ver}               (recipe-level,  e.g. 'sc-01')
+    """
+    code = cake_code.lower()
+    ver  = version.lower()
+
+    size_code = _FORMAT_SIZE_CODE.get(fmt_key)
+    if size_code:
+        candidates = index.get(f"{code}-{ver}-{size_code}")
+        if candidates:
+            return random.choice(candidates)
+
+    candidates = index.get(f"{code}-{ver}")
+    if candidates:
+        return random.choice(candidates)
+
+    return None
 
 
 def screen_catalogue():
@@ -280,7 +346,8 @@ def screen_catalogue():
                     cond_allergen  = custom_allergen,
                     cond_avail     = custom_availability,
                     cond_returns   = custom_returns,
-                    var_lookup    = full_var_lookup,
+                    var_lookup     = full_var_lookup,
+                    recipe_by_id   = recipe_by_id,
                 )
                 fname = (
                     f"millington_catalogo"
@@ -362,6 +429,7 @@ def _generate_pdf(
     cond_returns: str,
     include_fichas: bool = True,
     var_lookup: dict = None,
+    recipe_by_id: dict = None,
 ) -> bytes:
     from reportlab.platypus import (
         SimpleDocTemplate, Table, TableStyle, Paragraph,
@@ -393,6 +461,11 @@ def _generate_pdf(
     header_color = colors.HexColor("#9ca3af")
     row_alt      = colors.HexColor("#ebe6de")
     override_col = colors.HexColor("#1d4ed8")  # blue for client overrides
+
+    # ── Cake code lookup and photo index ───────────────────────────────────────
+    cake_codes      = db.get_cake_codes()
+    cake_code_by_id = {cc["id"]: cc["code"] for cc in cake_codes}
+    photo_index     = _build_photo_index(PHOTOS_DIR)
 
     # ── Document ───────────────────────────────────────────────────────────────
     buffer = io.BytesIO()
@@ -649,6 +722,15 @@ def _generate_pdf(
             else:
                 ficha_title = row["name"]
 
+            # Resolve photo
+            photo_path = None
+            recipe = (recipe_by_id or {}).get(rid, {})
+            cc_id   = recipe.get("cake_code_id")
+            version = recipe.get("version") or "01"
+            if cc_id and photo_index:
+                cc_code    = cake_code_by_id.get(cc_id, "")
+                photo_path = _find_photo(photo_index, cc_code, version, fmt_key)
+
             story.append(PageBreak())
             _add_ficha_page(
                 story        = story,
@@ -660,6 +742,7 @@ def _generate_pdf(
                 rule         = colors.HexColor("#d1c9be"),
                 grey         = colors.HexColor("#6b7280"),
                 border_col   = colors.HexColor("#9ca3af"),
+                photo_path   = photo_path,
             )
 
     # ── Page callbacks ─────────────────────────────────────────────────────────
@@ -732,14 +815,18 @@ def _add_ficha_page(
     rule,
     grey,
     border_col,
+    photo_path: str | None = None,
 ):
     """
     Add one ficha page to the story.
     Reads all data from the variant dict.
     Fetches allergen declaration and ingredient label from DB.
     Marks as BORRADOR if label_approved is False.
+    When photo_path is provided, renders a two-column layout:
+      left (~10.5 cm): company box + ficha content
+      right (~5 cm):   product photo
     """
-    from reportlab.platypus import Table, TableStyle, Spacer, HRFlowable
+    from reportlab.platypus import Table, TableStyle, Spacer, HRFlowable, Image
     from reportlab.lib import colors
     from reportlab.lib.units import cm
 
@@ -792,22 +879,13 @@ def _add_ficha_page(
     white = colors.white
     box_bg = white
 
-    # Company header box
-    story.append(_ficha_box(
-        title="Empresa",
-        content=[
-            f"<b>Millington Cakes</b>",
-            "<b>CIF: B13998596</b>",
-            "<i>Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid</i>",
-        ],
-        title_bg=border_col,
-        box_bg=box_bg,
-        body_font=body_font,
-        bold_font=bold_font,
-        border_col=border_col,
-        is_header=True,
-    ))
-    story.append(Spacer(1, 0.25*cm))
+    # Column widths depend on whether we have a photo
+    FULL_W  = 15.5 * cm   # no photo
+    CONT_W  = 10.0 * cm   # content column with photo
+    PHOTO_W =  5.0 * cm   # photo column
+    GAP_W   =  0.5 * cm   # gap between columns
+
+    box_w = CONT_W if (photo_path and os.path.exists(photo_path)) else FULL_W
 
     # Draft watermark note if not approved
     draft_note = ""
@@ -833,7 +911,23 @@ def _add_ficha_page(
         f"<b>Vida útil:</b> {shelf_life} horas",
     ]
 
-    story.append(_ficha_box(
+    company_box = _ficha_box(
+        title="Empresa",
+        content=[
+            "<b>Millington Cakes</b>",
+            "<b>CIF: B13998596</b>",
+            "<i>Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid</i>",
+        ],
+        title_bg=border_col,
+        box_bg=box_bg,
+        body_font=body_font,
+        bold_font=bold_font,
+        border_col=border_col,
+        is_header=True,
+        width=box_w,
+    )
+
+    content_box = _ficha_box(
         title=recipe_name + draft_note,
         content=lines,
         title_bg=border_col,
@@ -841,7 +935,49 @@ def _add_ficha_page(
         body_font=body_font,
         bold_font=bold_font,
         border_col=border_col,
-    ))
+        width=box_w,
+    )
+
+    if photo_path and os.path.exists(photo_path):
+        # Two-column layout: content left, photo right
+        photo_img = Image(
+            photo_path,
+            width=PHOTO_W,
+            height=PHOTO_W,   # square crop area; proportional scaling below
+            kind='proportional',
+        )
+        photo_img.hAlign = 'CENTER'
+
+        # Wrap content column in a nested table to stack company + ficha boxes
+        from reportlab.platypus import KeepTogether
+        content_col = Table(
+            [[company_box], [Spacer(1, 0.2*cm)], [content_box]],
+            colWidths=[CONT_W],
+        )
+        content_col.setStyle(TableStyle([
+            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+
+        two_col = Table(
+            [[content_col, Spacer(GAP_W, 1), photo_img]],
+            colWidths=[CONT_W, GAP_W, PHOTO_W],
+        )
+        two_col.setStyle(TableStyle([
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(two_col)
+    else:
+        # Single-column layout (no photo)
+        story.append(company_box)
+        story.append(Spacer(1, 0.25*cm))
+        story.append(content_box)
 
     story.append(Spacer(1, 0.5*cm))
 
@@ -855,15 +991,20 @@ def _ficha_box(
     bold_font: str,
     border_col,
     is_header: bool = False,
+    width: float = None,
 ) -> object:
     """
     Render a tcolorbox-style bordered box matching the LaTeX ficha layout.
     content is a list of HTML strings rendered as Paragraphs.
+    width defaults to 15.5 cm (full single-column width).
     """
     from reportlab.platypus import Table, TableStyle, Paragraph
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib import colors
     from reportlab.lib.units import cm
+
+    if width is None:
+        width = 15.5 * cm
 
     white = colors.white
 
@@ -884,7 +1025,7 @@ def _ficha_box(
 
     # Title row
     title_data  = [[Paragraph(title, title_ps)]]
-    title_table = Table(title_data, colWidths=[15.5*cm])
+    title_table = Table(title_data, colWidths=[width])
     title_table.setStyle(TableStyle([
         ("BACKGROUND",    (0, 0), (-1, -1), title_bg),
         ("LEFTPADDING",   (0, 0), (-1, -1), 7),
@@ -901,7 +1042,7 @@ def _ficha_box(
         )
 
     if content_rows:
-        content_table = Table(content_rows, colWidths=[15.5*cm])
+        content_table = Table(content_rows, colWidths=[width])
         content_table.setStyle(TableStyle([
             ("BACKGROUND",    (0, 0), (-1, -1), box_bg),
             ("LEFTPADDING",   (0, 0), (-1, -1), 7),
@@ -913,7 +1054,7 @@ def _ficha_box(
     else:
         outer_data = [[title_table]]
 
-    outer = Table(outer_data, colWidths=[15.5*cm])
+    outer = Table(outer_data, colWidths=[width])
     outer.setStyle(TableStyle([
         ("BOX",           (0, 0), (-1, -1), 0.75, border_col),
         ("LEFTPADDING",   (0, 0), (-1, -1), 0),
