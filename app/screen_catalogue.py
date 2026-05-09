@@ -345,6 +345,34 @@ def screen_catalogue():
             f"{', '.join(unapproved)}"
         )
 
+    # ── Photo debug ───────────────────────────────────────────────────────────
+    cake_codes_list = db.get_cake_codes()
+    _cc_by_id       = {cc["id"]: cc["code"] for cc in cake_codes_list}
+    _photo_index    = _build_photo_index(PHOTOS_DIR)
+
+    with st.expander("🖼️ Resolución de fotos (debug)", expanded=False):
+        if not _photo_index:
+            st.caption("No se encontraron fotos en data/photos/")
+        else:
+            st.caption(f"{len(_photo_index)} prefijos indexados: "
+                       f"{', '.join(sorted(_photo_index.keys()))}")
+            st.markdown("**Resolución por ficha seleccionada:**")
+            for row in resolved_rows:
+                rid     = row["recipe_id"]
+                fmt_key_dbg = row["fmt_key"]
+                recipe  = recipe_by_id.get(rid, {})
+                cc_id   = recipe.get("cake_code_id")
+                version = recipe.get("version") or "01"
+                cc_code = _cc_by_id.get(cc_id, "?") if cc_id else "?"
+                photo   = _find_ficha_photo(
+                    _photo_index, cc_code, version, fmt_key_dbg
+                ) if cc_id else None
+                photo_name = os.path.basename(photo) if photo else "—"
+                st.caption(
+                    f"**{row['name']}** [{fmt_key_dbg}] → "
+                    f"code={cc_code} ver={version} → {photo_name}"
+                )
+
     # ── Generate PDF ──────────────────────────────────────────────────────────
     if st.button("📄 Generar catálogo + fichas", type="primary"):
         with st.spinner("Generando catálogo y fichas…"):
