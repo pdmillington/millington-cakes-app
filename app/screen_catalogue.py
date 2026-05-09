@@ -43,13 +43,6 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
 PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
 
-# Size code for each format — used to build the variant-level photo prefix
-_FORMAT_SIZE_CODE = {
-    "individual": "in",
-    "bocado":     "bo",
-    # "standard" intentionally omitted — falls straight to recipe-level prefix
-}
-
 
 def _build_photo_index(photos_dir: str) -> dict[str, list[str]]:
     """
@@ -76,45 +69,58 @@ def _build_photo_index(photos_dir: str) -> dict[str, list[str]]:
     return index
 
 
-def _find_photo(
+def _find_ficha_photo(
     index: dict[str, list[str]],
     cake_code: str,
     version: str,
     fmt_key: str,
 ) -> str | None:
     """
-    Return a randomly chosen photo path for this variant, or None.
-
-    Lookup order:
-      1. Known size codes for this format (variant-level)
-      2. Any index key starting with {code}-{ver}-  (catches other size codes)
-      3. {code}-{ver} exactly  (recipe-level fallback)
+    For fichas — exact size-code match only, no recipe-level fallback.
+    Standard format fichas are skipped (size code LA/XL/XX not derivable
+    from the variant dict without a SKU lookup).
     """
-    code    = cake_code.lower()
-    ver     = version.lower()
-    base    = f"{code}-{ver}"
+    code = cake_code.lower()
+    ver  = version.lower()
+    base = f"{code}-{ver}"
 
     size_codes = {
+        "standard":   ["la"],
         "bocado":     ["bo", "mi"],
         "individual": ["in", "ti"],
     }.get(fmt_key, [])
 
-    # 1. Known size codes
     for sc in size_codes:
         candidates = index.get(f"{base}-{sc}")
         if candidates:
             return random.choice(candidates)
 
-    # 2. Any size variant for this recipe (e.g. li-01-la, fr-01-xl)
+    return None
+
+
+def _find_intro_photo(
+    index: dict[str, list[str]],
+    cake_code: str,
+    version: str,
+) -> str | None:
+    """
+    For intro pages — any photo for this recipe, preferring recipe-level
+    (no size code) but falling back to any size variant.
+    """
+    code = cake_code.lower()
+    ver  = version.lower()
+    base = f"{code}-{ver}"
+
+    # Prefer recipe-level photo (no size code) — intended for multi-size shots
+    candidates = index.get(base)
+    if candidates:
+        return random.choice(candidates)
+
+    # Fall back to any size variant
     prefixed = [paths for key, paths in index.items()
                 if key.startswith(f"{base}-")]
     if prefixed:
         return random.choice(random.choice(prefixed))
-
-    # 3. Recipe-level (e.g. sc-01)
-    candidates = index.get(base)
-    if candidates:
-        return random.choice(candidates)
 
     return None
 
@@ -743,7 +749,7 @@ def _generate_pdf(
             version = recipe.get("version") or "01"
             if cc_id and photo_index:
                 cc_code    = cake_code_by_id.get(cc_id, "")
-                photo_path = _find_photo(photo_index, cc_code, version, fmt_key)
+                photo_path = _find_ficha_photo(photo_index, cc_code, version, fmt_key)
 
             story.append(PageBreak())
             _add_ficha_page(
