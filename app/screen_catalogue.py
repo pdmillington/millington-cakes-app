@@ -345,34 +345,6 @@ def screen_catalogue():
             f"{', '.join(unapproved)}"
         )
 
-    # ── Photo debug ───────────────────────────────────────────────────────────
-    cake_codes_list = db.get_cake_codes()
-    _cc_by_id       = {cc["id"]: cc["code"] for cc in cake_codes_list}
-    _photo_index    = _build_photo_index(PHOTOS_DIR)
-
-    with st.expander("🖼️ Resolución de fotos (debug)", expanded=False):
-        if not _photo_index:
-            st.caption("No se encontraron fotos en data/photos/")
-        else:
-            st.caption(f"{len(_photo_index)} prefijos indexados: "
-                       f"{', '.join(sorted(_photo_index.keys()))}")
-            st.markdown("**Resolución por ficha seleccionada:**")
-            for row in resolved_rows:
-                rid     = row["recipe_id"]
-                fmt_key_dbg = row["fmt_key"]
-                recipe  = recipe_by_id.get(rid, {})
-                cc_id   = recipe.get("cake_code_id")
-                version = recipe.get("version") or "01"
-                cc_code = _cc_by_id.get(cc_id, "?") if cc_id else "?"
-                photo   = _find_ficha_photo(
-                    _photo_index, cc_code, version, fmt_key_dbg
-                ) if cc_id else None
-                photo_name = os.path.basename(photo) if photo else "—"
-                st.caption(
-                    f"**{row['name']}** [{fmt_key_dbg}] → "
-                    f"code={cc_code} ver={version} → {photo_name}"
-                )
-
     # ── Generate PDF ──────────────────────────────────────────────────────────
     if st.button("📄 Generar catálogo + fichas", type="primary"):
         with st.spinner("Generando catálogo y fichas…"):
@@ -575,6 +547,90 @@ def _generate_pdf(
 
     # End of cover — subsequent content starts on page 2
     story.append(PageBreak())
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PHOTO GRID PAGE  —  one photo per recipe, 3-column layout
+    # Only rendered if at least one photo is available.
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Deduplicate: one entry per recipe (first occurrence wins)
+    seen_recipes: set[str] = set()
+    grid_items: list[tuple[str, str]] = []   # (recipe_name, photo_path)
+    for row in rows:
+        rid = row["recipe_id"]
+        if rid in seen_recipes:
+            continue
+        seen_recipes.add(rid)
+        recipe  = (recipe_by_id or {}).get(rid, {})
+        cc_id   = recipe.get("cake_code_id")
+        version = recipe.get("version") or "01"
+        if not cc_id:
+            continue
+        cc_code = cake_code_by_id.get(cc_id, "")
+        photo   = _find_intro_photo(photo_index, cc_code, version)
+        if photo:
+            grid_items.append((row["name"], photo))
+
+    if grid_items:
+        COLS      = 3
+        PHOTO_W   = 4.8 * cm
+        PHOTO_H   = 4.8 * cm
+        CELL_PAD  = 0.4 * cm
+
+        name_ps = ParagraphStyle(
+            "gn", fontName=body_font, fontSize=8, leading=11,
+            alignment=1, textColor=colors.HexColor("#6b7280"),
+            spaceBefore=4, spaceAfter=0,
+        )
+
+        # Build grid cells: each cell is a nested table [photo / name]
+        def _photo_cell(name: str, path: str):
+            img = Image(path, width=PHOTO_W, height=PHOTO_H, kind='proportional')
+            img.hAlign = 'CENTER'
+            cell = Table(
+                [[img], [Paragraph(name, name_ps)]],
+                colWidths=[PHOTO_W + CELL_PAD],
+            )
+            cell.setStyle(TableStyle([
+                ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING",   (0, 0), (-1, -1), CELL_PAD / 2),
+                ("RIGHTPADDING",  (0, 0), (-1, -1), CELL_PAD / 2),
+                ("TOPPADDING",    (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), CELL_PAD),
+            ]))
+            return cell
+
+        # Pad to a full grid
+        while len(grid_items) % COLS != 0:
+            grid_items.append(("", None))
+
+        grid_rows = []
+        for i in range(0, len(grid_items), COLS):
+            chunk = grid_items[i:i + COLS]
+            grid_rows.append([
+                _photo_cell(name, path) if path else ""
+                for name, path in chunk
+            ])
+
+        cell_w = PHOTO_W + CELL_PAD
+        grid = Table(
+            grid_rows,
+            colWidths=[cell_w] * COLS,
+            hAlign='CENTER',
+        )
+        grid.setStyle(TableStyle([
+            ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+
+        story.append(Spacer(1, 0.5 * cm))
+        story.append(grid)
+        story.append(PageBreak())
 
     # ══════════════════════════════════════════════════════════════════════════
     # PAGE 2+  —  price table
