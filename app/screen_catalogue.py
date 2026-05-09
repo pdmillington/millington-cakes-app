@@ -65,7 +65,7 @@ def _build_photo_index(photos_dir: str) -> dict[str, list[str]]:
     if not os.path.isdir(photos_dir):
         return index
     for fname in os.listdir(photos_dir):
-        if not fname.lower().endswith((".jpg", ".jpeg")):
+        if not fname.lower().endswith((".jpg", ".jpeg", ".png")):
             continue
         stem = os.path.splitext(fname)[0]
         # Strip trailing _<digits> suffix
@@ -86,19 +86,33 @@ def _find_photo(
     Return a randomly chosen photo path for this variant, or None.
 
     Lookup order:
-      1. {code}-{ver}-{size_code}   (variant-level, e.g. 'sc-01-bo')
-      2. {code}-{ver}               (recipe-level,  e.g. 'sc-01')
+      1. Known size codes for this format (variant-level)
+      2. Any index key starting with {code}-{ver}-  (catches other size codes)
+      3. {code}-{ver} exactly  (recipe-level fallback)
     """
-    code = cake_code.lower()
-    ver  = version.lower()
+    code    = cake_code.lower()
+    ver     = version.lower()
+    base    = f"{code}-{ver}"
 
-    size_code = _FORMAT_SIZE_CODE.get(fmt_key)
-    if size_code:
-        candidates = index.get(f"{code}-{ver}-{size_code}")
+    size_codes = {
+        "bocado":     ["bo", "mi"],
+        "individual": ["in", "ti"],
+    }.get(fmt_key, [])
+
+    # 1. Known size codes
+    for sc in size_codes:
+        candidates = index.get(f"{base}-{sc}")
         if candidates:
             return random.choice(candidates)
 
-    candidates = index.get(f"{code}-{ver}")
+    # 2. Any size variant for this recipe (e.g. li-01-la, fr-01-xl)
+    prefixed = [paths for key, paths in index.items()
+                if key.startswith(f"{base}-")]
+    if prefixed:
+        return random.choice(random.choice(prefixed))
+
+    # 3. Recipe-level (e.g. sc-01)
+    candidates = index.get(base)
     if candidates:
         return random.choice(candidates)
 
