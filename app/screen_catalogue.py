@@ -346,7 +346,8 @@ def screen_catalogue():
         )
 
     # ── Generate PDF ──────────────────────────────────────────────────────────
-    if st.button("📄 Generar catálogo + fichas", type="primary"):
+    btn_label = "📄 Generar catálogo + fichas" if include_fichas else "📄 Generar catálogo"
+    if st.button(btn_label, type="primary"):
         with st.spinner("Generando catálogo y fichas…"):
             try:
                 # Fetch full variant data for ficha generation
