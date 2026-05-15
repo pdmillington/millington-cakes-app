@@ -32,12 +32,6 @@ FORMAT_GROUPS = [
     ("Bocados",          "bocado"),
 ]
 
-OTROS_RECIPES = {
-    "Cookies", "Brownie", "Blondie", "Brioche - canela",
-    "Brioche - chocolate", "Scones", "Scone con pasas",
-    "Trufas chocolate negro",
-}
-
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 
 
@@ -132,7 +126,7 @@ def screen_catalogue():
         "Para actualizar precios en el catálogo, apruébalos primero en la pantalla Prices."
     )
 
-    # ── Load data ─────────────────────────────────────────────────────────────
+    # Load data 
     recipes      = db.get_recipes()
     all_variants = db.get_all_variants_full()
     settings     = db.get_settings()
@@ -144,7 +138,7 @@ def screen_catalogue():
     for v in all_variants:
         var_lookup.setdefault(v["recipe_id"], {})[v["format"]] = v
 
-    # ── Build product list using APPROVED prices ───────────────────────────────
+    # Build product list using APPROVED prices
     # Each row stores the variant_id so we can apply client overrides later.
     catalogue_rows: dict[str, list[dict]] = {
         "Tarta": [], "Tarta Individual": [],
@@ -154,7 +148,7 @@ def screen_catalogue():
     for recipe in sorted(recipes, key=lambda r: r["name"]):
         rid      = recipe["id"]
         name     = recipe["name"]
-        is_otros = name in OTROS_RECIPES
+        is_otros = recipe.get("catalogue_section") == "otros"
 
         for fmt_label, fmt_key in FORMAT_GROUPS:
             if fmt_key == "standard":
