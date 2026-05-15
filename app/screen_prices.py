@@ -159,7 +159,7 @@ def _price_matrix():
 
     edited = st.data_editor(
         display_df[edit_cols].reset_index(drop=True),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         disabled=[
             "Recipe", "Format",
@@ -187,7 +187,7 @@ def _price_matrix():
     col_save, col_approve, col_approve_all = st.columns([1, 1, 1])
 
     with col_save:
-        if st.button("💾 Save draft prices", use_container_width=True):
+        if st.button("💾 Save draft prices", width='stretch'):
             _save_draft_prices(edited, display_df)
             st.success("Draft prices saved", icon="✅")
             st.rerun()
@@ -196,14 +196,14 @@ def _price_matrix():
     with col_approve:
         approve_selection = st.button(
             "✅ Approve shown prices",
-            use_container_width=True,
+            width='stretch',
             help="Approves prices for all rows currently shown in the table"
         )
 
     with col_approve_all:
         approve_all = st.button(
             "✅ Approve ALL prices",
-            use_container_width=True,
+            width='stretch',
             type="primary",
             help="Approves all working prices across all variants"
         )
@@ -316,7 +316,7 @@ def _client_prices():
         st.dataframe(
             cp_df[["Client", "Product", "WS price (€)",
                    "RT price (€)", "Valid from", "Valid until", "Notes"]],
-            use_container_width=True,
+            width='stretch',
             hide_index=True
         )
     else:
