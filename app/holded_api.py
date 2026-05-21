@@ -31,7 +31,7 @@ load_dotenv()
 
 _BASE_URL    = "https://api.holded.com/api/invoicing/v1"
 _SESSION_TTL = 30 * 60
-_DOC_TYPES   = ["invoice", "salesreceipt", "creditnote"]
+_DOC_TYPES   = ["invoice", "salesreceipt", "creditnote", "receiptnote"]
 
 # SKU pattern embedded in product names e.g. "Cookie Box - CO-03-DC-GW"
 _SKU_RE = re.compile(r'\b([A-Z]{2}-\d{2}-[A-Z]{2}-[A-Z]{2,4}(?:-[A-Z]{2})?)\b')
