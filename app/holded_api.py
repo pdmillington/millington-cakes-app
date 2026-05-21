@@ -81,7 +81,7 @@ def _fetch_all_pages(doc_type: str) -> list[dict]:
 def signed_subtotal(doc: dict) -> float:
     """Ex-VAT revenue contribution — negated for credit notes."""
     subtotal = float(doc.get("subtotal") or 0)
-    return -subtotal if doc.get("_doc_type") == "creditnote" else subtotal
+    return -subtotal if doc.get("_doc_type") in ("creditnote", "receiptnote") else subtotal
 
 
 def get_current_month_supplement(force_refresh: bool = False) -> dict:
@@ -123,7 +123,7 @@ def get_current_month_supplement(force_refresh: bool = False) -> dict:
                 if d.year != current_year or d.month != current_month:
                     continue
 
-                is_credit = doc_type == "creditnote"
+                is_credit = doc_type in ("creditnote", "receiptnote")
                 sign      = -1 if is_credit else 1
                 revenue  += signed_subtotal(doc)
                 doc_count += 1
