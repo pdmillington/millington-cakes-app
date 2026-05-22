@@ -318,26 +318,22 @@ def _label_from_run():
         pass
 
     shelf_hours = int((variant or {}).get("shelf_life_hours") or 48)
-    raw_date    = run["production_date"]
+    fresh_storage = (variant or {}).get("storage_instructions") or "Refrigerada entre 0 y 5°C"
+    raw_date = run["production_date"]
     if isinstance(raw_date, str):
         raw_date = date.fromisoformat(raw_date[:10])
-    best_before = raw_date + timedelta(hours=shelf_hours)
 
-    # Preview
-    with st.expander("Vista previa de datos de etiqueta", expanded=True):
-        c1, c2 = st.columns(2)
-        c1.markdown(f"**Producto:** {run['recipe_name']}")
-        c1.markdown(f"**Formato:** {FORMAT_DISPLAY.get(run.get('format',''), '—')}")
-        c1.markdown(f"**Nº Lote:** `{run['lote_number']}`")
-        c2.markdown(f"**Fecha elaboración:** {str(run['production_date'])[:10]}")
-        c2.markdown(f"**Consumir antes de:** {best_before.strftime('%d/%m/%Y')}")
-        if variant:
-            c2.markdown(f"**Conservación:** {variant.get('storage_instructions','Refrigerada 0–5°C')}")
+    # ── Delivery mode ─────────────────────────────────────────────────────────
+    delivery_mode = st.radio(
+        "Modo de entrega", ["🌿 Fresco", "❄️ Congelado"],
+        index=1, horizontal=True, key="label_run_mode"
+    )
+    frozen = delivery_mode.startswith("❄️")
 
-    col_nlab, col_upb = st.columns(2)
+    col_nlab, col_upb, col_fdays = st.columns(3)
     with col_nlab:
         n_labels = st.number_input(
-            "Número de etiquetas a imprimir", min_value=1,
+            "Nº etiquetas", min_value=1,
             value=run["quantity"], step=1, key="label_run_qty"
         )
     with col_upb:
@@ -346,6 +342,34 @@ def _label_from_run():
             key="label_run_upb",
             help="Número de piezas individuales que contiene cada caja"
         )
+    with col_fdays:
+        frozen_days = st.number_input(
+            "Vida útil congelado (días)", min_value=1, value=90, step=1,
+            key="label_run_fdays",
+            disabled=not frozen,
+            help="Días desde elaboración hasta fecha de consumo preferente"
+        )
+
+    if frozen:
+        best_before  = raw_date + timedelta(days=int(frozen_days))
+        storage_text = (
+            "Conservar congelado a -18°C o inferior. "
+            "Una vez descongelado, mantener refrigerado entre 0 y 5°C "
+            "y consumir en un plazo de 48 horas. No volver a congelar."
+        )
+    else:
+        best_before  = raw_date + timedelta(hours=shelf_hours)
+        storage_text = fresh_storage
+
+    best_before_d = best_before if isinstance(best_before, date) and not isinstance(best_before, datetime) else best_before.date()
+
+    with st.expander("Vista previa", expanded=True):
+        c1, c2 = st.columns(2)
+        c1.markdown(f"**Producto:** {run['recipe_name']}")
+        c1.markdown(f"**Nº Lote:** `{run['lote_number']}`")
+        c2.markdown(f"**Elaborado:** {raw_date.strftime('%d/%m/%Y')}")
+        c2.markdown(f"**Consumir antes de:** {best_before_d.strftime('%d/%m/%Y')}")
+        c2.markdown(f"**Conservación:** {storage_text[:60]}{'…' if len(storage_text)>60 else ''}")
 
     if st.button("🏷️ Generar etiquetas PDF", type="primary", key="label_run_gen"):
         try:
@@ -354,7 +378,8 @@ def _label_from_run():
                 fmt           = run.get("format", "standard"),
                 lote          = run["lote_number"],
                 prod_date     = raw_date,
-                best_before   = best_before if isinstance(best_before, date) else best_before.date(),
+                best_before   = best_before_d,
+                storage_text  = storage_text,
                 variant       = variant,
                 n_labels      = int(n_labels),
                 units_per_box = int(units_per_box),
@@ -397,9 +422,16 @@ def _label_manual():
     except Exception:
         pass
 
-    shelf_hours = int((variant or {}).get("shelf_life_hours") or 48)
+    shelf_hours   = int((variant or {}).get("shelf_life_hours") or 48)
+    fresh_storage = (variant or {}).get("storage_instructions") or "Refrigerada entre 0 y 5°C"
 
-    col_l, col_d, col_q, col_upb = st.columns(4)
+    delivery_mode = st.radio(
+        "Modo de entrega", ["🌿 Fresco", "❄️ Congelado"],
+        index=1, horizontal=True, key="lm_mode"
+    )
+    frozen = delivery_mode.startswith("❄️")
+
+    col_l, col_d, col_q, col_upb, col_fdays = st.columns(5)
     with col_l:
         lote = st.text_input(
             "Nº de lote", placeholder="MC-20250522-001", key="lm_lote"
@@ -417,11 +449,26 @@ def _label_manual():
             "Uds por caja", min_value=1, value=1, step=1, key="lm_upb",
             help="Número de piezas individuales que contiene cada caja"
         )
+    with col_fdays:
+        frozen_days = st.number_input(
+            "Vida útil congelado (días)", min_value=1, value=90, step=1,
+            key="lm_fdays", disabled=not frozen
+        )
 
-    best_before = prod_date + timedelta(hours=shelf_hours)
+    if frozen:
+        best_before  = prod_date + timedelta(days=int(frozen_days))
+        storage_text = (
+            "Conservar congelado a -18°C o inferior. "
+            "Una vez descongelado, mantener refrigerado entre 0 y 5°C "
+            "y consumir en un plazo de 48 horas. No volver a congelar."
+        )
+    else:
+        best_before  = prod_date + timedelta(hours=shelf_hours)
+        storage_text = fresh_storage
+
     st.caption(
-        f"Consumir antes de: **{best_before.strftime('%d/%m/%Y')}** "
-        f"(vida útil: {shelf_hours}h desde elaboración)"
+        f"Consumir antes de: **{best_before.strftime('%d/%m/%Y')}**  ·  "
+        f"Conservación: {storage_text[:55]}{'…' if len(storage_text)>55 else ''}"
     )
 
     if st.button("🏷️ Generar etiquetas PDF", type="primary", key="lm_gen"):
@@ -435,6 +482,7 @@ def _label_manual():
                 lote          = lote.strip(),
                 prod_date     = prod_date,
                 best_before   = best_before if isinstance(best_before, date) else best_before.date(),
+                storage_text  = storage_text,
                 variant       = variant,
                 n_labels      = int(n_labels),
                 units_per_box = int(units_per_box),
@@ -579,6 +627,7 @@ def _generate_labels_pdf(
     variant: dict | None,
     n_labels: int,
     units_per_box: int = 1,
+    storage_text: str | None = None,
 ) -> bytes:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image
     from reportlab.lib.pagesizes import A4
@@ -591,14 +640,30 @@ def _generate_labels_pdf(
 
     # Fetch variant data
     v           = variant or {}
-    storage     = v.get("storage_instructions") or "Refrigerada entre 0 y 5°C"
-    label_text  = v.get("ingredient_label_es") or ""
-    weight_g    = v.get("ref_weight_g")
+    storage     = storage_text or v.get("storage_instructions") or "Refrigerada entre 0 y 5°C"
     fmt_display = FORMAT_DISPLAY.get(fmt, fmt)
 
+    # Ingredient label text — try stored variant text first, then generate from recipe
+    label_text = v.get("ingredient_label_es") or ""
+    if not label_text and variant and variant.get("recipe_id"):
+        try:
+            label_data = db.get_ingredient_label_text(variant["recipe_id"])
+            label_text = label_data.get("label_text") or ""
+        except Exception:
+            pass
+
+    # Weight — multiply by units_per_box for the total box weight
+    weight_g = v.get("ref_weight_g")
+    if weight_g and units_per_box > 1:
+        weight_str = f"{int(weight_g * units_per_box)} g  ({units_per_box} × {int(weight_g)} g)"
+    elif weight_g:
+        weight_str = f"{int(weight_g)} g"
+    else:
+        weight_str = None
+
     # Allergen declaration
-    allergen_contiene  = []
-    allergen_puede     = []
+    allergen_contiene = []
+    allergen_puede    = []
     if variant and variant.get("recipe_id"):
         try:
             decl = db.get_allergen_declaration(variant["recipe_id"])
@@ -607,17 +672,22 @@ def _generate_labels_pdf(
         except Exception:
             pass
 
-    # Build ingredient text with allergens in bold
-    # The label_text already has allergens embedded; we wrap the allergen
-    # names in <b> tags by checking against the contiene list.
+    # Allergen display text — capitalise only first letter of the whole string
+    def _allergen_text(items: list) -> str:
+        if not items:
+            return ""
+        text = ", ".join(a.lower() for a in items)
+        return text[0].upper() + text[1:] if text else text
+
+    allergen_contiene_str = _allergen_text(allergen_contiene)
+    allergen_puede_str    = _allergen_text(allergen_puede)
+
+    # Ingredient text with allergen names in bold (matched case-insensitively)
     ing_display = _bold_allergens(label_text, allergen_contiene)
 
     # Date strings
     prod_str = prod_date.strftime("%d/%m/%Y") if hasattr(prod_date, "strftime") else str(prod_date)
     bb_str   = best_before.strftime("%d/%m/%Y") if hasattr(best_before, "strftime") else str(best_before)
-
-    # Weight string
-    weight_str = f"{int(weight_g)} g" if weight_g else None
 
     # ── Document setup ────────────────────────────────────────────────────────
     # Label is A5 (148×210mm) centred on A4 — gives room for long ingredient
@@ -740,20 +810,18 @@ def _generate_labels_pdf(
         y -= 3 * mm
 
         # ── Allergens ─────────────────────────────────────────────────────────
-        if allergen_contiene or allergen_puede:
+        if allergen_contiene_str or allergen_puede_str:
             c.setStrokeColor(border)
             c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
             y -= 4 * mm
-            if allergen_contiene:
+            if allergen_contiene_str:
                 _draw_text(c, "ALÉRGENOS — CONTIENE:", x0 + PAD, y, bold_font, 8, dark)
                 y -= 4 * mm
-                alg_text = ", ".join(a.capitalize() for a in allergen_contiene)
-                for line in _simple_wrap(c, alg_text, bold_font, 7.5, CONTENT_W):
+                for line in _simple_wrap(c, allergen_contiene_str, bold_font, 7.5, CONTENT_W):
                     _draw_text(c, line, x0 + PAD, y, bold_font, 7.5, dark)
                     y -= 3.5 * mm
-            if allergen_puede:
-                prefix = "Puede contener trazas de: "
-                alg_text = prefix + ", ".join(a.capitalize() for a in allergen_puede)
+            if allergen_puede_str:
+                alg_text = "Puede contener trazas de: " + allergen_puede_str
                 for line in _simple_wrap(c, alg_text, body_font, 7.5, CONTENT_W):
                     _draw_text(c, line, x0 + PAD, y, body_font, 7.5, mid)
                     y -= 3.5 * mm
