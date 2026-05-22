@@ -24,6 +24,7 @@ from screen_repricing   import screen_repricing
 from screen_catalogue   import screen_catalogue
 from screen_prices      import screen_prices
 from screen_kpis        import screen_kpis
+from screen_production  import screen_production
 
 # =============================================================================
 # Page config
@@ -80,6 +81,8 @@ def sidebar() -> str:
              st.session_state.screen = "repricing"
         if st.button("Business KPIs", use_container_width=True):
              st.session_state.screen = "kpis"
+        if st.button("Production & Labels", use_container_width=True):
+            st.session_state.screen = "production"
 
         st.divider()
         st.markdown("**Manage**")
@@ -261,7 +264,8 @@ SCREENS = {
     "repricing":   screen_repricing,
     "catalogue":   screen_catalogue,
     "prices":      screen_prices,
-    "kpis":        screen_kpis, 
+    "kpis":        screen_kpis,
+    "production":  screen_production,
 }
 
 

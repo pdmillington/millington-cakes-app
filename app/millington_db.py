@@ -1695,3 +1695,124 @@ def get_name_to_sku_map() -> dict[str, str]:
  
     st.session_state['_holded_ambiguous_names'] = ambiguous
     return result
+
+def _next_lote_number(sb, prod_date: "date") -> str:
+    """
+    Generate the next sequential lote number for a given date.
+    Format: MC-YYMMDD-XXX  (XXX = 001, 002, …)
+    """
+    date_str = prod_date.strftime("%y%m%d")
+    prefix   = f"MC-{date_str}-"
+    existing = (
+        sb.table("production_runs")
+          .select("lote_number")
+          .like("lote_number", f"{prefix}%")
+          .execute()
+          .data or []
+    )
+    seq = len(existing) + 1
+    return f"{prefix}{seq:03d}"
+ 
+ 
+def save_production_run(
+    recipe_id:     str,
+    recipe_name:   str,
+    fmt:           str,
+    prod_date:     "date",
+    quantity:      int,
+    oven_temp_c:   float,
+    bake_time_min: int,
+    notes:         str | None,
+    ing_refs:      list[dict],
+) -> dict:
+    """
+    Insert a production run + ingredient refs.
+    Returns the saved run dict (with lote_number and id).
+    """
+    sb   = get_client()
+    lote = _next_lote_number(sb, prod_date)
+ 
+    run_row = {
+        "lote_number":    lote,
+        "recipe_id":      recipe_id,
+        "recipe_name":    recipe_name,
+        "format":         fmt,
+        "production_date": prod_date.isoformat(),
+        "quantity":       quantity,
+        "oven_temp_c":    oven_temp_c,
+        "bake_time_min":  bake_time_min,
+        "notes":          notes,
+    }
+    result = (
+        sb.table("production_runs")
+          .insert(run_row)
+          .execute()
+    )
+    saved = (result.data or [{}])[0]
+    run_id = saved["id"]
+ 
+    # Insert ingredient refs
+    for ref in ing_refs:
+        sb.table("production_ingredient_refs").insert({
+            "production_run_id": run_id,
+            "ingredient_name":   ref.get("ingredient_name"),
+            "albaran_ref":       ref.get("albaran_ref"),
+        }).execute()
+ 
+    saved["ingredient_refs"] = ing_refs
+    return saved
+ 
+ 
+def get_production_runs(limit: int = 30) -> list[dict]:
+    """Return recent production runs, newest first."""
+    sb   = get_client()
+    rows = (
+        sb.table("production_runs")
+          .select("*")
+          .order("production_date", desc=True)
+          .order("lote_number",     desc=True)
+          .limit(limit)
+          .execute()
+          .data or []
+    )
+    # Attach ingredient refs to each run
+    if rows:
+        run_ids = [r["id"] for r in rows]
+        refs    = (
+            sb.table("production_ingredient_refs")
+              .select("*")
+              .in_("production_run_id", run_ids)
+              .execute()
+              .data or []
+        )
+        refs_by_run: dict[str, list] = {}
+        for ref in refs:
+            refs_by_run.setdefault(ref["production_run_id"], []).append(ref)
+        for row in rows:
+            row["ingredient_refs"] = refs_by_run.get(row["id"], [])
+    return rows
+ 
+ 
+def get_production_run(run_id: str) -> dict | None:
+    """Return a single production run with ingredient refs."""
+    sb   = get_client()
+    rows = (
+        sb.table("production_runs")
+          .select("*")
+          .eq("id", run_id)
+          .limit(1)
+          .execute()
+          .data or []
+    )
+    if not rows:
+        return None
+    run  = rows[0]
+    refs = (
+        sb.table("production_ingredient_refs")
+          .select("*")
+          .eq("production_run_id", run_id)
+          .execute()
+          .data or []
+    )
+    run["ingredient_refs"] = refs
+    return run
