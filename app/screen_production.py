@@ -549,7 +549,7 @@ def _generate_log_pdf(run: dict) -> bytes:
 
 
 # =============================================================================
-# PDF — Product labels (A6 × 2-up on A4)
+# PDF — Product labels (one per A4 page, centred)
 # =============================================================================
 
 def _generate_labels_pdf(
@@ -569,8 +569,6 @@ def _generate_labels_pdf(
     from reportlab.graphics.shapes import Drawing, Rect
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    import math
-
     body_font, bold_font = _load_fonts()
 
     # Fetch variant data
@@ -748,30 +746,13 @@ def _generate_labels_pdf(
         _draw_text(c, f"CIF: {COMPANY_CIF}", x0 + PAD, footer_y + 3*mm, body_font, 6.5, mid)
         _draw_text(c, COMPANY_ADDRESS, x0 + PAD, footer_y, body_font, 5.5, light)
 
-    # ── Lay out labels 2-up ───────────────────────────────────────────────────
-    # Left label origin:  x = (PAGE_W/2 - LABEL_W) / 2, y = (PAGE_H - LABEL_H) / 2
-    # Right label origin: x = PAGE_W/2 + (PAGE_W/2 - LABEL_W) / 2
-    gap     = 5 * mm
-    total_w = 2 * LABEL_W + gap
-    x_left  = (PAGE_W - total_w) / 2
-    x_right = x_left + LABEL_W + gap
-    y_base  = (PAGE_H - LABEL_H) / 2
+    # ── One label per A4 page, centred ───────────────────────────────────────
+    x_origin = (PAGE_W - LABEL_W) / 2
+    y_origin = (PAGE_H - LABEL_H) / 2
 
-    n_pages = math.ceil(n_labels / 2)
-    labels_drawn = 0
-
-    for page in range(n_pages):
-        # Left label
-        if labels_drawn < n_labels:
-            draw_label(c, x_left, y_base)
-            labels_drawn += 1
-
-        # Right label
-        if labels_drawn < n_labels:
-            draw_label(c, x_right, y_base)
-            labels_drawn += 1
-
-        if page < n_pages - 1:
+    for i in range(n_labels):
+        draw_label(c, x_origin, y_origin)
+        if i < n_labels - 1:
             c.showPage()
 
     c.save()
