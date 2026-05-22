@@ -334,21 +334,30 @@ def _label_from_run():
         if variant:
             c2.markdown(f"**Conservación:** {variant.get('storage_instructions','Refrigerada 0–5°C')}")
 
-    n_labels = st.number_input(
-        "Número de etiquetas a imprimir", min_value=1,
-        value=run["quantity"], step=1, key="label_run_qty"
-    )
+    col_nlab, col_upb = st.columns(2)
+    with col_nlab:
+        n_labels = st.number_input(
+            "Número de etiquetas a imprimir", min_value=1,
+            value=run["quantity"], step=1, key="label_run_qty"
+        )
+    with col_upb:
+        units_per_box = st.number_input(
+            "Unidades por caja", min_value=1, value=1, step=1,
+            key="label_run_upb",
+            help="Número de piezas individuales que contiene cada caja"
+        )
 
     if st.button("🏷️ Generar etiquetas PDF", type="primary", key="label_run_gen"):
         try:
             pdf_bytes = _generate_labels_pdf(
-                recipe_name  = run["recipe_name"],
-                fmt          = run.get("format", "standard"),
-                lote         = run["lote_number"],
-                prod_date    = raw_date,
-                best_before  = best_before if isinstance(best_before, date) else best_before.date(),
-                variant      = variant,
-                n_labels     = int(n_labels),
+                recipe_name   = run["recipe_name"],
+                fmt           = run.get("format", "standard"),
+                lote          = run["lote_number"],
+                prod_date     = raw_date,
+                best_before   = best_before if isinstance(best_before, date) else best_before.date(),
+                variant       = variant,
+                n_labels      = int(n_labels),
+                units_per_box = int(units_per_box),
             )
             st.download_button(
                 "⬇️ Descargar etiquetas",
@@ -390,7 +399,7 @@ def _label_manual():
 
     shelf_hours = int((variant or {}).get("shelf_life_hours") or 48)
 
-    col_l, col_d, col_q = st.columns(3)
+    col_l, col_d, col_q, col_upb = st.columns(4)
     with col_l:
         lote = st.text_input(
             "Nº de lote", placeholder="MC-20250522-001", key="lm_lote"
@@ -402,6 +411,11 @@ def _label_manual():
     with col_q:
         n_labels = st.number_input(
             "Nº etiquetas", min_value=1, value=1, step=1, key="lm_qty"
+        )
+    with col_upb:
+        units_per_box = st.number_input(
+            "Uds por caja", min_value=1, value=1, step=1, key="lm_upb",
+            help="Número de piezas individuales que contiene cada caja"
         )
 
     best_before = prod_date + timedelta(hours=shelf_hours)
@@ -416,13 +430,14 @@ def _label_manual():
             return
         try:
             pdf_bytes = _generate_labels_pdf(
-                recipe_name  = recipe_name,
-                fmt          = selected_fmt,
-                lote         = lote.strip(),
-                prod_date    = prod_date,
-                best_before  = best_before if isinstance(best_before, date) else best_before.date(),
-                variant      = variant,
-                n_labels     = int(n_labels),
+                recipe_name   = recipe_name,
+                fmt           = selected_fmt,
+                lote          = lote.strip(),
+                prod_date     = prod_date,
+                best_before   = best_before if isinstance(best_before, date) else best_before.date(),
+                variant       = variant,
+                n_labels      = int(n_labels),
+                units_per_box = int(units_per_box),
             )
             st.download_button(
                 "⬇️ Descargar etiquetas",
@@ -563,13 +578,13 @@ def _generate_labels_pdf(
     best_before,
     variant: dict | None,
     n_labels: int,
+    units_per_box: int = 1,
 ) -> bytes:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import cm, mm
     from reportlab.lib import colors
-    from reportlab.graphics.shapes import Drawing, Rect
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     body_font, bold_font = _load_fonts()
@@ -604,16 +619,16 @@ def _generate_labels_pdf(
     # Weight string
     weight_str = f"{int(weight_g)} g" if weight_g else None
 
-    # ── Document ──────────────────────────────────────────────────────────────
-    # Labels are A6 (105×148mm). We lay them 2 per A4 page side by side.
-    PAGE_W, PAGE_H = A4  # 595.28 × 841.89 pts
-    LABEL_W = 105 * mm
-    LABEL_H = 148 * mm
-    MARGIN  =  5 * mm
+    # ── Document setup ────────────────────────────────────────────────────────
+    # Label is A5 (148×210mm) centred on A4 — gives room for long ingredient
+    # lists and allergen declarations without crowding.
+    PAGE_W, PAGE_H = A4               # 595.28 × 841.89 pts
+    LABEL_W = 148 * mm                # A5 width
+    LABEL_H = 210 * mm                # A5 height
+    PAD     =   7 * mm
 
     buffer = io.BytesIO()
 
-    # We'll use canvas directly for precise label placement
     from reportlab.pdfgen import canvas as pdfcanvas
     from reportlab.lib.utils import ImageReader
 
@@ -625,131 +640,145 @@ def _generate_labels_pdf(
     light   = colors.HexColor("#9ca3af")
     bg      = colors.HexColor("#F2EEE8")
     border  = colors.HexColor("#c4bdb4")
+    header_bg = colors.HexColor("#ebe6de")   # slightly darker warm tone
 
     logo_path = os.path.join(DATA_DIR, "Logo.png")
     has_logo  = os.path.exists(logo_path)
+    CONTENT_W = LABEL_W - 2 * PAD
 
     def draw_label(c, x0: float, y0: float):
-        """Draw one label with bottom-left corner at (x0, y0)."""
-        PAD = 5 * mm
+        """Draw one A5 label with bottom-left corner at (x0, y0)."""
 
-        # Background
+        # ── Background + border ───────────────────────────────────────────────
         c.setFillColor(bg)
         c.roundRect(x0, y0, LABEL_W, LABEL_H, 3*mm, fill=1, stroke=0)
-
-        # Border
         c.setStrokeColor(border)
         c.setLineWidth(0.5)
         c.roundRect(x0, y0, LABEL_W, LABEL_H, 3*mm, fill=0, stroke=1)
 
-        # ── Header band ───────────────────────────────────────────────────────
-        header_h = 22 * mm
-        c.setFillColor(dark)
+        # ── Header: warm bg, logo centred, no dark rectangle ─────────────────
+        header_h = 28 * mm
+        c.setFillColor(header_bg)
         c.roundRect(x0, y0 + LABEL_H - header_h, LABEL_W, header_h, 3*mm, fill=1, stroke=0)
-        # Square off bottom of header band
+        # square off bottom edge of header
         c.rect(x0, y0 + LABEL_H - header_h, LABEL_W, header_h / 2, fill=1, stroke=0)
+        # thin divider line under header
+        c.setStrokeColor(border)
+        c.setLineWidth(0.8)
+        c.line(x0, y0 + LABEL_H - header_h, x0 + LABEL_W, y0 + LABEL_H - header_h)
 
-        # Logo or company name in header
         if has_logo:
             try:
-                img_h = 10 * mm
-                img_w = 40 * mm
+                reader  = ImageReader(logo_path)
+                iw, ih  = reader.getSize()
+                aspect  = iw / ih if ih else 2
+                logo_h  = 16 * mm
+                logo_w  = min(logo_h * aspect, LABEL_W - 2 * PAD)
+                logo_x  = x0 + (LABEL_W - logo_w) / 2   # centred
+                logo_y  = y0 + LABEL_H - header_h + (header_h - logo_h) / 2
                 c.drawImage(
-                    logo_path,
-                    x0 + PAD,
-                    y0 + LABEL_H - header_h + 5 * mm,
-                    width=img_w, height=img_h,
+                    logo_path, logo_x, logo_y,
+                    width=logo_w, height=logo_h,
                     preserveAspectRatio=True, mask="auto",
                 )
             except Exception:
-                _draw_text(c, "Millington Cakes", x0 + PAD,
-                           y0 + LABEL_H - 10*mm, bold_font, 11, colors.white)
+                _draw_centred(c, "Millington Cakes", x0, y0 + LABEL_H - 14*mm,
+                              LABEL_W, bold_font, 13, dark)
         else:
-            _draw_text(c, "Millington Cakes", x0 + PAD,
-                       y0 + LABEL_H - 10*mm, bold_font, 11, colors.white)
+            _draw_centred(c, "Millington Cakes", x0, y0 + LABEL_H - 14*mm,
+                          LABEL_W, bold_font, 13, dark)
 
         # ── Product name ──────────────────────────────────────────────────────
-        y = y0 + LABEL_H - header_h - 7 * mm
-        _draw_text(c, recipe_name, x0 + PAD, y, bold_font, 12, dark)
-        y -= 5 * mm
-        _draw_text(c, fmt_display, x0 + PAD, y, body_font, 9, mid)
-        y -= 6 * mm
+        y = y0 + LABEL_H - header_h - 8 * mm
+        _draw_text(c, recipe_name, x0 + PAD, y, bold_font, 13, dark)
+        y -= 5.5 * mm
+        sub = fmt_display
+        if units_per_box > 1:
+            sub += f"  ·  {units_per_box} unidades por caja"
+        _draw_text(c, sub, x0 + PAD, y, body_font, 9, mid)
+        y -= 7 * mm
 
-        # Divider
+        # ── Divider ───────────────────────────────────────────────────────────
         c.setStrokeColor(border)
         c.setLineWidth(0.4)
         c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-        y -= 4 * mm
+        y -= 5 * mm
 
-        # ── Lote + dates ──────────────────────────────────────────────────────
-        _draw_label_pair(c, x0 + PAD, y, LABEL_W - 2*PAD,
+        # ── Lote + key info ───────────────────────────────────────────────────
+        row_h = 5 * mm
+        _draw_label_pair(c, x0 + PAD, y, CONTENT_W,
                          "Nº Lote:", lote, bold_font, body_font, dark, mid)
-        y -= 4.5 * mm
-        _draw_label_pair(c, x0 + PAD, y, LABEL_W - 2*PAD,
-                         "Elaborado:", prod_str, bold_font, body_font, dark, mid)
-        y -= 4.5 * mm
-        _draw_label_pair(c, x0 + PAD, y, LABEL_W - 2*PAD,
+        y -= row_h
+        _draw_label_pair(c, x0 + PAD, y, CONTENT_W,
+                         "Fecha elaboración:", prod_str, bold_font, body_font, dark, mid)
+        y -= row_h
+        _draw_label_pair(c, x0 + PAD, y, CONTENT_W,
                          "Consumir antes de:", bb_str, bold_font, body_font, dark, mid)
-        y -= 4.5 * mm
-
+        y -= row_h
         if weight_str:
-            _draw_label_pair(c, x0 + PAD, y, LABEL_W - 2*PAD,
+            _draw_label_pair(c, x0 + PAD, y, CONTENT_W,
                              "Peso neto aprox.:", weight_str, bold_font, body_font, dark, mid)
-            y -= 4.5 * mm
-
-        # Divider
-        c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-        y -= 4 * mm
-
-        # ── Ingredients ───────────────────────────────────────────────────────
-        _draw_text(c, "INGREDIENTES:", x0 + PAD, y, bold_font, 7.5, dark)
-        y -= 3.5 * mm
-
-        if ing_display:
-            # Word-wrap ingredient text
-            max_w  = LABEL_W - 2 * PAD
-            lines  = _wrap_text(c, ing_display, body_font, bold_font, 7, max_w)
-            for line_parts in lines:
-                _draw_rich_line(c, x0 + PAD, y, line_parts, body_font, bold_font, 7, dark)
-                y -= 3.2 * mm
-        else:
-            _draw_text(c, "Ver ficha técnica.", x0 + PAD, y, body_font, 7, mid)
-            y -= 3.5 * mm
+            y -= row_h
 
         y -= 2 * mm
+        c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
+        y -= 5 * mm
+
+        # ── Ingredients ───────────────────────────────────────────────────────
+        _draw_text(c, "INGREDIENTES:", x0 + PAD, y, bold_font, 8, dark)
+        y -= 4 * mm
+
+        if ing_display:
+            ing_lines = _wrap_text(c, ing_display, body_font, bold_font, 7.5, CONTENT_W)
+            for line_parts in ing_lines:
+                _draw_rich_line(c, x0 + PAD, y, line_parts, body_font, bold_font, 7.5, dark)
+                y -= 3.5 * mm
+        else:
+            _draw_text(c, "Ver ficha técnica.", x0 + PAD, y, body_font, 7.5, mid)
+            y -= 3.5 * mm
+
+        y -= 3 * mm
 
         # ── Allergens ─────────────────────────────────────────────────────────
         if allergen_contiene or allergen_puede:
+            c.setStrokeColor(border)
             c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-            y -= 3.5 * mm
+            y -= 4 * mm
             if allergen_contiene:
-                _draw_text(c, "ALÉRGENOS — CONTIENE:", x0 + PAD, y, bold_font, 7.5, dark)
-                y -= 3.5 * mm
-                _draw_text(c, ", ".join(a.capitalize() for a in allergen_contiene),
-                           x0 + PAD, y, body_font, 7, dark)
-                y -= 3.5 * mm
+                _draw_text(c, "ALÉRGENOS — CONTIENE:", x0 + PAD, y, bold_font, 8, dark)
+                y -= 4 * mm
+                alg_text = ", ".join(a.capitalize() for a in allergen_contiene)
+                for line in _simple_wrap(c, alg_text, bold_font, 7.5, CONTENT_W):
+                    _draw_text(c, line, x0 + PAD, y, bold_font, 7.5, dark)
+                    y -= 3.5 * mm
             if allergen_puede:
-                _draw_text(c, "Puede contener: " + ", ".join(a.capitalize() for a in allergen_puede),
-                           x0 + PAD, y, body_font, 7, mid)
-                y -= 3.5 * mm
+                prefix = "Puede contener trazas de: "
+                alg_text = prefix + ", ".join(a.capitalize() for a in allergen_puede)
+                for line in _simple_wrap(c, alg_text, body_font, 7.5, CONTENT_W):
+                    _draw_text(c, line, x0 + PAD, y, body_font, 7.5, mid)
+                    y -= 3.5 * mm
+            y -= 2 * mm
 
         # ── Storage ───────────────────────────────────────────────────────────
         c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-        y -= 3.5 * mm
-        _draw_text(c, "CONSERVACIÓN:", x0 + PAD, y, bold_font, 7.5, dark)
-        y -= 3.5 * mm
-        for line in _simple_wrap(c, storage, body_font, 7, LABEL_W - 2 * PAD):
-            _draw_text(c, line, x0 + PAD, y, body_font, 7, dark)
-            y -= 3.2 * mm
+        y -= 4 * mm
+        _draw_text(c, "CONSERVACIÓN:", x0 + PAD, y, bold_font, 8, dark)
+        y -= 4 * mm
+        for line in _simple_wrap(c, storage, body_font, 7.5, CONTENT_W):
+            _draw_text(c, line, x0 + PAD, y, body_font, 7.5, dark)
+            y -= 3.5 * mm
 
         # ── Footer ────────────────────────────────────────────────────────────
-        footer_y = y0 + PAD
-        c.line(x0 + PAD, footer_y + 9*mm, x0 + LABEL_W - PAD, footer_y + 9*mm)
-        _draw_text(c, COMPANY_NAME, x0 + PAD, footer_y + 6*mm, bold_font, 6.5, mid)
-        _draw_text(c, f"CIF: {COMPANY_CIF}", x0 + PAD, footer_y + 3*mm, body_font, 6.5, mid)
-        _draw_text(c, COMPANY_ADDRESS, x0 + PAD, footer_y, body_font, 5.5, light)
+        footer_y  = y0 + PAD
+        footer_t  = footer_y + 11 * mm
+        c.setStrokeColor(border)
+        c.line(x0 + PAD, footer_t, x0 + LABEL_W - PAD, footer_t)
+        _draw_text(c, COMPANY_NAME,    x0 + PAD, footer_y + 7.5*mm, bold_font, 7, mid)
+        _draw_text(c, f"CIF: {COMPANY_CIF}", x0 + PAD, footer_y + 4*mm, body_font, 7, mid)
+        for i, line in enumerate(_simple_wrap(c, COMPANY_ADDRESS, body_font, 6, CONTENT_W)):
+            _draw_text(c, line, x0 + PAD, footer_y + (2 - i) * 3*mm, body_font, 6, light)
 
-    # ── One label per A4 page, centred ───────────────────────────────────────
+    # ── One label per A4 page, centred ────────────────────────────────────────
     x_origin = (PAGE_W - LABEL_W) / 2
     y_origin = (PAGE_H - LABEL_H) / 2
 
@@ -785,6 +814,15 @@ def _draw_text(c, text: str, x: float, y: float, font: str, size: float, color):
     c.setFont(font, size)
     c.setFillColor(color)
     c.drawString(x, y, text)
+
+
+def _draw_centred(c, text: str, x0: float, y: float, width: float,
+                  font: str, size: float, color):
+    """Draw text horizontally centred within a band starting at x0 of given width."""
+    c.setFont(font, size)
+    c.setFillColor(color)
+    text_w = c.stringWidth(text, font, size)
+    c.drawString(x0 + (width - text_w) / 2, y, text)
 
 
 def _draw_label_pair(c, x, y, width, label_str, value_str, bold_font, body_font, dark, mid):
