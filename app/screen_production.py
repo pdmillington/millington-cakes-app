@@ -318,7 +318,10 @@ def _label_from_run():
         pass
 
     shelf_hours = int((variant or {}).get("shelf_life_hours") or 48)
-    best_before = run["production_date"] + timedelta(hours=shelf_hours)
+    raw_date    = run["production_date"]
+    if isinstance(raw_date, str):
+        raw_date = date.fromisoformat(raw_date[:10])
+    best_before = raw_date + timedelta(hours=shelf_hours)
 
     # Preview
     with st.expander("Vista previa de datos de etiqueta", expanded=True):
@@ -342,8 +345,8 @@ def _label_from_run():
                 recipe_name  = run["recipe_name"],
                 fmt          = run.get("format", "standard"),
                 lote         = run["lote_number"],
-                prod_date    = run["production_date"],
-                best_before  = best_before.date() if hasattr(best_before, "date") else best_before,
+                prod_date    = raw_date,
+                best_before  = best_before if isinstance(best_before, date) else best_before.date(),
                 variant      = variant,
                 n_labels     = int(n_labels),
             )
