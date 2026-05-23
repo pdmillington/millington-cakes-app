@@ -485,7 +485,7 @@ def _tab_products():
                     axis=alt.Axis(title="Ingresos estimados")),
             color=alt.Color("Año:N",
                             scale=alt.Scale(
-                                domain=[f"UIngresos {cy}", f"Ingresos {ly}"],
+                                domain=[f"Ingresos {cy}", f"Ingresos {ly}"],
                                 range=[C_BLUE, C_LIGHT]
                             )),
             xOffset="Año:N",
