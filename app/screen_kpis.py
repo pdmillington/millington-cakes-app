@@ -386,7 +386,7 @@ def _tab_revenue():
 # =============================================================================
 
 def _tab_products():
-    st.markdown("### Top productos — unidades vendidas")
+    st.markdown("### Top productos — ingresos estimados")
 
     today = date.today()
     cy    = today.year
@@ -398,83 +398,126 @@ def _tab_products():
     if not all_rows:
         st.info("No hay datos de productos. Sube los ficheros de Holded.")
         return
+    
+    # Build name to price lookup from the Holded product catalogue
+    holded_products = db.get_holded_products()
+    name_to_price: dict[str, float] = {}
+    sku_to_price: dict[str, float] = {}
+    for p in holded_products:
+        price = float(p.get("price_ex_vat") or 0)
+        if p.get("sku"):
+            sku_to_price[p['sku']] = price
+        if p.get("name"):
+            name_to_price[p['name']] = price
+
+    def _price_for(row: dict) -> float:
+        """Best effort price lookup: SKU, then name then 0"""
+        if row.get("sku") and row["sku"] in sku_to_price:
+            return sku_to_price[row["sku"]]
+        return name_to_price.get(row["product_name"], 0.0)
 
     # Filter to current year YTD months and same period last year
     ytd_months  = {(r["year"], r["month"]) for r in _get_all_revenue()
                    if r["year"] == cy and date(r["year"], r["month"], 1) <= today}
     ly_months   = {(ly, m) for _, m in ytd_months}
 
-    def agg_units(rows, month_set):
-        totals: dict[str, float] = defaultdict(float)
+    def agg(rows, month_set):
+        """Aggregate units and estimated revenue pre product for a set of months"""
+        units_map: dict[str, float] = defaultdict(float)
+        revenue_map: dict[str, float] = defaultdict(float)
         for r in rows:
-            if (r["year"], r["month"]) in month_set:
-                totals[r["product_name"]] += float(r["units"])
-        return dict(totals)
+            if (r["year"], r["month"]) not in month_set:
+                continue
+            name = r["product_name"]
+            units = float(r["units"])
+            price = _price_for(r)
+            units_map[name] += units
+            revenue_map[name] += units * price
+        return dict(units_map), dict(revenue_map)
 
-    ytd_units = agg_units(all_rows, ytd_months)
-    ly_units  = agg_units(all_rows, ly_months)
+    ytd_units, ytd_revenue = agg(all_rows, ytd_months)
+    ly_units, ly_revenue  = agg(all_rows, ly_months)
 
     n = st.slider("Mostrar top N productos", 5, 15, 5, key="top_n_products")
 
-    top = sorted(ytd_units.items(), key=lambda x: x[1], reverse=True)[:n]
+    top = sorted(ytd_revenue.items(), key=lambda x: x[1], reverse=True)[:n]
     if not top:
         st.info("Sin datos de unidades para el año actual.")
         return
 
-    chart_rows = []
-    for name, units_cy in top:
-        units_ly = ly_units.get(name, 0)
-        chart_rows.append({
+    has_prices = any(v>0 for _, v in top)
+    if not has_prices:
+        st.warning(
+            "⚠️ No se encontraron precios para estos productos. "
+            "Sube el catálogo de inventario en **Gestión de datos** para activar el ranking por ingresos. "
+            "Mostrando ranking por unidades como alternativa."
+            )
+        # Fall back to units ranking
+        top = sorted(ytd_units.items(), key=lambda x: x[1], reverse=True)[:n]
+        top = [(name, ytd_revenue.get(name, 0)) for name, _ in top]
+
+    rev_chart_rows = []
+    for name, rev_cy in top:
+        rev_ly = ly_revenue.get(name, 0)
+        rev_chart_rows.append({
             "Producto":       name[:35],
-            f"Uds {cy}":      units_cy,
-            f"Uds {ly}":      units_ly if units_ly else None,
+            f"Ingresos {cy}":      rev_cy,
+            f"Ingresos {ly}":      rev_ly if rev_ly else None,
         })
 
-    df_top = pd.DataFrame(chart_rows)
-    df_melt = pd.melt(
-        df_top,
+    df_rev = pd.DataFrame(rev_chart_rows)
+    df_rev_melt = pd.melt(
+        df_rev,
         id_vars=["Producto"],
-        value_vars=[f"Uds {cy}", f"Uds {ly}"],
+        value_vars=[f"UIngresos {cy}", f"Ingresos {ly}"],
         var_name="Año",
-        value_name="Unidades",
-    ).dropna(subset=["Unidades"])
+        value_name="Ingresos (€)",
+    ).dropna(subset=["Ingresos (€)"])
 
-    chart = (
-        alt.Chart(df_melt)
+    rev_chart = (
+        alt.Chart(df_rev_melt)
         .mark_bar()
         .encode(
             x=alt.X("Producto:N",
-                    sort=[r["Producto"] for r in chart_rows],
+                    sort=[r["Producto"] for r in rev_chart_rows],
                     axis=alt.Axis(labelAngle=-20, title=None, labelLimit=220)),
-            y=alt.Y("Unidades:Q",
-                    axis=alt.Axis(title="Unidades vendidas")),
+            y=alt.Y("Ingresos (€):Q",
+                    axis=alt.Axis(title="Ingresos estimados")),
             color=alt.Color("Año:N",
                             scale=alt.Scale(
-                                domain=[f"Uds {cy}", f"Uds {ly}"],
+                                domain=[f"UIngresos {cy}", f"Ingresos {ly}"],
                                 range=[C_BLUE, C_LIGHT]
                             )),
             xOffset="Año:N",
             tooltip=[alt.Tooltip("Producto:N"),
                      alt.Tooltip("Año:N"),
-                     alt.Tooltip("Unidades:Q", format=".1f")],
+                     alt.Tooltip("Ingresos (€):Q", format=".1f")],
         )
         .properties(height=360)
     )
-    st.altair_chart(chart, width='stretch')
+    st.altair_chart(rev_chart, width='stretch')
 
     st.divider()
     st.markdown("**Detalle**")
     detail = []
-    for name, units_cy in top:
+    for name, rev_cy in top:
+        rev_ly = ly_revenue.get(name, 0)
+        units_cy = ytd_units.get(name, 0)
         units_ly = ly_units.get(name, 0)
-        change   = ((units_cy - units_ly) / units_ly * 100) if units_ly else None
+        rev_chg   = ((rev_cy - rev_ly) / rev_ly * 100) if rev_ly else None
         detail.append({
             "Producto":        name,
+            f"Ingresos {cy}":     f"€{rev_cy:,.2f}" if rev_cy else "—",
+            f"Ingresos {ly}":     f"€{rev_ly:,.2f}" if rev_ly else "—",
+            "Variación ingresos": f"{rev_chg:+.1f}%" if rev_chg is not None else "nuevo",
             f"Uds {cy}":       f"{units_cy:.1f}",
             f"Uds {ly}":       f"{units_ly:.1f}" if units_ly else "—",
-            "Variación":       f"{change:+.1f}%" if change is not None else "nuevo",
         })
     st.dataframe(pd.DataFrame(detail), hide_index=True, width='stretch')
+
+    if has_prices:
+        st.caption("Ingresos estimados = unidades × precio ex-IVA del catálogo. "
+                   "Puede diferir de los ingresos reales si hay descuentos o precios variables.")
 
     # Period info
     uploaded_cy = [(r["year"], r["month"]) for r in _get_all_revenue() if r["year"] == cy]
