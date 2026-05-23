@@ -469,7 +469,7 @@ def _tab_products():
     df_rev_melt = pd.melt(
         df_rev,
         id_vars=["Producto"],
-        value_vars=[f"UIngresos {cy}", f"Ingresos {ly}"],
+        value_vars=[f"Ingresos {cy}", f"Ingresos {ly}"],
         var_name="Año",
         value_name="Ingresos (€)",
     ).dropna(subset=["Ingresos (€)"])
