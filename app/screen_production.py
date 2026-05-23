@@ -97,6 +97,25 @@ def _tab_log():
 
     recipe = recipe_by_name[recipe_name]
 
+    # ── Fetch recipe ingredients to pre-populate the reference table ───────────
+    recipe_ings = []
+    try:
+        recipe_ings = db.get_key_ingredients_for_recipe(recipe["id"])
+    except Exception:
+        pass
+
+    # Number of rows = max(3, number of key ingredients in recipe)
+    n_rows_default = max(3, len(recipe_ings))
+    # Reset row count when recipe changes
+    last_recipe = st.session_state.get("prod_last_recipe")
+    if last_recipe != recipe["id"]:
+        st.session_state["prod_n_refs"]    = n_rows_default
+        st.session_state["prod_last_recipe"] = recipe["id"]
+        # clear any previous ingredient inputs
+        for i in range(10):
+            st.session_state.pop(f"prod_ing_{i}", None)
+            st.session_state.pop(f"prod_alb_{i}", None)
+
     # ── Basic details ─────────────────────────────────────────────────────────
     col_d, col_q = st.columns(2)
     with col_d:
@@ -127,13 +146,52 @@ def _tab_log():
 
     # ── Ingredient references ─────────────────────────────────────────────────
     st.markdown("#### Referencias de ingredientes principales")
-    st.caption(
-        "Indica el número de albarán o lote del proveedor para los ingredientes "
-        "clave. No es necesario incluir todos — solo los principales "
-        "(harina, huevos, mantequilla, lácteos)."
-    )
+    if recipe_ings:
+        allergen_names = [i["name"] for i in recipe_ings if i.get("is_allergen_bearing")]
+        criteria_parts = ["≥5% del peso total"]
+        if allergen_names:
+            criteria_parts.append(f"alérgenos ({', '.join(allergen_names)})")
+        st.caption(
+            f"Ingredientes clave según criterio APPCC: {' + '.join(criteria_parts)}. "
+            f"Indica el número de albarán del proveedor para cada uno."
+        )
+    else:
+        st.caption(
+            "Indica el número de albarán o lote del proveedor para los ingredientes "
+            "clave (≥5% del peso o alérgenos)."
+        )
 
-    n_refs = st.session_state.get("prod_n_refs", 3)
+    n_refs = st.session_state.get("prod_n_refs", n_rows_default)
+
+    # Last-used albarán refs per ingredient name (from most recent run with same recipe)
+    last_alb_by_ing: dict[str, str] = {}
+    try:
+        prev_runs = db.get_production_runs_for_recipe(recipe["id"], limit=1)
+        if prev_runs:
+            for ref in prev_runs[0].get("ingredient_refs", []):
+                if ref.get("albaran_ref"):
+                    last_alb_by_ing[ref["ingredient_name"].strip().lower()] = ref["albaran_ref"]
+    except Exception:
+        pass
+
+    # Pre-populate ingredient names from recipe (if not already set by user)
+    for i, ing in enumerate(recipe_ings[:n_refs]):
+        key = f"prod_ing_{i}"
+        if key not in st.session_state:
+            pct_tag = f" ({ing['pct']}%)" if ing.get("pct") else ""
+            allergen_tag = " ⚠️" if ing.get("is_allergen_bearing") else ""
+            st.session_state[key] = ing["name"] + pct_tag + allergen_tag
+
+    # Pre-populate last-used albarán refs
+    for i in range(n_refs):
+        ing_key = f"prod_ing_{i}"
+        alb_key = f"prod_alb_{i}"
+        if alb_key not in st.session_state:
+            ing_name_val = st.session_state.get(ing_key, "")
+            if ing_name_val:
+                last_ref = last_alb_by_ing.get(ing_name_val.strip().lower(), "")
+                if last_ref:
+                    st.session_state[alb_key] = last_ref
 
     ing_refs = []
     for i in range(n_refs):
@@ -246,20 +304,34 @@ def _show_recent_runs():
         st.caption("Sin registros todavía.")
         return
 
-    h1, h2, h3, h4, h5 = st.columns([2, 1.5, 1, 1, 1.2])
+    h1, h2, h3, h4, h5, h6 = st.columns([2, 1.5, 1, 0.7, 1, 1])
     h1.markdown("**Lote**")
     h2.markdown("**Producto**")
     h3.markdown("**Formato**")
     h4.markdown("**Uds**")
     h5.markdown("**Fecha**")
+    h6.markdown("**PDF**")
 
     for run in runs:
-        c1, c2, c3, c4, c5 = st.columns([2, 1.5, 1, 1, 1.2])
+        c1, c2, c3, c4, c5, c6 = st.columns([2, 1.5, 1, 0.7, 1, 1])
         c1.code(run["lote_number"], language=None)
         c2.write(run["recipe_name"])
         c3.write(FORMAT_DISPLAY.get(run.get("format", ""), run.get("format", "—")))
         c4.write(str(run["quantity"]))
         c5.write(str(run["production_date"])[:10])
+        with c6:
+            try:
+                pdf_bytes = _generate_log_pdf(run)
+                st.download_button(
+                    "📄",
+                    data=pdf_bytes,
+                    file_name=f"registro_{run['lote_number']}.pdf",
+                    mime="application/pdf",
+                    key=f"dl_{run['id']}",
+                    help=f"Descargar registro {run['lote_number']}",
+                )
+            except Exception:
+                st.write("—")
 
 
 # =============================================================================
@@ -322,6 +394,20 @@ def _label_from_run():
     raw_date = run["production_date"]
     if isinstance(raw_date, str):
         raw_date = date.fromisoformat(raw_date[:10])
+
+    # ── Variant approval warning ─────────────────────────────────────────────
+    if variant is None:
+        st.warning(
+            "⚠️ No se encontró una variante aprobada para este producto y formato. "
+            "Los ingredientes y alérgenos no aparecerán en la etiqueta. "
+            "Aprueba la variante en la pantalla de Variantes antes de imprimir."
+        )
+    elif not variant.get("label_approved"):
+        st.warning(
+            "⚠️ La variante de este producto no está aprobada todavía. "
+            "La etiqueta se generará sin lista de ingredientes ni declaración de alérgenos. "
+            "Ve a Variantes → aprueba la ficha antes de usar esta etiqueta para entregas."
+        )
 
     # ── Delivery mode ─────────────────────────────────────────────────────────
     delivery_mode = st.radio(
@@ -421,6 +507,17 @@ def _label_manual():
         variant  = next((v for v in variants if v.get("format") == selected_fmt), None)
     except Exception:
         pass
+
+    if variant is None:
+        st.warning(
+            "⚠️ No se encontró una variante para este producto y formato. "
+            "La etiqueta se generará sin ingredientes ni alérgenos."
+        )
+    elif not variant.get("label_approved"):
+        st.warning(
+            "⚠️ La variante no está aprobada. La etiqueta se generará sin lista "
+            "de ingredientes ni alérgenos. Aprueba la ficha en la pantalla de Variantes."
+        )
 
     shelf_hours   = int((variant or {}).get("shelf_life_hours") or 48)
     fresh_storage = (variant or {}).get("storage_instructions") or "Refrigerada entre 0 y 5°C"

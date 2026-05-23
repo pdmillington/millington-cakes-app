@@ -1816,3 +1816,112 @@ def get_production_run(run_id: str) -> dict | None:
     )
     run["ingredient_refs"] = refs
     return run
+
+ 
+def get_key_ingredients_for_recipe(recipe_id: str) -> list[dict]:
+    """
+    Return the key purchased ingredients for a recipe, recursively resolving
+    sub-recipes using the same expansion logic as get_allergen_declaration.
+ 
+    "Key" means:
+      - >=5% of total final product weight, OR
+      - bears any declared allergen (value > 0 on any ALLERGEN_FIELDS)
+        determined from the ingredient's actual allergen profile
+        (ingredient override or category), consistent with the ficha.
+ 
+    Returns list of {name, quantity_g, pct, is_allergen_bearing} dicts,
+    ordered by quantity_g descending.
+    """
+ 
+    def _resolve(rid: str, scale: float, depth: int,
+                 visited: set) -> list[tuple]:
+        """
+        Recursively expand recipe into flat list of
+        (ingredient_name, grams_at_scale, has_allergen) tuples.
+        """
+        if depth > 5 or rid in visited:
+            return []
+        visited = visited | {rid}
+ 
+        lines  = _get_recipe_lines_with_allergens(rid)
+        result = []
+ 
+        for line in lines:
+            name   = line["ingredient_name"]
+            amount = line["amount"] * scale
+ 
+            if line["is_sub_recipe"]:
+                sub = _find_recipe_by_ingredient_name(name)
+                if not sub:
+                    continue
+                # Use sum of sub-recipe line amounts as reference batch size
+                sub_lines   = _get_recipe_lines_with_allergens(sub["id"])
+                sub_total_g = sum(l["amount"] for l in sub_lines) or amount
+                sub_scale   = amount / sub_total_g
+                result.extend(_resolve(sub["id"], sub_scale, depth + 1, visited))
+            else:
+                # Allergen status from actual ingredient profile, not keywords
+                eff          = _effective_allergens(line)
+                has_allergen = any(v > 0 for v in eff.values())
+                result.append((name, amount, has_allergen))
+ 
+        return result
+ 
+    flat = _resolve(recipe_id, 1.0, 0, set())
+    if not flat:
+        return []
+ 
+    # Aggregate by ingredient name (same ingredient may appear in multiple sub-recipes)
+    totals:    dict[str, float] = {}
+    allergens: dict[str, bool]  = {}
+    for name, grams, has_alg in flat:
+        totals[name]    = totals.get(name, 0) + grams
+        allergens[name] = allergens.get(name, False) or has_alg
+ 
+    total_g = sum(totals.values())
+ 
+    result = []
+    for name, g in totals.items():
+        pct         = (g / total_g * 100) if total_g else 0
+        is_allergen = allergens[name]
+        if pct >= 5.0 or is_allergen:
+            result.append({
+                "name":                name,
+                "quantity_g":          round(g, 1),
+                "pct":                 round(pct, 1),
+                "is_allergen_bearing": is_allergen,
+            })
+ 
+    result.sort(key=lambda x: x["quantity_g"], reverse=True)
+    return result
+ 
+ 
+def get_production_runs_for_recipe(recipe_id: str, limit: int = 1) -> list[dict]:
+    """Return the most recent production runs for a specific recipe (with ingredient refs)."""
+    sb   = get_client()
+    rows = (
+        sb.table("production_runs")
+          .select("*")
+          .eq("recipe_id", recipe_id)
+          .order("production_date", desc=True)
+          .order("created_at",      desc=True)
+          .limit(limit)
+          .execute()
+          .data or []
+    )
+    if rows:
+        run_ids = [r["id"] for r in rows]
+        refs    = (
+            sb.table("production_ingredient_refs")
+              .select("*")
+              .in_("production_run_id", run_ids)
+              .execute()
+              .data or []
+        )
+        refs_by_run: dict[str, list] = {}
+        for ref in refs:
+            refs_by_run.setdefault(ref["production_run_id"], []).append(ref)
+        for row in rows:
+            row["ingredient_refs"] = refs_by_run.get(row["id"], [])
+    return rows
+ 
