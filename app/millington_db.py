@@ -1832,7 +1832,14 @@ def get_key_ingredients_for_recipe(recipe_id: str) -> list[dict]:
     Returns list of {name, quantity_g, pct, is_allergen_bearing} dicts,
     ordered by quantity_g descending.
     """
- 
+    def _to_grams(name: str, amount: float) -> float:
+        """Convert unit based amount to grams using standard yield weights"""
+        name_lower = name.lower()
+        for key, weight in _UNIT_WEIGHTS_G.items():
+            if key in name_lower:
+                return amount * weight
+        return amount
+        
     def _resolve(rid: str, scale: float, depth: int,
                  visited: set) -> list[tuple]:
         """
