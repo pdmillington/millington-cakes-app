@@ -85,14 +85,14 @@ def get_current_prices(cake_code: str) -> list[dict]:
 _UNIT_WEIGHTS_G = {
     "huevos":    50.0,   # medium egg, net edible weight
     "manzanas":  150.0,  # medium apple
+    "limones":   65.0,   # medium-large lemon, juice + zest combined yield
+    "limas":     45.0,   # medium-large lime, juice + zest combined yield
+    "naranja":   80.0,   # medium orange, juice + zest combined yield
 }
 
 # Unit ingredients to silently ignore (only part used, weight negligible,
 # or weight not meaningful for costing)
 _UNIT_IGNORE = {
-    "limones",
-    "limas",
-    "naranja",
     "vainilla rama",
     "canela en rama",
 }
