@@ -292,53 +292,41 @@ multiples — no numeric size codes needed.
             )
 
         # ── Formats & labour ──────────────────────────────────────────────────
-        with st.expander("📦 Formats & labour times"):
+        if not is_sub_recipe:
+         with st.expander("📦 Formats & labour times"):
+            st.caption(
+                "Enable smaller formats and set production batch times. "
+                "The calculator uses these to derive per-unit labour costs."
+            )
 
-            if not is_sub_recipe:
-                st.caption(
-                    "Enable smaller formats and set production batch times. "
-                    "The calculator uses these to derive per-unit labour costs."
+            # ── Format availability ───────────────────────────────────────────
+            has_individual = st.checkbox(
+                "Available as Individual",
+                key=f"field_has_individual_{p}"
+            )
+            if has_individual:
+                individual_weight = st.number_input(
+                    "Individual weight (g)", min_value=1.0,
+                    key=f"field_individual_weight_{p}",
+                    help="Typical weight per individual portion"
                 )
-
-                # ── Format availability ───────────────────────────────────────
-                has_individual = st.checkbox(
-                    "Available as Individual",
-                    key=f"field_has_individual_{p}"
-                )
-                if has_individual:
-                    individual_weight = st.number_input(
-                        "Individual weight (g)", min_value=1.0,
-                        key=f"field_individual_weight_{p}",
-                        help="Typical weight per individual portion"
-                    )
-                else:
-                    individual_weight = None
-
-                has_bocado = st.checkbox(
-                    "Available as Bocado",
-                    key=f"field_has_bocado_{p}"
-                )
-                if has_bocado:
-                    bocado_weight = st.number_input(
-                        "Bocado weight (g)", min_value=1.0,
-                        key=f"field_bocado_weight_{p}",
-                        help="Typical weight per bocado piece"
-                    )
-                else:
-                    bocado_weight = None
-
             else:
-                # Sub-recipes don't have formats — set defaults for save block
-                has_individual  = False
                 individual_weight = None
-                has_bocado      = False
-                bocado_weight   = None
-                st.caption(
-                    "Component recipe — set batch size and labour times "
-                    "used to calculate the cost of this component."
-                )
 
-            # ── Labour table — always shown ───────────────────────────────────
+            has_bocado = st.checkbox(
+                "Available as Bocado",
+                key=f"field_has_bocado_{p}"
+            )
+            if has_bocado:
+                bocado_weight = st.number_input(
+                    "Bocado weight (g)", min_value=1.0,
+                    key=f"field_bocado_weight_{p}",
+                    help="Typical weight per bocado piece"
+                )
+            else:
+                bocado_weight = None
+
+            # ── Labour table ──────────────────────────────────────────────────
             st.markdown("**Labour reference times**")
 
             # Header
@@ -348,9 +336,9 @@ multiples — no numeric size codes needed.
             lh2.markdown("**Prep hrs**")
             lh3.markdown("**Oven hrs**")
 
-            # Standard / component row — always shown
+            # Standard row — always shown
             ls0, ls1, ls2, ls3 = st.columns([1.2, 0.8, 1, 1])
-            ls0.markdown("Standard" if not is_sub_recipe else "Component")
+            ls0.markdown("Standard")
             with ls1:
                 ref_batch_size = st.number_input(
                     "batch_std", min_value=0,
@@ -370,51 +358,45 @@ multiples — no numeric size codes needed.
                     key=f"field_oven_hours_{p}"
                 )
 
-            if not is_sub_recipe:
-                # Individual row — only if has_individual ticked
-                if has_individual:
-                    li0, li1, li2, li3 = st.columns([1.2, 0.8, 1, 1])
-                    li0.markdown("Individual")
-                    li1.markdown(f"`{ws_batch_ind}`")
-                    with li2:
-                        small_prep_hours = st.number_input(
-                            "prep_ind", min_value=0.0, step=0.25,
-                            label_visibility="collapsed",
-                            key=f"field_small_prep_{p}"
-                        )
-                    with li3:
-                        small_oven_hours = st.number_input(
-                            "oven_ind", min_value=0.0, step=0.25,
-                            label_visibility="collapsed",
-                            key=f"field_small_oven_{p}"
-                        )
-                else:
-                    small_prep_hours = 0.0
-                    small_oven_hours = 0.0
-
-                # Bocado row — only if has_bocado ticked
-                if has_bocado:
-                    lb0, lb1, lb2, lb3 = st.columns([1.2, 0.8, 1, 1])
-                    lb0.markdown("Bocado")
-                    lb1.markdown(f"`{ws_batch_boc}`")
-                    with lb2:
-                        bocado_prep_hours = st.number_input(
-                            "prep_boc", min_value=0.0, step=0.25,
-                            label_visibility="collapsed",
-                            key=f"field_bocado_prep_{p}"
-                        )
-                    with lb3:
-                        bocado_oven_hours = st.number_input(
-                            "oven_boc", min_value=0.0, step=0.25,
-                            label_visibility="collapsed",
-                            key=f"field_bocado_oven_{p}"
-                        )
-                else:
-                    bocado_prep_hours = 0.0
-                    bocado_oven_hours = 0.0
+            # Individual row — only if has_individual ticked
+            if has_individual:
+                li0, li1, li2, li3 = st.columns([1.2, 0.8, 1, 1])
+                li0.markdown("Individual")
+                li1.markdown(f"`{ws_batch_ind}`")
+                with li2:
+                    small_prep_hours = st.number_input(
+                        "prep_ind", min_value=0.0, step=0.25,
+                        label_visibility="collapsed",
+                        key=f"field_small_prep_{p}"
+                    )
+                with li3:
+                    small_oven_hours = st.number_input(
+                        "oven_ind", min_value=0.0, step=0.25,
+                        label_visibility="collapsed",
+                        key=f"field_small_oven_{p}"
+                    )
             else:
-                small_prep_hours  = 0.0
-                small_oven_hours  = 0.0
+                small_prep_hours = 0.0
+                small_oven_hours = 0.0
+
+            # Bocado row — only if has_bocado ticked
+            if has_bocado:
+                lb0, lb1, lb2, lb3 = st.columns([1.2, 0.8, 1, 1])
+                lb0.markdown("Bocado")
+                lb1.markdown(f"`{ws_batch_boc}`")
+                with lb2:
+                    bocado_prep_hours = st.number_input(
+                        "prep_boc", min_value=0.0, step=0.25,
+                        label_visibility="collapsed",
+                        key=f"field_bocado_prep_{p}"
+                    )
+                with lb3:
+                    bocado_oven_hours = st.number_input(
+                        "oven_boc", min_value=0.0, step=0.25,
+                        label_visibility="collapsed",
+                        key=f"field_bocado_oven_{p}"
+                    )
+            else:
                 bocado_prep_hours = 0.0
                 bocado_oven_hours = 0.0
 
@@ -520,7 +502,98 @@ multiples — no numeric size codes needed.
             st.caption("Ingredient costs will appear here once prices "
                        "are set in the Ingredients screen.")
 
-        # ── Save / Cancel ─────────────────────────────────────────────────────
+        # ── PCC Steps ─────────────────────────────────────────────────────────
+        st.divider()
+        st.markdown("#### 🌡️ Puntos de Control Crítico (PCC)")
+        st.caption(
+            "Define los pasos de elaboración que requieren control de temperatura. "
+            "Estos pasos se mostrarán en el registro de producción para su confirmación. "
+            "Solo incluye pasos con aplicación de calor (horneado, cocción, pasteurización). "
+            "No incluyas pasos en frío — se controlan por prerrequisitos."
+        )
+
+        pcc_key = f"pcc_steps_{selected_id}"
+        if pcc_key not in st.session_state:
+            # Load existing PCC steps from DB
+            existing_pcc = []
+            if selected_id != "new":
+                try:
+                    existing_pcc = db.get_pcc_steps(selected_id)
+                except Exception:
+                    pass
+            st.session_state[pcc_key] = existing_pcc or []
+            st.session_state[pcc_key].append(_empty_pcc_step())
+
+        working_pcc = st.session_state[pcc_key]
+
+        # Header
+        ph1, ph2, ph3, ph4, ph5 = st.columns([2.5, 1, 1, 1, 0.5])
+        ph1.markdown("**Elaboración**")
+        ph2.markdown("**Temp. objetivo (°C)**")
+        ph3.markdown("**Tiempo (min)**")
+        ph4.markdown("**Límite crítico (°C)**")
+        ph5.markdown("")
+
+        pcc_remove_idx = None
+        for idx, step in enumerate(working_pcc):
+            pc1, pc2, pc3, pc4, pc5 = st.columns([2.5, 1, 1, 1, 0.5])
+            with pc1:
+                step_name = st.text_input(
+                    "Elaboración", key=f"pcc_name_{selected_id}_{idx}",
+                    value=step.get("step_name", ""),
+                    placeholder="e.g. Horneado bizcocho",
+                    label_visibility="visible" if idx == 0 else "collapsed"
+                )
+            with pc2:
+                target_temp = st.number_input(
+                    "Temp. objetivo", key=f"pcc_temp_{selected_id}_{idx}",
+                    value=float(step.get("target_temp_c") or 0),
+                    min_value=0.0, max_value=300.0, step=5.0,
+                    label_visibility="visible" if idx == 0 else "collapsed"
+                )
+            with pc3:
+                target_time = st.number_input(
+                    "Tiempo", key=f"pcc_time_{selected_id}_{idx}",
+                    value=int(step.get("target_time_min") or 0),
+                    min_value=0, max_value=300, step=5,
+                    label_visibility="visible" if idx == 0 else "collapsed"
+                )
+            with pc4:
+                critical_limit = st.number_input(
+                    "Límite crítico", key=f"pcc_limit_{selected_id}_{idx}",
+                    value=float(step.get("critical_limit_temp_c") or 70.0),
+                    min_value=0.0, max_value=300.0, step=1.0,
+                    label_visibility="visible" if idx == 0 else "collapsed",
+                    help="Temperatura mínima que debe alcanzarse para destruir patógenos. "
+                         "Normalmente 70°C/2min o 75°C instantáneo."
+                )
+            with pc5:
+                if step_name.strip() and st.button(
+                    "✕", key=f"pcc_del_{selected_id}_{idx}",
+                    help="Eliminar este paso"
+                ):
+                    pcc_remove_idx = idx
+
+            st.session_state[pcc_key][idx] = {
+                "id":                  step.get("id"),
+                "step_name":           step_name.strip(),
+                "target_temp_c":       target_temp if target_temp > 0 else None,
+                "target_time_min":     target_time if target_time > 0 else None,
+                "critical_limit_temp_c": critical_limit,
+                "sort_order":          idx,
+            }
+
+        if pcc_remove_idx is not None:
+            del st.session_state[pcc_key][pcc_remove_idx]
+            st.rerun()
+
+        # Auto-add new row when last row has a name
+        last_pcc = working_pcc[-1] if working_pcc else {}
+        if last_pcc.get("step_name", "").strip():
+            st.session_state[pcc_key].append(_empty_pcc_step())
+            st.rerun()
+
+        # ── Save / Cancel ─────────────────────────────────────────────────────────
         st.divider()
         col_save, col_cancel = st.columns([1, 3])
 
@@ -566,6 +639,22 @@ multiples — no numeric size codes needed.
                         if l.get("ingredient_id") and l.get("amount", 0) > 0
                     ]
                     db.replace_recipe_lines(saved["id"], clean_lines)
+
+                    # Save PCC steps
+                    clean_pcc = [
+                        {
+                            "id":                    s.get("id"),
+                            "step_name":             s["step_name"],
+                            "target_temp_c":         s.get("target_temp_c"),
+                            "target_time_min":       s.get("target_time_min"),
+                            "critical_limit_temp_c": s.get("critical_limit_temp_c") or 70.0,
+                            "sort_order":            s.get("sort_order", i),
+                        }
+                        for i, s in enumerate(st.session_state.get(f"pcc_steps_{selected_id}", []))
+                        if s.get("step_name", "").strip()
+                    ]
+                    db.replace_pcc_steps(saved["id"], clean_pcc)
+
                     st.success(f"Saved: {name}", icon="✅")
                     _load_recipe(saved["id"], code_options)
 
@@ -592,6 +681,7 @@ def _load_recipe(recipe_id: str, code_options: dict):
         or k.startswith("line_ing_")
         or k.startswith("line_amt_")
         or k.startswith("line_del_")
+        or k.startswith("pcc_")
     ]
     for k in keys_to_clear:
         del st.session_state[k]
@@ -665,6 +755,17 @@ def _empty_line() -> dict:
         "ingredient_name": "",
         "amount":          0.0,
         "cost_per_unit":   None,
+    }
+
+
+def _empty_pcc_step() -> dict:
+    return {
+        "id":                    None,
+        "step_name":             "",
+        "target_temp_c":         None,
+        "target_time_min":       None,
+        "critical_limit_temp_c": 70.0,
+        "sort_order":            0,
     }
 
 

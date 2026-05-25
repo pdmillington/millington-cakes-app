@@ -1925,3 +1925,56 @@ def get_production_runs_for_recipe(recipe_id: str, limit: int = 1) -> list[dict]
             row["ingredient_refs"] = refs_by_run.get(row["id"], [])
     return rows
  
+# PCC STEPS
+
+def get_pcc_steps(recipe_id: str) -> list[dict]:
+    """Return all PCC steps for a recipe, ordered by sort_order."""
+    sb = get_client()
+    return (
+        sb.table("recipe_pcc_steps")
+          .select("*")
+          .eq("recipe_id", recipe_id)
+          .order("sort_order")
+          .execute()
+          .data or []
+    )
+ 
+ 
+def replace_pcc_steps(recipe_id: str, steps: list[dict]) -> None:
+    """
+    Replace all PCC steps for a recipe.
+    Deletes steps that are no longer present, upserts the rest.
+    """
+    sb = get_client()
+ 
+    # Fetch existing step IDs
+    existing = (
+        sb.table("recipe_pcc_steps")
+          .select("id")
+          .eq("recipe_id", recipe_id)
+          .execute()
+          .data or []
+    )
+    existing_ids = {r["id"] for r in existing}
+    incoming_ids = {s["id"] for s in steps if s.get("id")}
+ 
+    # Delete removed steps
+    ids_to_delete = existing_ids - incoming_ids
+    if ids_to_delete:
+        sb.table("recipe_pcc_steps")           .delete()           .in_("id", list(ids_to_delete))           .execute()
+ 
+    # Upsert remaining
+    for i, step in enumerate(steps):
+        row = {
+            "recipe_id":             recipe_id,
+            "step_name":             step["step_name"],
+            "target_temp_c":         step.get("target_temp_c"),
+            "target_time_min":       step.get("target_time_min"),
+            "critical_limit_temp_c": step.get("critical_limit_temp_c") or 70.0,
+            "sort_order":            step.get("sort_order", i),
+        }
+        if step.get("id"):
+            sb.table("recipe_pcc_steps")               .update(row)               .eq("id", step["id"])               .execute()
+        else:
+            sb.table("recipe_pcc_steps")               .insert(row)               .execute()
+

@@ -127,22 +127,107 @@ def _tab_log():
             "Unidades producidas", min_value=1, value=1, step=1, key="prod_qty"
         )
 
-    # ── PCC — oven control (APPCC record) ────────────────────────────────────
-    st.markdown("#### Control de punto crítico (PCC) — horneado")
+    # ── PCC steps — pre-populated from recipe ────────────────────────────────
+    st.markdown("#### Control de Puntos Críticos (PCC) — registro APPCC")
     st.caption(
-        "Registro obligatorio APPCC. Anota la temperatura y tiempo alcanzados."
+        "Confirma la temperatura y tiempo alcanzados en cada paso crítico. "
+        "Pasos cargados desde la definición de la receta."
     )
-    col_t, col_m = st.columns(2)
-    with col_t:
-        oven_temp = st.number_input(
-            "Temperatura horno alcanzada (°C)",
-            min_value=0, max_value=300, value=180, step=5, key="prod_temp"
+
+    # Load PCC steps when recipe changes
+    pcc_steps_key = f"prod_pcc_{recipe['id']}"
+    if pcc_steps_key not in st.session_state:
+        try:
+            template_steps = db.get_pcc_steps(recipe["id"])
+        except Exception:
+            template_steps = []
+        # Initialise with template values as defaults
+        st.session_state[pcc_steps_key] = [
+            {
+                "step_name":             s["step_name"],
+                "target_temp_c":         s.get("target_temp_c") or 0,
+                "target_time_min":       s.get("target_time_min") or 0,
+                "critical_limit_temp_c": s.get("critical_limit_temp_c") or 70.0,
+                "temp_achieved_c":       s.get("target_temp_c") or 0,
+                "time_achieved_min":     s.get("target_time_min") or 0,
+            }
+            for s in template_steps
+        ]
+
+    pcc_steps = st.session_state[pcc_steps_key]
+
+    if not pcc_steps:
+        st.info(
+            "ℹ️ Esta receta no tiene pasos PCC definidos. "
+            "Defínelos en la pantalla de Recetas para que aparezcan aquí automáticamente."
         )
-    with col_m:
-        bake_time = st.number_input(
-            "Tiempo de horneado (minutos)",
-            min_value=0, max_value=300, value=45, step=5, key="prod_time"
-        )
+        # Fallback: single manual entry
+        col_t, col_m = st.columns(2)
+        with col_t:
+            oven_temp = st.number_input(
+                "Temperatura alcanzada (°C)",
+                min_value=0, max_value=300, value=180, step=5, key="prod_temp"
+            )
+        with col_m:
+            bake_time = st.number_input(
+                "Tiempo (minutos)",
+                min_value=0, max_value=300, value=45, step=5, key="prod_time"
+            )
+        pcc_steps = [{
+            "step_name":             "Horneado",
+            "temp_achieved_c":       oven_temp,
+            "time_achieved_min":     bake_time,
+            "critical_limit_temp_c": 70.0,
+        }]
+        st.session_state[pcc_steps_key] = pcc_steps
+    else:
+        # Header
+        ph1, ph2, ph3, ph4, ph5 = st.columns([2.5, 1.2, 1, 1, 1.2])
+        ph1.markdown("**Elaboración**")
+        ph2.markdown("**Temp. alcanzada (°C)**")
+        ph3.markdown("**Tiempo (min)**")
+        ph4.markdown("**Límite crítico**")
+        ph5.markdown("**¿OK?**")
+
+        for idx, step in enumerate(pcc_steps):
+            pc1, pc2, pc3, pc4, pc5 = st.columns([2.5, 1.2, 1, 1, 1.2])
+            pc1.markdown(f"**{step['step_name']}**")
+            with pc2:
+                temp_achieved = st.number_input(
+                    "temp", key=f"prod_pcc_temp_{recipe['id']}_{idx}",
+                    value=float(step.get("temp_achieved_c") or step.get("target_temp_c") or 0),
+                    min_value=0.0, max_value=300.0, step=1.0,
+                    label_visibility="collapsed"
+                )
+            with pc3:
+                time_achieved = st.number_input(
+                    "time", key=f"prod_pcc_time_{recipe['id']}_{idx}",
+                    value=int(step.get("time_achieved_min") or step.get("target_time_min") or 0),
+                    min_value=0, max_value=300, step=1,
+                    label_visibility="collapsed"
+                )
+            limit = step.get("critical_limit_temp_c") or 70.0
+            pc4.markdown(f"≥ {limit:.0f} °C")
+            ok = temp_achieved >= limit
+            pc5.markdown("✅" if ok else "❌ **¡Revisar!**")
+
+            st.session_state[pcc_steps_key][idx] = {
+                **step,
+                "temp_achieved_c":   temp_achieved,
+                "time_achieved_min": time_achieved,
+                "critical_limit_met": ok,
+            }
+
+    # Build pcc_log for saving
+    pcc_log = [
+        {
+            "step_name":          s["step_name"],
+            "temp_achieved_c":    s.get("temp_achieved_c"),
+            "time_min":           s.get("time_achieved_min"),
+            "critical_limit_met": s.get("critical_limit_met", True),
+        }
+        for s in st.session_state.get(pcc_steps_key, [])
+    ]
 
     # ── Ingredient references ─────────────────────────────────────────────────
     st.markdown("#### Referencias de ingredientes principales")
@@ -244,10 +329,11 @@ def _tab_log():
                 fmt          = selected_fmt,
                 prod_date    = prod_date,
                 quantity     = int(quantity),
-                oven_temp_c  = float(oven_temp),
-                bake_time_min= int(bake_time),
+                oven_temp_c  = None,
+                bake_time_min= None,
                 notes        = notes.strip() or None,
                 ing_refs     = ing_refs,
+                pcc_log      = pcc_log,
             )
             st.session_state["last_saved_run"] = run
             st.session_state["prod_n_refs"]    = 3   # reset rows
@@ -642,12 +728,10 @@ def _generate_log_pdf(run: dict) -> bytes:
     # Main details table
     prod_date = str(run.get("production_date", ""))[:10]
     details = [
-        ["Receta",           run.get("recipe_name", "—")],
-        ["Formato",          FORMAT_DISPLAY.get(run.get("format", ""), "—")],
-        ["Fecha elaboración",prod_date],
+        ["Receta",              run.get("recipe_name", "—")],
+        ["Formato",             FORMAT_DISPLAY.get(run.get("format", ""), "—")],
+        ["Fecha elaboración",   prod_date],
         ["Unidades producidas", str(run.get("quantity", "—"))],
-        ["Temperatura horno",f"{run.get('oven_temp_c', '—')} °C"],
-        ["Tiempo horneado",  f"{run.get('bake_time_min', '—')} min"],
     ]
     tbl = Table(details, colWidths=[5.5*cm, 11*cm])
     tbl.setStyle(TableStyle([
@@ -664,6 +748,46 @@ def _generate_log_pdf(run: dict) -> bytes:
     ]))
     story.append(tbl)
     story.append(Spacer(1, 0.5*cm))
+
+    # PCC log
+    import json as _json
+    pcc_log = run.get("pcc_log")
+    if isinstance(pcc_log, str):
+        try:
+            pcc_log = _json.loads(pcc_log)
+        except Exception:
+            pcc_log = []
+    if pcc_log:
+        story.append(Paragraph("Registro de Puntos de Control Crítico (PCC)",
+                               ps("PH", font=bold_font, size=11, sa=4)))
+        pcc_data = [["Elaboración", "Temp. alcanzada", "Tiempo", "Límite crítico", "Resultado"]]
+        for s in pcc_log:
+            ok    = s.get("critical_limit_met", True)
+            pcc_data.append([
+                s.get("step_name", "—"),
+                f"{s.get('temp_achieved_c', '—')} °C",
+                f"{s.get('time_min', '—')} min",
+                f"≥ {s.get('critical_limit_temp_c', 70):.0f} °C"
+                    if s.get('critical_limit_temp_c') else "≥ 70 °C",
+                "✓ Correcto" if ok else "✗ REVISAR",
+            ])
+        pcc_tbl = Table(pcc_data, colWidths=[5.5*cm, 2.5*cm, 2*cm, 2.5*cm, 2.5*cm])
+        pcc_tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0), colors.HexColor("#9ca3af")),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), bold_font),
+            ("FONTNAME",      (0, 1), (-1, -1), body_font),
+            ("FONTSIZE",      (0, 0), (-1, -1), 9),
+            ("LEADING",       (0, 0), (-1, -1), 13),
+            ("TOPPADDING",    (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+            ("ROWBACKGROUNDS",(0,1), (-1,-1), [colors.white, colors.HexColor("#faf9f7")]),
+            ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#d1cdc7")),
+            ("TEXTCOLOR",     (4, 1), (4, -1), colors.HexColor("#16a34a")),
+        ]))
+        story.append(pcc_tbl)
+        story.append(Spacer(1, 0.5*cm))
 
     # Ingredient references
     ing_refs = run.get("ingredient_refs", [])
