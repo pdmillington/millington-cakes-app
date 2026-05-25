@@ -1855,7 +1855,8 @@ def get_key_ingredients_for_recipe(recipe_id: str) -> list[dict]:
  
         for line in lines:
             name   = line["ingredient_name"]
-            amount = line["amount"] * scale
+            raw_amount = line["amount"] * scale
+            amount = _to_grams(name, raw_amount)
  
             if line["is_sub_recipe"]:
                 sub = _find_recipe_by_ingredient_name(name)
@@ -1863,7 +1864,10 @@ def get_key_ingredients_for_recipe(recipe_id: str) -> list[dict]:
                     continue
                 # Use sum of sub-recipe line amounts as reference batch size
                 sub_lines   = _get_recipe_lines_with_allergens(sub["id"])
-                sub_total_g = sum(l["amount"] for l in sub_lines) or amount
+                sub_total_g = sum(
+                    _to_grams(l["ingredient_name"], l["amount"])
+                    for l in sub_lines
+                    ) or amount
                 sub_scale   = amount / sub_total_g
                 result.extend(_resolve(sub["id"], sub_scale, depth + 1, visited))
             else:
