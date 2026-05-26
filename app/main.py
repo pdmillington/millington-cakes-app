@@ -25,6 +25,7 @@ from screen_catalogue   import screen_catalogue
 from screen_prices      import screen_prices
 from screen_kpis        import screen_kpis
 from screen_production  import screen_production
+from screen_todos       import screen_todos
 
 # =============================================================================
 # Page config
@@ -73,6 +74,8 @@ def sidebar() -> str:
         st.divider()
 
         st.markdown("**Daily use**")
+        if st.button("📋 Tareas", use_container_width=True):
+            st.session_state.screen = "todos"
         if st.button("Cost calculator", use_container_width=True):
             st.session_state.screen = "calculator"
         if st.button("Recipe cost breakdown", use_container_width=True):
@@ -266,6 +269,7 @@ SCREENS = {
     "prices":      screen_prices,
     "kpis":        screen_kpis,
     "production":  screen_production,
+    "todos":       screen_todos 
 }
 
 

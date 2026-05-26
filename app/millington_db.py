@@ -2074,3 +2074,35 @@ def replace_pcc_steps(recipe_id: str, steps: list[dict]) -> None:
         else:
             sb.table("recipe_pcc_steps")               .insert(row)               .execute()
 
+# =============================================================================
+# TODO DB FUNCTIONS — append to millington_db.py
+# =============================================================================
+
+def get_todos() -> list[dict]:
+    """Return all todos ordered by priority then due date."""
+    sb = get_client()
+    return (
+        sb.table("todos")
+          .select("*")
+          .order("due_date", desc=False, nullsfirst=False)
+          .execute()
+          .data or []
+    )
+
+
+def save_todo(record: dict) -> dict:
+    """Insert or update a todo. Returns the saved record."""
+    sb = get_client()
+    if record.get("id"):
+        sb.table("todos").update({
+            k: v for k, v in record.items() if k != "id"
+        }).eq("id", record["id"]).execute()
+        return record
+    else:
+        result = sb.table("todos").insert(record).execute()
+        return (result.data or [{}])[0]
+
+
+def delete_todo(todo_id: str) -> None:
+    """Delete a todo by id."""
+    get_client().table("todos").delete().eq("id", todo_id).execute()
