@@ -474,7 +474,7 @@ def _ficha_row(ing: dict, cat_options: dict, cat_map: dict):
                 "category_id":          selected_cat_id,
                 "allergen_override":    override_new,
                 "allergen_notes":       new_notes or None,
-                "label_name":           label_name_es or None,
+                "label_name_es":        label_name_es or None,
                 "label_name_es_2":      label_name_es_2 or None,
                 "label_name_es_2_pct":  label_name_es_2_pct if label_name_es_2 else None,
                 "label_name_es_3":      label_name_es_3 or None,
