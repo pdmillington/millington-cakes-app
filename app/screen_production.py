@@ -539,8 +539,8 @@ def _label_from_run():
         best_before  = raw_date + timedelta(days=int(frozen_days))
         storage_text = (
             "Conservar congelado a -18°C o inferior. "
-            "Una vez descongelado, mantener refrigerado entre 0 y 5°C "
-            "y consumir en un plazo de 48 horas. No volver a congelar."
+            "Descongelar en frigorífico entre 0 y 4°C, "
+            "y consumir en un plazo de 24 horas. No volver a congelar."
         )
     else:
         best_before  = raw_date + timedelta(hours=shelf_hours)
@@ -655,8 +655,8 @@ def _label_manual():
         best_before  = prod_date + timedelta(days=int(frozen_days))
         storage_text = (
             "Conservar congelado a -18°C o inferior. "
-            "Una vez descongelado, mantener refrigerado entre 0 y 5°C "
-            "y consumir en un plazo de 48 horas. No volver a congelar."
+            "Descongelar en frigorífico entre 0 y 4°C, "
+            "y consumir en un plazo de 24 horas. No volver a congelar."
         )
     else:
         best_before  = prod_date + timedelta(hours=shelf_hours)
