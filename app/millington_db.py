@@ -614,17 +614,21 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
         )
 
         entry = {
-            "amount":            float(row.get("amount") or 0),
-            "sort_order":        row.get("sort_order", 0),
-            "ingredient_id":     ing.get("id"),
-            "ingredient_name":   ing.get("name", ""),
-            "label_name_es":     ing_label,
-            "is_sub_recipe":     bool(ing.get("is_sub_recipe")),
-            "allergen_override": bool(ing.get("allergen_override")),
-            "allergen_notes":    ing.get("allergen_notes"),
-            "category_label":    cat.get("label_name_es", ""),
-            "category":          cat,
-            "ingredient":        ing,
+            "amount":               float(row.get("amount") or 0),
+            "sort_order":           row.get("sort_order", 0),
+            "ingredient_id":        ing.get("id"),
+            "ingredient_name":      ing.get("name", ""),
+            "label_name_es":        ing_label,
+            "label_name_es_2":      ing.get("label_name_es_2"),
+            "label_name_es_2_pct":  ing.get("label_name_es_2_pct"),
+            "label_name_es_3":      ing.get("label_name_es_3"),
+            "label_name_es_3_pct":  ing.get("label_name_es_3_pct"),
+            "is_sub_recipe":        bool(ing.get("is_sub_recipe")),
+            "allergen_override":    bool(ing.get("allergen_override")),
+            "allergen_notes":       ing.get("allergen_notes"),
+            "category_label":       cat.get("label_name_es", ""),
+            "category":             cat,
+            "ingredient":           ing,
         }
         lines.append(entry)
 
