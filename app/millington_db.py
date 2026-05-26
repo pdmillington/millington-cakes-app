@@ -779,6 +779,7 @@ def get_allergen_declaration(
                     ing_for_label.append((
                         sub_ing[0],
                         (sub_ing[1] * sub_scale) if sub_ing[1] else 0.0,
+                        sub_ing[2] if len(sub_ing) > 2 else False,
                     ))
             else:
                 warnings.append(
@@ -804,23 +805,24 @@ def get_allergen_declaration(
                 or name
             )
             if label_name:
-                grams = _to_label_grams(name, amount)
-                comp2     = line.get("label_name_es_2")
-                pct2      = float(line.get("label_name_es_2_pct") or 0) / 100
-                comp3     = line.get("label_name_es_3")
-                pct3      = float(line.get("label_name_es_3_pct") or 0) / 100
-                total_comp = pct2 + pct3
+                grams        = _to_label_grams(name, amount)
+                eff          = _effective_allergens(line)
+                has_allergen = any(v > 0 for v in eff.values())
+                comp2        = line.get("label_name_es_2")
+                pct2         = float(line.get("label_name_es_2_pct") or 0) / 100
+                comp3        = line.get("label_name_es_3")
+                pct3         = float(line.get("label_name_es_3_pct") or 0) / 100
+                total_comp   = pct2 + pct3
 
                 if comp2 and 0 < total_comp < 1.0:
-                    # Split weight across components
                     pct1 = 1.0 - total_comp
-                    ing_for_label.append((label_name, grams * pct1))
-                    ing_for_label.append((comp2,      grams * pct2))
+                    # Components inherit parent allergen status (backlog item 10)
+                    ing_for_label.append((label_name, grams * pct1, has_allergen))
+                    ing_for_label.append((comp2,      grams * pct2, has_allergen))
                     if comp3 and pct3 > 0:
-                        ing_for_label.append((comp3, grams * pct3))
+                        ing_for_label.append((comp3, grams * pct3, has_allergen))
                 else:
-                    # Simple ingredient — single label name
-                    ing_for_label.append((label_name, grams))
+                    ing_for_label.append((label_name, grams, has_allergen))
 
             # Flag ingredients needing verification
             notes = line.get("allergen_notes") or ""
@@ -892,9 +894,15 @@ def get_ingredient_label_text(recipe_id: str) -> dict:
 
     # Aggregate by label name — same label from different ingredients
     # (e.g. egg yolk + egg white both become "huevo")
-    aggregated: dict[str, float] = {}
-    for label, amount in ing_names:
-        aggregated[label] = aggregated.get(label, 0) + (amount or 0)
+    # ing_names tuples are (label, amount_g, has_allergen)
+    aggregated:        dict[str, float] = {}
+    allergen_by_label: dict[str, bool]  = {}
+    for entry in ing_names:
+        label        = entry[0]
+        amount       = entry[1]
+        has_allergen = entry[2] if len(entry) > 2 else False
+        aggregated[label]        = aggregated.get(label, 0) + (amount or 0)
+        allergen_by_label[label] = allergen_by_label.get(label, False) or has_allergen
 
     # Sort by amount descending
     ordered = sorted(aggregated.items(), key=lambda x: x[1], reverse=True)
@@ -904,23 +912,14 @@ def get_ingredient_label_text(recipe_id: str) -> dict:
     if ingredient_list:
         ingredient_list = ingredient_list[0].upper() + ingredient_list[1:]
 
-    # Identify which label names are allergens (for bolding in PDF)
-    # Build reverse map: label_name_es -> allergen field(s) it triggers
-    # This requires checking each ingredient's category
-    sb          = get_client()
-    cat_result  = (
-        sb.table("ingredient_categories")
-        .select("label_name_es, " + ", ".join(ALLERGEN_FIELDS))
-        .execute()
-    )
-    allergen_labels: dict[str, list[str]] = {}
-    for cat in cat_result.data or []:
-        label = cat["label_name_es"]
-        triggered = [
-            f for f in ALLERGEN_FIELDS if int(cat.get(f) or 0) == 1
-        ]
-        if triggered:
-            allergen_labels[label] = triggered
+    # Build allergen_fields map directly from ingredient data —
+    # {label_name_es: True} for any label that carries an allergen.
+    # Used by apply_allergen_bold() for PDF bold rendering.
+    allergen_labels = {
+        label: True
+        for label, has_alg in allergen_by_label.items()
+        if has_alg
+    }
 
     return {
         "label_text":      ingredient_list,
