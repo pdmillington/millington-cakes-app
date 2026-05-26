@@ -930,6 +930,33 @@ def get_ingredient_label_text(recipe_id: str) -> dict:
     }
 
 
+def apply_allergen_bold(label_text: str, allergen_labels: dict) -> str:
+    """
+    Wrap allergen-bearing ingredient names in **markers** for bold rendering.
+    allergen_labels is the dict returned by get_ingredient_label_text()
+    under the key "allergen_fields": {label_name_es: [allergen_fields]}.
+
+    Only the first occurrence of each allergen name is wrapped (per EU 1169/2011
+    which requires allergens to be emphasised but not necessarily every instance).
+
+    Returns the label text with allergen names wrapped in ** for bold.
+    Capitalisation of the first letter of the whole string is preserved.
+    """
+    import re
+    if not label_text or not allergen_labels:
+        return label_text
+
+    result = label_text
+    for name in sorted(allergen_labels.keys(), key=len, reverse=True):
+        # Match case-insensitively, whole word/phrase
+        pattern = re.compile(re.escape(name), re.IGNORECASE)
+        match   = pattern.search(result)
+        if match:
+            result = result[:match.start()] + f"**{match.group()}**" + result[match.end():]
+
+    return result
+
+
 # -----------------------------------------------------------------------------
 # Reference data (cake codes, size tiers, price channels)
 # These rarely change so we cache them for the session.

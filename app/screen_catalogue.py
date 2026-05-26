@@ -959,12 +959,27 @@ def _add_ficha_page(
         declaration = {"contiene": [], "puede_contener": [], "warnings": []}
 
     # If no stored label text, generate from recipe
+    allergen_labels = {}
     if not label_text and recipe_id:
         try:
-            label_data = db.get_ingredient_label_text(recipe_id)
-            label_text = label_data.get("label_text") or ""
+            label_data      = db.get_ingredient_label_text(recipe_id)
+            label_text      = label_data.get("label_text") or ""
+            allergen_labels = label_data.get("allergen_fields") or {}
         except Exception:
             label_text = ""
+    elif recipe_id:
+        # Fetch allergen map for bolding even when stored label exists
+        try:
+            label_data      = db.get_ingredient_label_text(recipe_id)
+            allergen_labels = label_data.get("allergen_fields") or {}
+        except Exception:
+            allergen_labels = {}
+
+    # Apply allergen bolding and convert ** markers to ReportLab <b> tags
+    if label_text and allergen_labels:
+        import re as _re
+        label_text = db.apply_allergen_bold(label_text, allergen_labels)
+        label_text = _re.sub(r"\*\*(.+?)\*\*", r"<b></b>", label_text)
 
     contiene = (
         ", ".join(a.capitalize() for a in declaration.get("contiene", []))

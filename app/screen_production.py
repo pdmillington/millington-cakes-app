@@ -481,7 +481,7 @@ def _label_from_run():
     if isinstance(raw_date, str):
         raw_date = date.fromisoformat(raw_date[:10])
 
-    # ── Variant approval warning ─────────────────────────────────────────────
+    # ── Variant approval + staleness warning ─────────────────────────────────
     if variant is None:
         st.warning(
             "⚠️ No se encontró una variante aprobada para este producto y formato. "
@@ -494,6 +494,19 @@ def _label_from_run():
             "La etiqueta se generará sin lista de ingredientes ni declaración de alérgenos. "
             "Ve a Variantes → aprueba la ficha antes de usar esta etiqueta para entregas."
         )
+    elif variant.get("ingredient_label_es") and run.get("recipe_id"):
+        # Staleness check — compare stored approved label against live generated text
+        try:
+            _live = db.get_ingredient_label_text(run["recipe_id"]).get("label_text", "").strip()
+            _stored = variant["ingredient_label_es"].strip()
+            if _live and _live != _stored:
+                st.warning(
+                    "⚠️ **La receta ha cambiado desde la última aprobación de la etiqueta.** "
+                    "La lista de ingredientes puede estar desactualizada. "
+                    "Ve a Variantes, regenera el borrador y vuelve a aprobar antes de imprimir."
+                )
+        except Exception:
+            pass
 
     # ── Delivery mode ─────────────────────────────────────────────────────────
     delivery_mode = st.radio(
@@ -865,13 +878,25 @@ def _generate_labels_pdf(
     fmt_display = FORMAT_DISPLAY.get(fmt, fmt)
 
     # Ingredient label text — try stored variant text first, then generate from recipe
-    label_text = v.get("ingredient_label_es") or ""
+    label_text      = v.get("ingredient_label_es") or ""
+    allergen_labels = {}
     if not label_text and variant and variant.get("recipe_id"):
         try:
-            label_data = db.get_ingredient_label_text(variant["recipe_id"])
-            label_text = label_data.get("label_text") or ""
+            label_data      = db.get_ingredient_label_text(variant["recipe_id"])
+            label_text      = label_data.get("label_text") or ""
+            allergen_labels = label_data.get("allergen_fields") or {}
         except Exception:
             pass
+    elif variant and variant.get("recipe_id"):
+        try:
+            label_data      = db.get_ingredient_label_text(variant["recipe_id"])
+            allergen_labels = label_data.get("allergen_fields") or {}
+        except Exception:
+            pass
+
+    # Apply allergen bolding using ** markers (parsed later in _wrap_text)
+    if label_text and allergen_labels:
+        label_text = db.apply_allergen_bold(label_text, allergen_labels)
 
     # Weight — multiply by units_per_box for the total box weight
     weight_g = v.get("ref_weight_g")

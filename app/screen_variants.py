@@ -333,6 +333,30 @@ def _slot_editor(
             "(p.ej. sin fruta fresca si no lleva decoración). "
             "Usa el botón de abajo para generar un borrador y edita si necesario."
         )
+        
+    # ── Staleness check ───────────────────────────────────────────────────────
+    # Compare stored approved label against freshly generated text.
+    # If they differ, warn — a recipe change may not be reflected in the label.
+    _stale_warning = None
+    if stored_label and bool(_v(variant, "label_approved", False)) and rid:
+        try:
+            _live_data  = db.get_ingredient_label_text(rid)
+            _live_label = (_live_data.get("label_text") or "").strip()
+            _stored_cmp = stored_label.strip()
+            if _live_label and _live_label != _stored_cmp:
+                _stale_warning = (
+                    "⚠️ **La receta ha cambiado desde la última aprobación.** "
+                    "La lista de ingredientes aprobada puede estar desactualizada. "
+                    "Regenera el borrador, revisa y vuelve a aprobar antes de "
+                    "imprimir etiquetas."
+                )
+                # Cache live label for use in draft without a second DB call
+                st.session_state[f"{p}_live_label"] = _live_label
+        except Exception:
+            pass
+ 
+    if _stale_warning:
+        st.warning(_stale_warning)    
 
     ingredient_label_es = st.text_area(
         "Lista de ingredientes",
@@ -349,15 +373,16 @@ def _slot_editor(
             "Úsalo como punto de partida — revisa y edita antes de aprobar."
         )
         if st.button("Generar borrador lista de ingredientes", key=f"{p}_regen"):
-            label_data = db.get_ingredient_label_text(rid)
-            new_label  = label_data.get("label_text", "")
-            if new_label:
-                # We cannot set session state for an already-instantiated widget.
-                # Store in a staging key and show it below.
-                st.session_state[f"{p}_label_draft"] = new_label
+            # Use cached live label if staleness check already fetched it
+            new_label = st.session_state.pop(f"{p}_live_label", None)
+            if not new_label:
+                label_data = db.get_ingredient_label_text(rid)
+                new_label  = label_data.get("label_text", "")
                 if label_data.get("warnings"):
                     for w in label_data["warnings"]:
                         st.warning(w)
+            if new_label:
+                st.session_state[f"{p}_label_draft"] = new_label
                 st.info(
                     "Borrador generado — copia el texto de abajo al campo "
                     "de lista de ingredientes y guarda."
