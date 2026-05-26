@@ -1745,18 +1745,20 @@ def save_production_run(
     fmt:           str,
     prod_date:     "date",
     quantity:      int,
-    oven_temp_c:   float,
-    bake_time_min: int,
+    oven_temp_c:   float | None,
+    bake_time_min: int | None,
     notes:         str | None,
     ing_refs:      list[dict],
+    pcc_log:       list[dict] | None = None,
 ) -> dict:
     """
     Insert a production run + ingredient refs.
     Returns the saved run dict (with lote_number and id).
     """
+    import json as _json
     sb   = get_client()
     lote = _next_lote_number(sb, prod_date)
- 
+
     run_row = {
         "lote_number":    lote,
         "recipe_id":      recipe_id,
@@ -1767,6 +1769,7 @@ def save_production_run(
         "oven_temp_c":    oven_temp_c,
         "bake_time_min":  bake_time_min,
         "notes":          notes,
+        "pcc_log":        _json.dumps(pcc_log) if pcc_log else None,
     }
     result = (
         sb.table("production_runs")
