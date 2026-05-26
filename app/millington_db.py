@@ -97,6 +97,23 @@ _UNIT_IGNORE = {
     "canela en rama",
 }
 
+def _to_label_grams(name: str, amount: float) -> float:
+    """
+    Convert a raw ingredient amount to grams for label weight ordering.
+    Unit-based ingredients (eggs, lemons etc.) are multiplied by their
+    standard gram equivalent from _UNIT_WEIGHTS_G.
+    Ingredients in _UNIT_IGNORE return 0 (excluded from weight ordering).
+    All others are assumed to already be in grams.
+    """
+    if amount is None:
+        return 0.0
+    name_lower = (name or "").lower()
+    for key, weight in _UNIT_WEIGHTS_G.items():
+        if key in name_lower:
+            return amount * weight
+    if any(key in name_lower for key in _UNIT_IGNORE):
+        return 0.0
+    return float(amount)
 
 def estimate_recipe_weight(lines: list[dict]) -> dict:
     """
@@ -741,12 +758,20 @@ def get_allergen_declaration(
                     accumulated, sub_result["accumulated"]
                 )
                 warnings.extend(sub_result["warnings"])
-                # Sub-recipe ingredient labels come from its expansion
+                # Scale sub-recipe ingredient amounts correctly.
+                # sub_ing[1] is already an absolute gram quantity within the
+                # sub-recipe's own reference batch. Scale by
+                # (amount_used / sub_recipe_total_g) — not by amount directly,
+                # which would give grams² (the bug being fixed here).
+                sub_total_g = sum(
+                    _to_label_grams(s[0], s[1])
+                    for s in sub_result["ingredient_names"]
+                ) or amount
+                sub_scale = amount / sub_total_g if sub_total_g else 1.0
                 for sub_ing in sub_result["ingredient_names"]:
-                    # Scale amounts by the proportion used
                     ing_for_label.append((
                         sub_ing[0],
-                        sub_ing[1] * amount if sub_ing[1] else amount,
+                        (sub_ing[1] * sub_scale) if sub_ing[1] else 0.0,
                     ))
             else:
                 warnings.append(
@@ -772,7 +797,7 @@ def get_allergen_declaration(
                 or name
             )
             if label_name:
-                ing_for_label.append((label_name, amount))
+                ing_for_label.append((label_name, _to_label_grams(name, amount)))
 
             # Flag ingredients needing verification
             notes = line.get("allergen_notes") or ""
@@ -1832,50 +1857,41 @@ def get_key_ingredients_for_recipe(recipe_id: str) -> list[dict]:
     Returns list of {name, quantity_g, pct, is_allergen_bearing} dicts,
     ordered by quantity_g descending.
     """
-    def _to_grams(name: str, amount: float) -> float:
-        """Convert unit based amount to grams using standard yield weights"""
-        name_lower = name.lower()
-        for key, weight in _UNIT_WEIGHTS_G.items():
-            if key in name_lower:
-                return amount * weight
-        return amount
-        
     def _resolve(rid: str, scale: float, depth: int,
                  visited: set) -> list[tuple]:
         """
         Recursively expand recipe into flat list of
         (ingredient_name, grams_at_scale, has_allergen) tuples.
+        Uses _to_label_grams (module-level) for unit conversion — no duplication.
         """
         if depth > 5 or rid in visited:
             return []
         visited = visited | {rid}
- 
+
         lines  = _get_recipe_lines_with_allergens(rid)
         result = []
- 
+
         for line in lines:
-            name   = line["ingredient_name"]
+            name       = line["ingredient_name"]
             raw_amount = line["amount"] * scale
-            amount = _to_grams(name, raw_amount)
- 
+            amount     = _to_label_grams(name, raw_amount)
+
             if line["is_sub_recipe"]:
                 sub = _find_recipe_by_ingredient_name(name)
                 if not sub:
                     continue
-                # Use sum of sub-recipe line amounts as reference batch size
                 sub_lines   = _get_recipe_lines_with_allergens(sub["id"])
                 sub_total_g = sum(
-                    _to_grams(l["ingredient_name"], l["amount"])
+                    _to_label_grams(l["ingredient_name"], l["amount"])
                     for l in sub_lines
-                    ) or amount
+                ) or amount
                 sub_scale   = amount / sub_total_g
                 result.extend(_resolve(sub["id"], sub_scale, depth + 1, visited))
             else:
-                # Allergen status from actual ingredient profile, not keywords
                 eff          = _effective_allergens(line)
                 has_allergen = any(v > 0 for v in eff.values())
                 result.append((name, amount, has_allergen))
- 
+
         return result
  
     flat = _resolve(recipe_id, 1.0, 0, set())
