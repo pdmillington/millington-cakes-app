@@ -273,7 +273,12 @@ def save_ingredient_allergens(record: dict) -> None:
     allowed = {
         k: v for k, v in record.items()
         if k.startswith("allergen_")
-        or k in ("id", "category_id", "allergen_override", "is_sub_recipe", "label_name_es")
+        or k in (
+            "id", "category_id", "allergen_override", "is_sub_recipe",
+            "label_name_es",
+            "label_name_es_2", "label_name_es_2_pct",
+            "label_name_es_3", "label_name_es_3_pct",
+        )
     }
     allowed["updated_at"] = "now()"
     sb.table("ingredients").update(allowed).eq("id", allowed["id"]).execute()
