@@ -335,12 +335,93 @@ def _ficha_row(ing: dict, cat_options: dict, cat_map: dict):
         placeholder="e.g. mantequilla, harina de trigo, chocolate negro…",
         help="Nombre legal que aparece en la lista de ingredientes del ficha (EU 1169/2011)."
         )
-        
+
         if not ing.get("label_name_es") and not is_sub:
             st.warning(
                 "⚠️ Sin nombre de etiqueta — el ficha usará el nombre operativo. "
                 "Añade el nombre legal aquí."
             )
+
+        # ── Multi-component label names ───────────────────────────────────────
+        # For compound ingredients where a single purchased ingredient
+        # contributes two or three separate legal names to the label
+        # (e.g. azúcar panela → azúcar + almidón de maíz).
+        # Each component's weight is split by the declared percentages.
+        # Component 1 pct = 100 - pct2 - pct3 (implicit, not stored).
+        # Note: for bracket-style compounds (e.g. "nata sin lactosa (nata, lactasa)")
+        # just include the full text in label_name_es above — no split needed.
+        label_name_es_2     = ing.get("label_name_es_2") or ""
+        label_name_es_2_pct = ing.get("label_name_es_2_pct") or 0.0
+        label_name_es_3     = ing.get("label_name_es_3") or ""
+        label_name_es_3_pct = ing.get("label_name_es_3_pct") or 0.0
+
+        if label_name_es:
+            has_comp2 = st.checkbox(
+                "Segundo componente en etiqueta",
+                value=bool(label_name_es_2),
+                key=f"{col_id}_has_comp2",
+                help="Activa si este ingrediente comprado contribuye dos o más "
+                     "nombres legales distintos a la etiqueta (e.g. azúcar panela)."
+            )
+            if has_comp2:
+                cc1, cc2 = st.columns([3, 1])
+                with cc1:
+                    label_name_es_2 = st.text_input(
+                        "Componente 2 — nombre en etiqueta",
+                        value=label_name_es_2,
+                        key=f"{col_id}_label_name_2",
+                        placeholder="e.g. almidón de maíz",
+                    )
+                with cc2:
+                    label_name_es_2_pct = st.number_input(
+                        "% de componente 2",
+                        value=float(label_name_es_2_pct),
+                        min_value=0.1, max_value=99.8, step=0.5,
+                        key=f"{col_id}_label_pct_2",
+                    )
+
+                has_comp3 = st.checkbox(
+                    "Tercer componente en etiqueta",
+                    value=bool(label_name_es_3),
+                    key=f"{col_id}_has_comp3",
+                )
+                if has_comp3:
+                    cc3, cc4 = st.columns([3, 1])
+                    with cc3:
+                        label_name_es_3 = st.text_input(
+                            "Componente 3 — nombre en etiqueta",
+                            value=label_name_es_3,
+                            key=f"{col_id}_label_name_3",
+                            placeholder="e.g. bicarbonato sódico",
+                        )
+                    with cc4:
+                        label_name_es_3_pct = st.number_input(
+                            "% de componente 3",
+                            value=float(label_name_es_3_pct),
+                            min_value=0.1, max_value=99.7, step=0.5,
+                            key=f"{col_id}_label_pct_3",
+                        )
+                else:
+                    label_name_es_3     = ""
+                    label_name_es_3_pct = 0.0
+
+                # Live % validation
+                total_comp_pct = label_name_es_2_pct + label_name_es_3_pct
+                pct1           = 100.0 - total_comp_pct
+                if total_comp_pct >= 100:
+                    st.error("❌ Los porcentajes de componentes 2 y 3 suman ≥100%.")
+                else:
+                    st.caption(
+                        f"**{label_name_es}**: {pct1:.1f}%  ·  "
+                        + (f"**{label_name_es_2}**: {label_name_es_2_pct:.1f}%" if label_name_es_2 else "")
+                        + (f"  ·  **{label_name_es_3}**: {label_name_es_3_pct:.1f}%" if label_name_es_3 else "")
+                        + "  = 100%"
+                    )
+            else:
+                label_name_es_2     = ""
+                label_name_es_2_pct = 0.0
+                label_name_es_3     = ""
+                label_name_es_3_pct = 0.0
 
         # ── Allergen profile ──────────────────────────────────────────────────
         allergen_vals = {}
@@ -382,12 +463,22 @@ def _ficha_row(ing: dict, cat_options: dict, cat_map: dict):
             key=f"{col_id}_save_fi",
             type="primary"
         ):
+            # Validate component percentages before saving
+            total_comp_pct = label_name_es_2_pct + label_name_es_3_pct
+            if label_name_es_2 and total_comp_pct >= 100:
+                st.error("❌ Los porcentajes de componentes suman ≥100%. Corrige antes de guardar.")
+                st.stop()
+
             record = {
-                "id":                ing["id"],
-                "category_id":       selected_cat_id,
-                "allergen_override": override_new,
-                "allergen_notes":    new_notes or None,
-                "label_name":        label_name_es or None,
+                "id":                   ing["id"],
+                "category_id":          selected_cat_id,
+                "allergen_override":    override_new,
+                "allergen_notes":       new_notes or None,
+                "label_name":           label_name_es or None,
+                "label_name_es_2":      label_name_es_2 or None,
+                "label_name_es_2_pct":  label_name_es_2_pct if label_name_es_2 else None,
+                "label_name_es_3":      label_name_es_3 or None,
+                "label_name_es_3_pct":  label_name_es_3_pct if label_name_es_3 else None,
             }
             if override_new and allergen_vals:
                 record.update(allergen_vals)

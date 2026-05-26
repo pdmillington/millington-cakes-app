@@ -584,7 +584,9 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
         .select(
             "amount, sort_order, "
             "ingredients!inner("
-            "  id, name, label_name_es, is_sub_recipe, allergen_override, allergen_notes, "
+            "  id, name, label_name_es, label_name_es_2, label_name_es_2_pct, "
+            "  label_name_es_3, label_name_es_3_pct, "
+            "  is_sub_recipe, allergen_override, allergen_notes, "
             + ", ".join(ALLERGEN_FIELDS) + ", "
             "  ingredient_categories(id, label_name_es, " +
             ", ".join(ALLERGEN_FIELDS) + ")"
@@ -797,7 +799,23 @@ def get_allergen_declaration(
                 or name
             )
             if label_name:
-                ing_for_label.append((label_name, _to_label_grams(name, amount)))
+                grams = _to_label_grams(name, amount)
+                comp2     = line.get("label_name_es_2")
+                pct2      = float(line.get("label_name_es_2_pct") or 0) / 100
+                comp3     = line.get("label_name_es_3")
+                pct3      = float(line.get("label_name_es_3_pct") or 0) / 100
+                total_comp = pct2 + pct3
+
+                if comp2 and 0 < total_comp < 1.0:
+                    # Split weight across components
+                    pct1 = 1.0 - total_comp
+                    ing_for_label.append((label_name, grams * pct1))
+                    ing_for_label.append((comp2,      grams * pct2))
+                    if comp3 and pct3 > 0:
+                        ing_for_label.append((comp3, grams * pct3))
+                else:
+                    # Simple ingredient — single label name
+                    ing_for_label.append((label_name, grams))
 
             # Flag ingredients needing verification
             notes = line.get("allergen_notes") or ""
@@ -1893,7 +1911,20 @@ def get_key_ingredients_for_recipe(recipe_id: str) -> list[dict]:
             else:
                 eff          = _effective_allergens(line)
                 has_allergen = any(v > 0 for v in eff.values())
-                result.append((name, amount, has_allergen))
+                # Split compound ingredients by component percentages
+                comp2 = line.get("label_name_es_2")
+                pct2  = float(line.get("label_name_es_2_pct") or 0) / 100
+                comp3 = line.get("label_name_es_3")
+                pct3  = float(line.get("label_name_es_3_pct") or 0) / 100
+                total_comp = pct2 + pct3
+                if comp2 and 0 < total_comp < 1.0:
+                    pct1 = 1.0 - total_comp
+                    result.append((line.get("label_name_es") or name, amount * pct1, has_allergen))
+                    result.append((comp2, amount * pct2, has_allergen))
+                    if comp3 and pct3 > 0:
+                        result.append((comp3, amount * pct3, has_allergen))
+                else:
+                    result.append((name, amount, has_allergen))
 
         return result
  
