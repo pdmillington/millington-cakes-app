@@ -375,7 +375,7 @@ def _ficha_row(ing: dict, cat_options: dict, cat_map: dict):
                 with cc2:
                     label_name_es_2_pct = st.number_input(
                         "% de componente 2",
-                        value=float(label_name_es_2_pct),
+                        value=float(label_name_es_2_pct) if label_name_es_2_pct else 3.0,
                         min_value=0.1, max_value=99.8, step=0.5,
                         key=f"{col_id}_label_pct_2",
                     )
@@ -397,7 +397,7 @@ def _ficha_row(ing: dict, cat_options: dict, cat_map: dict):
                     with cc4:
                         label_name_es_3_pct = st.number_input(
                             "% de componente 3",
-                            value=float(label_name_es_3_pct),
+                            value=float(label_name_es_3_pct) if label_name_es_3_pct else 1.0,
                             min_value=0.1, max_value=99.7, step=0.5,
                             key=f"{col_id}_label_pct_3",
                         )
