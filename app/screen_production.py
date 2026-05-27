@@ -494,6 +494,10 @@ def _label_from_run():
         variants = db.get_variants_for_recipe(run["recipe_id"])
         fmt = run.get("format", "standard")
         variant = next((v for v in variants if v.get("format") == fmt), None)
+    # Fallback: if no variant for this format (e.g. plancha), use the
+        # standard variant for the same recipe — ingredients are the same
+        if variant is None and fmt != "standard":
+            variant = next((v for v in variants if v.get("format") == "standard"), None)
     except Exception:
         pass
 
