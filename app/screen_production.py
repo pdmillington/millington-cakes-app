@@ -529,16 +529,14 @@ def _label_from_run():
     _run_key = (run["id"], _upb)
     if st.session_state.get("_label_run_last_key") != _run_key:
         st.session_state["_label_run_last_key"] = _run_key
-        st.session_state["label_run_qty"] = min(
-            _math.ceil(run["quantity"] / _upb), 9
-        )
+        st.session_state["label_run_qty"] =_math.ceil(run["quantity"] / _upb)
 
     with col_nlab:
         n_labels = st.number_input(
             "Nº etiquetas", min_value=1,
             value=st.session_state["label_run_qty"],
             step=1, key="label_run_qty",
-            help="Por defecto: unidades ÷ uds por caja (máx. 9 = una página completa)"
+            help="Por defecto: unidades ÷ uds por caja"
         )
     with col_fdays:
         frozen_days = st.number_input(
