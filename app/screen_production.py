@@ -32,7 +32,11 @@ FORMAT_DISPLAY = {
     "standard":   "Tarta estándar",
     "individual": "Individual",
     "bocado":     "Bocado",
+    "plancha":    "Plancha",
 }
+
+# Formats that default to unit-based production; everything else defaults to kg
+UNIT_FORMATS = {"standard", "individual", "bocado"}
 
 COMPANY_NAME    = "Millington Cakes, S.L."
 COMPANY_CIF     = "B13998596"
@@ -82,7 +86,7 @@ def _tab_log():
             "Receta", ["— selecciona —"] + recipe_names, key="prod_recipe"
         )
     with col_f:
-        fmt_options = ["standard", "individual", "bocado"]
+        fmt_options = ["standard", "individual", "bocado", "plancha"]
         fmt_labels  = [FORMAT_DISPLAY[f] for f in fmt_options]
         fmt_idx     = st.selectbox(
             "Formato", fmt_labels, key="prod_fmt"
@@ -515,28 +519,42 @@ def _label_from_run():
     )
     frozen = delivery_mode.startswith("❄️")
 
+    import math as _math
+    _run_by_weight = run.get("quantity_unit", "units") == "kg"
+
     col_nlab, col_upb, col_fdays = st.columns(3)
     with col_upb:
-        units_per_box = st.number_input(
-            "Unidades por caja", min_value=1, value=1, step=1,
-            key="label_run_upb",
-            help="Número de piezas individuales que contiene cada caja"
-        )
+        if _run_by_weight:
+            kg_per_box = st.number_input(
+                "Kg por caja", min_value=0.01, value=1.0,
+                step=0.5, format="%.2f", key="label_run_upb_kg",
+                help="Peso neto de cada caja"
+            )
+            units_per_box = 1
+        else:
+            units_per_box = st.number_input(
+                "Unidades por caja", min_value=1, value=1, step=1,
+                key="label_run_upb",
+                help="Número de piezas individuales que contiene cada caja"
+            )
+            kg_per_box = None
 
-    import math as _math
-    # Reset n_labels whenever the run or units_per_box changes
-    _upb     = max(1, int(units_per_box))
-    _run_key = (run["id"], _upb)
+    _box_size = kg_per_box if _run_by_weight else units_per_box
+    _run_key  = (run["id"], _box_size)
     if st.session_state.get("_label_run_last_key") != _run_key:
         st.session_state["_label_run_last_key"] = _run_key
-        st.session_state["label_run_qty"] =_math.ceil(run["quantity"] / _upb)
+        _qty = run["quantity"]
+        if _run_by_weight:
+            st.session_state["label_run_qty"] = _math.ceil(_qty / max(0.001, kg_per_box))
+        else:
+            st.session_state["label_run_qty"] = _math.ceil(_qty / max(1, int(units_per_box)))
 
     with col_nlab:
         n_labels = st.number_input(
             "Nº etiquetas", min_value=1,
             value=st.session_state["label_run_qty"],
             step=1, key="label_run_qty",
-            help="Por defecto: unidades ÷ uds por caja"
+            help="Por defecto: cantidad producida ÷ cantidad por caja"
         )
     with col_fdays:
         frozen_days = st.number_input(
@@ -569,18 +587,38 @@ def _label_from_run():
 
     if st.button("🏷️ Generar etiquetas PDF", type="primary", key="label_run_gen"):
         try:
-            pdf_bytes = _generate_labels_pdf(
-                recipe_name   = run["recipe_name"],
-                fmt           = run.get("format", "standard"),
-                lote          = run["lote_number"],
-                prod_date     = raw_date,
-                best_before   = best_before_d,
-                storage_text  = storage_text,
-                variant       = variant,
-                n_labels         = int(n_labels),
-                units_per_box    = int(units_per_box),
-                last_label_units = int(run["quantity"]) % int(units_per_box),
-            )
+            if _run_by_weight:
+                _last_kg = round(
+                    run["quantity"] - (int(n_labels) - 1) * kg_per_box, 3
+                ) if int(n_labels) > 1 else run["quantity"]
+                pdf_bytes = _generate_labels_pdf(
+                    recipe_name      = run["recipe_name"],
+                    fmt              = run.get("format", "standard"),
+                    lote             = run["lote_number"],
+                    prod_date        = raw_date,
+                    best_before      = best_before_d,
+                    storage_text     = storage_text,
+                    variant          = variant,
+                    n_labels         = int(n_labels),
+                    units_per_box    = 1,
+                    last_label_units = 0,
+                    by_weight        = True,
+                    kg_per_box       = float(kg_per_box),
+                    last_label_kg    = float(_last_kg),
+                )
+            else:
+                pdf_bytes = _generate_labels_pdf(
+                    recipe_name      = run["recipe_name"],
+                    fmt              = run.get("format", "standard"),
+                    lote             = run["lote_number"],
+                    prod_date        = raw_date,
+                    best_before      = best_before_d,
+                    storage_text     = storage_text,
+                    variant          = variant,
+                    n_labels         = int(n_labels),
+                    units_per_box    = int(units_per_box),
+                    last_label_units = int(run["quantity"]) % int(units_per_box),
+                )
             st.download_button(
                 "⬇️ Descargar etiquetas",
                 data=pdf_bytes,
@@ -603,7 +641,7 @@ def _label_manual():
             "Receta", ["— selecciona —"] + recipe_names, key="lm_recipe"
         )
     with col_f:
-        fmt_options = ["standard", "individual", "bocado"]
+        fmt_options = ["standard", "individual", "bocado", "plancha"]
         fmt_labels  = [FORMAT_DISPLAY[f] for f in fmt_options]
         fmt_label   = st.selectbox("Formato", fmt_labels, key="lm_fmt")
         selected_fmt = fmt_options[fmt_labels.index(fmt_label)]
@@ -639,6 +677,16 @@ def _label_manual():
     )
     frozen = delivery_mode.startswith("❄️")
 
+    _manual_by_weight_default = selected_fmt not in UNIT_FORMATS
+    qty_mode_m = st.radio(
+        "Unidad de producción",
+        ["Unidades", "Kg"],
+        index=1 if _manual_by_weight_default else 0,
+        key=f"lm_qty_mode_{selected_fmt}",
+        horizontal=True,
+    )
+    by_weight_m = qty_mode_m == "Kg"
+
     col_l, col_d, col_q, col_upb, col_fdays = st.columns(5)
     with col_l:
         lote = st.text_input(
@@ -654,10 +702,19 @@ def _label_manual():
             help="9 = una página completa"
         )
     with col_upb:
-        units_per_box = st.number_input(
-            "Uds por caja", min_value=1, value=1, step=1, key="lm_upb",
-            help="Número de piezas individuales que contiene cada caja"
-        )
+        if by_weight_m:
+            kg_per_box_m = st.number_input(
+                "Kg por caja", min_value=0.01, value=1.0,
+                step=0.5, format="%.2f", key="lm_upb_kg",
+                help="Peso neto de cada caja"
+            )
+            units_per_box_m = 1
+        else:
+            units_per_box_m = st.number_input(
+                "Uds por caja", min_value=1, value=1, step=1, key="lm_upb",
+                help="Número de piezas individuales que contiene cada caja"
+            )
+            kg_per_box_m = None
     with col_fdays:
         frozen_days = st.number_input(
             "Vida útil congelado (días)", min_value=1, value=90, step=1,
@@ -685,18 +742,36 @@ def _label_manual():
             st.error("Introduce el número de lote.")
             return
         try:
-            pdf_bytes = _generate_labels_pdf(
-                recipe_name   = recipe_name,
-                fmt           = selected_fmt,
-                lote          = lote.strip(),
-                prod_date     = prod_date,
-                best_before   = best_before if isinstance(best_before, date) else best_before.date(),
-                storage_text  = storage_text,
-                variant       = variant,
-                n_labels         = int(n_labels),
-                units_per_box    = int(units_per_box),
-                last_label_units = 0,  # no quantity known in manual mode
-            )
+            _bb = best_before if isinstance(best_before, date) else best_before.date()
+            if by_weight_m:
+                pdf_bytes = _generate_labels_pdf(
+                    recipe_name      = recipe_name,
+                    fmt              = selected_fmt,
+                    lote             = lote.strip(),
+                    prod_date        = prod_date,
+                    best_before      = _bb,
+                    storage_text     = storage_text,
+                    variant          = variant,
+                    n_labels         = int(n_labels),
+                    units_per_box    = 1,
+                    last_label_units = 0,
+                    by_weight        = True,
+                    kg_per_box       = float(kg_per_box_m),
+                    last_label_kg    = float(kg_per_box_m),
+                )
+            else:
+                pdf_bytes = _generate_labels_pdf(
+                    recipe_name      = recipe_name,
+                    fmt              = selected_fmt,
+                    lote             = lote.strip(),
+                    prod_date        = prod_date,
+                    best_before      = _bb,
+                    storage_text     = storage_text,
+                    variant          = variant,
+                    n_labels         = int(n_labels),
+                    units_per_box    = int(units_per_box_m),
+                    last_label_units = 0,
+                )
             st.download_button(
                 "⬇️ Descargar etiquetas",
                 data=pdf_bytes,
@@ -876,6 +951,9 @@ def _generate_labels_pdf(
     n_labels: int,
     units_per_box: int = 1,
     last_label_units: int = 0,
+    by_weight: bool = False,
+    kg_per_box: float = 1.0,
+    last_label_kg: float | None = None,
     storage_text: str | None = None,
 ) -> bytes:
     from reportlab.lib.pagesizes import A4
@@ -974,7 +1052,9 @@ def _generate_labels_pdf(
     LH_BODY    = 1.9 * mm
     LH_SECTION = 2.0 * mm
 
-    def draw_label(c, x0: float, y0: float, label_upb: int = units_per_box):
+    def draw_label(c, x0: float, y0: float,
+                   label_upb: int = units_per_box,
+                   label_kg: float | None = None):
         """Draw one small label with bottom-left at (x0, y0)."""
 
         # Background + border
@@ -1015,8 +1095,11 @@ def _generate_labels_pdf(
             _draw_centred(c, "Millington Cakes", x0,
                           y0 + LABEL_H - 5 * mm, LABEL_W, bold_font, 6.5, dark)
 
-        # Weight string — depends on this label's unit count
-        if weight_g and label_upb > 1:
+        # Weight / quantity string — depends on mode and this label's count
+        if by_weight:
+            _this_kg   = label_kg if label_kg is not None else kg_per_box
+            weight_str = f"{_this_kg:.3f} kg"
+        elif weight_g and label_upb > 1:
             weight_str = f"{int(weight_g * label_upb)} g  ({label_upb} × {int(weight_g)} g)"
         elif weight_g:
             weight_str = f"{int(weight_g)} g"
@@ -1028,7 +1111,9 @@ def _generate_labels_pdf(
         _draw_text(c, recipe_name, x0 + PAD, y, bold_font, FS_NAME, dark)
         y -= LH_SECTION
         sub = fmt_display
-        if label_upb > 1:
+        if by_weight:
+            pass  # weight shown in info rows
+        elif label_upb > 1:
             sub += f"  ·  {label_upb} uds/caja"
         _draw_text(c, sub, x0 + PAD, y, body_font, FS_SUB, mid)
         y -= 3 * mm
@@ -1133,9 +1218,14 @@ def _generate_labels_pdf(
                 x0 = MARGIN + col * (LABEL_W + GAP)
                 y0 = MARGIN + row * (LABEL_H + GAP)
                 is_last = (labels_drawn == n_labels - 1)
-                upb_this = (last_label_units if (is_last and last_label_units > 0)
-                            else units_per_box)
-                draw_label(c, x0, y0, label_upb=upb_this)
+                if by_weight:
+                    _lkg = (last_label_kg if (is_last and last_label_kg is not None)
+                            else kg_per_box)
+                    draw_label(c, x0, y0, label_kg=_lkg)
+                else:
+                    upb_this = (last_label_units if (is_last and last_label_units > 0)
+                                else units_per_box)
+                    draw_label(c, x0, y0, label_upb=upb_this)
                 labels_drawn += 1
             if labels_drawn >= n_labels:
                 break
