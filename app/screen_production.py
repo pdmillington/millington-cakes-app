@@ -522,12 +522,22 @@ def _label_from_run():
             key="label_run_upb",
             help="Número de piezas individuales que contiene cada caja"
         )
+
     import math as _math
-    _default_n = min(_math.ceil(run["quantity"] / max(1, int(units_per_box))), 9)
+    # Reset n_labels whenever the run or units_per_box changes
+    _upb     = max(1, int(units_per_box))
+    _run_key = (run["id"], _upb)
+    if st.session_state.get("_label_run_last_key") != _run_key:
+        st.session_state["_label_run_last_key"] = _run_key
+        st.session_state["label_run_qty"] = min(
+            _math.ceil(run["quantity"] / _upb), 9
+        )
+
     with col_nlab:
         n_labels = st.number_input(
             "Nº etiquetas", min_value=1,
-            value=_default_n, step=1, key="label_run_qty",
+            value=st.session_state["label_run_qty"],
+            step=1, key="label_run_qty",
             help="Por defecto: unidades ÷ uds por caja (máx. 9 = una página completa)"
         )
     with col_fdays:
