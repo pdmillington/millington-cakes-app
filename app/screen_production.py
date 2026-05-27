@@ -502,15 +502,6 @@ def _label_from_run():
     except Exception as _ve:
         st.error(f"Variant lookup error: {_ve}")
 
-    # DEBUG — remove once resolved
-    with st.expander("🔍 Debug: variant lookup", expanded=True):
-        st.write(f"**run recipe_id:** `{run.get('recipe_id')}`")
-        st.write(f"**run format:** `{run.get('format')}`")
-        st.write(f"**variants found:** {len(variants)}")
-        for v in variants:
-            st.write(f"  - format=`{v.get('format')}` approved=`{v.get('label_approved')}` id=`{v.get('id')}`")
-        st.write(f"**variant resolved:** `{variant is not None}")
-
 
     shelf_hours = int((variant or {}).get("shelf_life_hours") or 48)
     fresh_storage = (variant or {}).get("storage_instructions") or "Refrigerada entre 0 y 5°C"
