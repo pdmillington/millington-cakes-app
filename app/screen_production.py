@@ -565,7 +565,7 @@ def _label_from_run():
 
     _box_size = kg_per_box if _run_by_weight else units_per_box
     _run_key  = (run["id"], _box_size)
-    if st.session_state.get("_label_run_last_key") != _run_key:
+    if st.session_state.get("_label_run_last_key") != _run_key or "label_run_qty" not in st.session_state:
         st.session_state["_label_run_last_key"] = _run_key
         _qty = run["quantity"]
         if _run_by_weight:
