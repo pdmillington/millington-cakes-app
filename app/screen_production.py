@@ -490,16 +490,27 @@ def _label_from_run():
 
     # Pull variant data for the ingredient list
     variant = None
+    variants = []
     try:
         variants = db.get_variants_for_recipe(run["recipe_id"])
         fmt = run.get("format", "standard")
         variant = next((v for v in variants if v.get("format") == fmt), None)
-    # Fallback: if no variant for this format (e.g. plancha), use the
+        # Fallback: if no variant for this format (e.g. plancha), use the
         # standard variant for the same recipe — ingredients are the same
         if variant is None and fmt != "standard":
             variant = next((v for v in variants if v.get("format") == "standard"), None)
-    except Exception:
-        pass
+    except Exception as _ve:
+        st.error(f"Variant lookup error: {_ve}")
+
+    # DEBUG — remove once resolved
+    with st.expander("🔍 Debug: variant lookup", expanded=True):
+        st.write(f"**run recipe_id:** `{run.get('recipe_id')}`")
+        st.write(f"**run format:** `{run.get('format')}`")
+        st.write(f"**variants found:** {len(variants)}")
+        for v in variants:
+            st.write(f"  - format=`{v.get('format')}` approved=`{v.get('label_approved')}` id=`{v.get('id')}`")
+        st.write(f"**variant resolved:** `{variant is not None}")
+
 
     shelf_hours = int((variant or {}).get("shelf_life_hours") or 48)
     fresh_storage = (variant or {}).get("storage_instructions") or "Refrigerada entre 0 y 5°C"
