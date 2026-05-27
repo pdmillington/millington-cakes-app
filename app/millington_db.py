@@ -2075,7 +2075,7 @@ def replace_pcc_steps(recipe_id: str, steps: list[dict]) -> None:
             sb.table("recipe_pcc_steps")               .insert(row)               .execute()
 
 # =============================================================================
-# TODO DB FUNCTIONS — append to millington_db.py
+# TO DO list DB FUNCTIONS
 # =============================================================================
 
 def get_todos() -> list[dict]:
