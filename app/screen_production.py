@@ -121,15 +121,32 @@ def _tab_log():
             st.session_state.pop(f"prod_alb_{i}", None)
 
     # ── Basic details ─────────────────────────────────────────────────────────
-    col_d, col_q = st.columns(2)
+    col_d, col_m, col_q = st.columns([2, 1.5, 2])
     with col_d:
         prod_date = st.date_input(
             "Fecha de producción", value=date.today(), key="prod_date"
         )
-    with col_q:
-        quantity = st.number_input(
-            "Unidades producidas", min_value=1, value=1, step=1, key="prod_qty"
+    _by_weight_default = selected_fmt not in UNIT_FORMATS
+    with col_m:
+        qty_mode = st.radio(
+            "Unidad de producción",
+            ["Unidades", "Kg"],
+            index=1 if _by_weight_default else 0,
+            key=f"prod_qty_mode_{selected_fmt}",
+            horizontal=True,
         )
+    by_weight = qty_mode == "Kg"
+    with col_q:
+        if by_weight:
+            quantity = st.number_input(
+                "Kg producidos", min_value=0.01, value=1.0,
+                step=0.5, format="%.2f", key="prod_qty"
+            )
+        else:
+            quantity = st.number_input(
+                "Unidades producidas", min_value=1, value=1,
+                step=1, key="prod_qty"
+            )
 
     # ── PCC steps — pre-populated from recipe ────────────────────────────────
     st.markdown("#### Control de Puntos Críticos (PCC) — registro APPCC")
@@ -328,16 +345,17 @@ def _tab_log():
     if st.button("💾 Guardar registro y obtener número de lote", type="primary"):
         try:
             run = db.save_production_run(
-                recipe_id    = recipe["id"],
-                recipe_name  = recipe["name"],
-                fmt          = selected_fmt,
-                prod_date    = prod_date,
-                quantity     = int(quantity),
-                oven_temp_c  = None,
-                bake_time_min= None,
-                notes        = notes.strip() or None,
-                ing_refs     = ing_refs,
-                pcc_log      = pcc_log,
+                recipe_id     = recipe["id"],
+                recipe_name   = recipe["name"],
+                fmt           = selected_fmt,
+                prod_date     = prod_date,
+                quantity      = float(quantity) if by_weight else int(quantity),
+                quantity_unit = "kg" if by_weight else "units",
+                oven_temp_c   = None,
+                bake_time_min = None,
+                notes         = notes.strip() or None,
+                ing_refs      = ing_refs,
+                pcc_log       = pcc_log,
             )
             st.session_state["last_saved_run"] = run
             st.session_state["prod_n_refs"]    = 3   # reset rows
