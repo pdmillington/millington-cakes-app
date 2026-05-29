@@ -24,8 +24,6 @@ from screen_repricing   import screen_repricing
 from screen_catalogue   import screen_catalogue
 from screen_prices      import screen_prices
 from screen_kpis        import screen_kpis
-from screen_production  import screen_production
-from screen_todos       import screen_todos
 
 # =============================================================================
 # Page config
@@ -70,48 +68,43 @@ def check_password() -> bool:
 def sidebar() -> str:
     with st.sidebar:
         st.markdown("### 🎂 Millington Cakes")
-        st.markdown("Pricing Manager")
         st.divider()
 
-        st.markdown("**Daily use**")
+        st.markdown("**Uso diario**")
         if st.button("📋 Tareas", use_container_width=True):
             st.session_state.screen = "todos"
-        if st.button("Cost calculator", use_container_width=True):
+        if st.button("KPIs del negocio", use_container_width=True):
+            st.session_state.screen = "kpis"
+        if st.button("Calculadora de costes", use_container_width=True):
             st.session_state.screen = "calculator"
-        if st.button("Recipe cost breakdown", use_container_width=True):
-            st.session_state.screen = "analysis"
-        if st.button("Price review", use_container_width=True):
-             st.session_state.screen = "repricing"
-        if st.button("Business KPIs", use_container_width=True):
-             st.session_state.screen = "kpis"
-        if st.button("Production & Labels", use_container_width=True):
+        if st.button("Producción y etiquetas", use_container_width=True):
             st.session_state.screen = "production"
 
         st.divider()
-        st.markdown("**Manage**")
+        st.markdown("**Gestionar**")
 
-        if st.button("Recipes", use_container_width=True):
+        if st.button("Recetas", use_container_width=True):
             st.session_state.screen = "recipes"
-        if st.button("Ingredients", use_container_width=True):
+        if st.button("Ingredientes", use_container_width=True):
             st.session_state.screen = "ingredients"
-        if st.button("Consumables", use_container_width=True):
+        if st.button("Consumibles", use_container_width=True):
             st.session_state.screen = "consumables"
-        if st.button("Prices", use_container_width=True):
+        if st.button("Precios", use_container_width=True):
             st.session_state.screen = "prices"
-        if st.button("Wholesale catalogue", use_container_width=True):
+        if st.button("Catálogo mayorista", use_container_width=True):
             st.session_state.screen = "catalogue"
 
         st.divider()
-        st.markdown("**Config**")
+        st.markdown("**Configuración**")
 
-        if st.button("Product formats", use_container_width=True):
+        if st.button("Variantes de producto", use_container_width=True):
             st.session_state.screen = "variants"
-        if st.button("Packaging presets", use_container_width=True):
+        if st.button("Formatos de packaging", use_container_width=True):
             st.session_state.screen = "packaging"
-        if st.button("Settings", use_container_width=True):
+        if st.button("Ajustes", use_container_width=True):
             st.session_state.screen = "settings"
 
-    return st.session_state.get("screen", "calculator")
+    return st.session_state.get("screen", "todos")
 
 
 # =============================================================================
@@ -267,9 +260,7 @@ SCREENS = {
     "repricing":   screen_repricing,
     "catalogue":   screen_catalogue,
     "prices":      screen_prices,
-    "kpis":        screen_kpis,
-    "production":  screen_production,
-    "todos":       screen_todos 
+    "kpis":        screen_kpis, 
 }
 
 
