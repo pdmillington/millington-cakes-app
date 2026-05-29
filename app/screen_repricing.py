@@ -14,8 +14,9 @@ from core.settings import load_settings
 from core.pricing_engine import calc_ingredient_cost, calc_labour_cost
 
 
-def screen_repricing():
-    st.title("Repricing analysis")
+def screen_repricing(embedded: bool = False):
+    if not embedded:
+        st.title("Repricing analysis")
     st.caption(
         "Calculated cost vs current prices for all active recipes. "
         "WS cost uses wholesale batch assumptions; RT cost uses retail batch assumptions. "

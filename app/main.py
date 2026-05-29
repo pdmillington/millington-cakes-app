@@ -22,7 +22,7 @@ from screen_packaging   import screen_packaging
 from screen_settings    import screen_settings
 from screen_repricing   import screen_repricing
 from screen_catalogue   import screen_catalogue
-from screen_prices      import screen_prices
+from screen_precios     import screen_precios
 from screen_kpis        import screen_kpis
 
 # =============================================================================
@@ -259,7 +259,7 @@ SCREENS = {
     "settings":    screen_settings,
     "repricing":   screen_repricing,
     "catalogue":   screen_catalogue,
-    "prices":      screen_prices,
+    "prices":      screen_precios,
     "kpis":        screen_kpis, 
 }
 
