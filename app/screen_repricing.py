@@ -41,7 +41,8 @@ def screen_repricing(embedded: bool = False):
             "Format",
             ["standard", "individual", "bocado"],
             default=["standard", "individual", "bocado"],
-            format_func=lambda x: FORMAT_DISPLAY[x]
+            format_func=lambda x: FORMAT_DISPLAY[x],
+            key="repricing_filter_format"
         )
     with col_f2:
         filter_status = st.multiselect(
@@ -49,12 +50,14 @@ def screen_repricing(embedded: bool = False):
             ["🟢 On target", "🟡 Review (low)", "🟡 Review (high)",
              "🔴 Below cost", "⚪ No price"],
             default=["🟢 On target", "🟡 Review (low)", "🟡 Review (high)",
-                     "🔴 Below cost", "⚪ No price"]
+                     "🔴 Below cost", "⚪ No price"],
+            key="repricing_filter_status"
         )
     with col_f3:
         show_incomplete = st.checkbox(
             "Include recipes with missing ingredient prices",
-            value=True
+            value=True,
+            key="repricing_show_incomplete"
         )
 
     st.divider()
