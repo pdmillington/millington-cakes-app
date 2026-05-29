@@ -24,6 +24,7 @@ from screen_repricing   import screen_repricing
 from screen_catalogue   import screen_catalogue
 from screen_precios     import screen_precios
 from screen_kpis        import screen_kpis
+from screen_todos       import screen_todos
 
 # =============================================================================
 # Page config
@@ -260,7 +261,8 @@ SCREENS = {
     "repricing":   screen_repricing,
     "catalogue":   screen_catalogue,
     "prices":      screen_precios,
-    "kpis":        screen_kpis, 
+    "kpis":        screen_kpis,
+    "todos":       screen_todos,
 }
 
 
