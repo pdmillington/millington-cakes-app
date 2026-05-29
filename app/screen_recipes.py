@@ -160,8 +160,9 @@ multiples — no numeric size codes needed.
                          disabled=len(new_code) != 2 or not new_name):
                 try:
                     db.save_cake_code(new_code, new_name)
-                    st.success(f"✓ {new_code} — {new_name} saved. "
-                               "Refresh the page to see it in the list.")
+                    db.get_cake_codes.clear()
+                    st.toast(f"✓ {new_code} — {new_name} saved.")
+                    st.rerun()
                 except Exception as e:
                     if "unique" in str(e).lower() or "duplicate" in str(e).lower():
                         st.error(f"Code '{new_code}' already exists.")
