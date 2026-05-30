@@ -17,8 +17,14 @@ from core.settings import load_settings
 from core.pricing_engine import calc_ingredient_cost, calc_labour_cost
 from ui.components import missing_prices_warning
 
-def screen_analysis():
-    st.title("Recipe analysis")
+def screen_analysis(recipe_id: str | None = None):
+    """
+    Recipe cost analysis.
+    Pass recipe_id when embedding inside the Recipes screen tab —
+    skips the recipe selector and uses that recipe directly.
+    """
+    if not recipe_id:
+        st.title("Recipe analysis")
     st.caption(
         "Cost breakdown at reference size — useful for understanding "
         "what drives cost and discussing labour times with the team."
@@ -35,22 +41,31 @@ def screen_analysis():
     ing_map     = {i["name"]: i for i in ingredients}
     code_by_id  = {cc["id"]: cc["code"] for cc in cake_codes}
 
-    # ── Selectors ─────────────────────────────────────────────────────────────
-    col_sel1, col_sel2 = st.columns(2)
-    with col_sel1:
-        recipe_names  = sorted([r["name"] for r in recipes])
-        selected_name = st.selectbox("Recipe", recipe_names, key="ana_recipe")
-
-    with col_sel2:
-        preset_names = ["— none —"] + [p["name"] for p in presets]
+    # ── Selectors — skipped when embedded with a recipe_id ───────────────────
+    if recipe_id:
+        recipe = next((r for r in recipes if r["id"] == recipe_id), {})
+        if not recipe:
+            st.error("Recipe not found.")
+            return
+        preset_names    = ["— none —"] + [p["name"] for p in presets]
         selected_preset = st.selectbox(
-            "Packaging preset", preset_names, key="ana_preset"
+            "Packaging preset", preset_names,
+            key=f"ana_preset_embedded_{recipe_id}"
         )
-
-    recipe = recipe_map.get(selected_name, {})
-    if not recipe:
-        st.info("Select a recipe to continue.")
-        return
+    else:
+        col_sel1, col_sel2 = st.columns(2)
+        with col_sel1:
+            recipe_names  = sorted([r["name"] for r in recipes])
+            selected_name = st.selectbox("Recipe", recipe_names, key="ana_recipe")
+        with col_sel2:
+            preset_names    = ["— none —"] + [p["name"] for p in presets]
+            selected_preset = st.selectbox(
+                "Packaging preset", preset_names, key="ana_preset"
+            )
+        recipe = recipe_map.get(selected_name, {})
+        if not recipe:
+            st.info("Select a recipe to continue.")
+            return
 
     st.divider()
 

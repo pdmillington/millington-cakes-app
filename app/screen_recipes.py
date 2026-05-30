@@ -1,6 +1,7 @@
 # screen_recipes.py
 import streamlit as st
 import millington_db as db
+from screen_analysis import screen_analysis
 
 
 def screen_recipes():
@@ -207,463 +208,483 @@ multiples — no numeric size codes needed.
 
         p = selected_id  # key prefix
 
-        # ── Recipe details ────────────────────────────────────────────────────
-        st.markdown("#### Recipe details")
-
-        c1, c2 = st.columns(2)
-        with c1:
-            name = st.text_input("Recipe name", key=f"field_name_{p}")
-        with c2:
-            code_labels = ["— no code assigned —"] + list(code_options.keys())
-            selected_code_label = st.selectbox(
-                "Cake code", code_labels, key=f"field_code_{p}"
-            )
-            selected_code_id = code_options.get(selected_code_label)
-
-        c3, c4, c5 = st.columns([1, 1, 1])
-        with c3:
-            version = st.text_input(
-                "Version", key=f"field_version_{p}",
-                help="Two digits: 01, 02 etc. Increment only when the "
-                     "recipe formulation meaningfully changes."
-            )
-        with c4:
-            size_type = st.selectbox(
-                "Size type", ["diameter", "weight", "portions"],
-                key=f"field_size_type_{p}"
-            )
-        with c5:
-            is_sub_recipe = st.checkbox(
-                "🔧 Component recipe",
-                key=f"field_is_sub_recipe_{p}",
-                help="Tick for intermediate components (pastry dough, "
-                     "mousse, etc.) used as ingredients in other recipes. "
-                     "These are excluded from pricing analysis and catalogue."
-            )
-
-        if is_sub_recipe:
-            st.info(
-                "🔧 Component recipe — this will not appear in the pricing "
-                "analysis, calculator or catalogue. It will only be accessible "
-                "from the recipe list under Components."
-            )
-
-        st.markdown("**Reference dimensions**")
-        if size_type == "diameter":
-            d1, d2 = st.columns(2)
-            with d1:
-                ref_diameter = st.number_input(
-                    "Diameter (cm)", min_value=0.0,
-                    key=f"field_diameter_{p}"
-                )
-            with d2:
-                ref_height = st.number_input(
-                    "Height (cm) ★", min_value=0.0,
-                    key=f"field_height_{p}",
-                    help="Required for accurate volume-based scaling."
-                )
-            ref_weight = ref_portions = None
-
-        elif size_type == "weight":
-            ref_weight = st.number_input(
-                "Weight (kg)", min_value=0.0,
-                key=f"field_weight_{p}"
-            )
-            ref_diameter = ref_height = ref_portions = None
-
+        # ── Tabs: Edit / Analysis (analysis only for saved recipes) ──────────
+        if is_new:
+            # New recipe — no analysis tab yet
+            _recipe_editor(p, selected_id, recipe, lines, code_options,
+                           ing_options, recipes, settings)
         else:
-            ref_portions = st.number_input(
-                "Portions", min_value=0,
-                key=f"field_portions_{p}"
-            )
-            ref_diameter = ref_height = ref_weight = None
+            tab_edit, tab_analysis = st.tabs([
+                "✏️ Editar receta",
+                "📊 Análisis",
+            ])
+            with tab_edit:
+                _recipe_editor(p, selected_id, recipe, lines, code_options,
+                               ing_options, recipes, settings)
+            with tab_analysis:
+                screen_analysis(recipe_id=selected_id)
 
-        notes = st.text_area(
-            "Notes", key=f"field_notes_{p}", height=60,
-            placeholder="Optional — storage instructions, allergen notes, etc."
+
+
+
+def _recipe_editor(p, selected_id, recipe, lines, code_options,
+                   ing_options, recipes, settings):
+    """All the recipe edit widgets — called from inside a tab."""
+    is_new = selected_id == "new"
+    st.markdown("#### Recipe details")
+    c1, c2 = st.columns(2)
+    with c1:
+        name = st.text_input("Recipe name", key=f"field_name_{p}")
+    with c2:
+        code_labels = ["— no code assigned —"] + list(code_options.keys())
+        selected_code_label = st.selectbox(
+            "Cake code", code_labels, key=f"field_code_{p}"
+        )
+        selected_code_id = code_options.get(selected_code_label)
+
+    c3, c4, c5 = st.columns([1, 1, 1])
+    with c3:
+        version = st.text_input(
+            "Version", key=f"field_version_{p}",
+            help="Two digits: 01, 02 etc. Increment only when the "
+                 "recipe formulation meaningfully changes."
+        )
+    with c4:
+        size_type = st.selectbox(
+            "Size type", ["diameter", "weight", "portions"],
+            key=f"field_size_type_{p}"
+        )
+    with c5:
+        is_sub_recipe = st.checkbox(
+            "🔧 Component recipe",
+            key=f"field_is_sub_recipe_{p}",
+            help="Tick for intermediate components (pastry dough, "
+                 "mousse, etc.) used as ingredients in other recipes. "
+                 "These are excluded from pricing analysis and catalogue."
         )
 
-        if not is_sub_recipe:
-            catalogue_section = st.selectbox(
-                "Catalogue section",
-                options=["tartas", "otros"],
-                format_func=lambda x: "Tartas" if x == "tartas" else "Otros",
-                key=f"field_catalogue_section_{p}",
-                help="Controls which section of the price catalogue this product appears in",
+    if is_sub_recipe:
+        st.info(
+            "🔧 Component recipe — this will not appear in the pricing "
+            "analysis, calculator or catalogue. It will only be accessible "
+            "from the recipe list under Components."
+        )
+
+    st.markdown("**Reference dimensions**")
+    if size_type == "diameter":
+        d1, d2 = st.columns(2)
+        with d1:
+            ref_diameter = st.number_input(
+                "Diameter (cm)", min_value=0.0,
+                key=f"field_diameter_{p}"
             )
-
-        # ── Formats & labour ──────────────────────────────────────────────────
-        if not is_sub_recipe:
-         with st.expander("📦 Formats & labour times"):
-            st.caption(
-                "Enable smaller formats and set production batch times. "
-                "The calculator uses these to derive per-unit labour costs."
+        with d2:
+            ref_height = st.number_input(
+                "Height (cm) ★", min_value=0.0,
+                key=f"field_height_{p}",
+                help="Required for accurate volume-based scaling."
             )
+        ref_weight = ref_portions = None
 
-            # ── Format availability ───────────────────────────────────────────
-            has_individual = st.checkbox(
-                "Available as Individual",
-                key=f"field_has_individual_{p}"
-            )
-            if has_individual:
-                individual_weight = st.number_input(
-                    "Individual weight (g)", min_value=1.0,
-                    key=f"field_individual_weight_{p}",
-                    help="Typical weight per individual portion"
-                )
-            else:
-                individual_weight = None
+    elif size_type == "weight":
+        ref_weight = st.number_input(
+            "Weight (kg)", min_value=0.0,
+            key=f"field_weight_{p}"
+        )
+        ref_diameter = ref_height = ref_portions = None
 
-            has_bocado = st.checkbox(
-                "Available as Bocado",
-                key=f"field_has_bocado_{p}"
-            )
-            if has_bocado:
-                bocado_weight = st.number_input(
-                    "Bocado weight (g)", min_value=1.0,
-                    key=f"field_bocado_weight_{p}",
-                    help="Typical weight per bocado piece"
-                )
-            else:
-                bocado_weight = None
+    else:
+        ref_portions = st.number_input(
+            "Portions", min_value=0,
+            key=f"field_portions_{p}"
+        )
+        ref_diameter = ref_height = ref_weight = None
 
-            # ── Labour table ──────────────────────────────────────────────────
-            st.markdown("**Labour reference times**")
+    notes = st.text_area(
+        "Notes", key=f"field_notes_{p}", height=60,
+        placeholder="Optional — storage instructions, allergen notes, etc."
+    )
 
-            # Header
-            lh0, lh1, lh2, lh3 = st.columns([1.2, 0.8, 1, 1])
-            lh0.markdown("**Format**")
-            lh1.markdown("**Batch**")
-            lh2.markdown("**Prep hrs**")
-            lh3.markdown("**Oven hrs**")
+    if not is_sub_recipe:
+        catalogue_section = st.selectbox(
+            "Catalogue section",
+            options=["tartas", "otros"],
+            format_func=lambda x: "Tartas" if x == "tartas" else "Otros",
+            key=f"field_catalogue_section_{p}",
+            help="Controls which section of the price catalogue this product appears in",
+        )
 
-            # Standard row — always shown
-            ls0, ls1, ls2, ls3 = st.columns([1.2, 0.8, 1, 1])
-            ls0.markdown("Standard")
-            with ls1:
-                ref_batch_size = st.number_input(
-                    "batch_std", min_value=0,
-                    label_visibility="collapsed",
-                    key=f"field_batch_size_{p}"
-                )
-            with ls2:
-                ref_prep_hours = st.number_input(
-                    "prep_std", min_value=0.0, step=0.25,
-                    label_visibility="collapsed",
-                    key=f"field_prep_hours_{p}"
-                )
-            with ls3:
-                ref_oven_hours = st.number_input(
-                    "oven_std", min_value=0.0, step=0.25,
-                    label_visibility="collapsed",
-                    key=f"field_oven_hours_{p}"
-                )
-
-            # Individual row — only if has_individual ticked
-            if has_individual:
-                li0, li1, li2, li3 = st.columns([1.2, 0.8, 1, 1])
-                li0.markdown("Individual")
-                li1.markdown(f"`{ws_batch_ind}`")
-                with li2:
-                    small_prep_hours = st.number_input(
-                        "prep_ind", min_value=0.0, step=0.25,
-                        label_visibility="collapsed",
-                        key=f"field_small_prep_{p}"
-                    )
-                with li3:
-                    small_oven_hours = st.number_input(
-                        "oven_ind", min_value=0.0, step=0.25,
-                        label_visibility="collapsed",
-                        key=f"field_small_oven_{p}"
-                    )
-            else:
-                small_prep_hours = 0.0
-                small_oven_hours = 0.0
-
-            # Bocado row — only if has_bocado ticked
-            if has_bocado:
-                lb0, lb1, lb2, lb3 = st.columns([1.2, 0.8, 1, 1])
-                lb0.markdown("Bocado")
-                lb1.markdown(f"`{ws_batch_boc}`")
-                with lb2:
-                    bocado_prep_hours = st.number_input(
-                        "prep_boc", min_value=0.0, step=0.25,
-                        label_visibility="collapsed",
-                        key=f"field_bocado_prep_{p}"
-                    )
-                with lb3:
-                    bocado_oven_hours = st.number_input(
-                        "oven_boc", min_value=0.0, step=0.25,
-                        label_visibility="collapsed",
-                        key=f"field_bocado_oven_{p}"
-                    )
-            else:
-                bocado_prep_hours = 0.0
-                bocado_oven_hours = 0.0
-
-        # ── Ingredient lines ──────────────────────────────────────────────────
-        st.markdown("#### Ingredients")
+    # ── Formats & labour ──────────────────────────────────────────────────
+    if not is_sub_recipe:
+     with st.expander("📦 Formats & labour times"):
         st.caption(
-            "Select from the ingredient list — type to search. "
-            "Cost updates automatically when ingredient prices are set."
+            "Enable smaller formats and set production batch times. "
+            "The calculator uses these to derive per-unit labour costs."
         )
 
-        lines_key = f"lines_{selected_id}"
-        if lines_key not in st.session_state:
-            st.session_state[lines_key] = [
-                {
-                    "ingredient_id":   l.get("ingredient_id"),
-                    "ingredient_name": l.get("ingredient_name", ""),
-                    "amount":          float(l.get("amount") or 0),
-                    "cost_per_unit":   l.get("ingredient_cost_per_unit"),
-                }
-                for l in lines
-            ]
-            st.session_state[lines_key].append(_empty_line())
-
-        working_lines = st.session_state[lines_key]
-
-        h1, h2, h3, h4 = st.columns([3, 1.5, 1.5, 0.5])
-        h1.markdown("**Ingredient**")
-        h2.markdown("**Amount**")
-        h3.markdown("**Line cost**")
-        h4.markdown("")
-
-        total_cost = 0.0
-        remove_idx = None
-
-        for idx, line in enumerate(working_lines):
-            c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 0.5])
-
-            with c1:
-                ing_labels  = ["— select ingredient —"] + list(ing_options.keys())
-                current_ing = line.get("ingredient_name", "")
-                ing_idx     = ing_labels.index(current_ing) \
-                    if current_ing in ing_labels else 0
-                selected_ing = st.selectbox(
-                    "Ingredient", ing_labels, index=ing_idx,
-                    key=f"line_ing_{selected_id}_{idx}",
-                    label_visibility="collapsed"
-                )
-
-            with c2:
-                amount = st.number_input(
-                    "Amount",
-                    value=float(line.get("amount") or 0),
-                    min_value=0.0,
-                    key=f"line_amt_{selected_id}_{idx}",
-                    label_visibility="collapsed"
-                )
-
-            with c3:
-                ing_id        = ing_options.get(selected_ing)
-                cost_per_unit = None
-                if ing_id:
-                    ing_data      = next(
-                        (i for i in ingredients if i["id"] == ing_id), {}
-                    )
-                    cost_per_unit = ing_data.get("cost_per_unit")
-                if cost_per_unit and amount:
-                    line_cost   = cost_per_unit * amount
-                    total_cost += line_cost
-                    st.markdown(f"`€ {line_cost:.4f}`")
-                else:
-                    st.markdown("—")
-
-            with c4:
-                if selected_ing != "— select ingredient —":
-                    if st.button("✕", key=f"line_del_{selected_id}_{idx}",
-                                 help="Remove this ingredient"):
-                        remove_idx = idx
-
-            st.session_state[lines_key][idx] = {
-                "ingredient_id":   ing_options.get(selected_ing),
-                "ingredient_name": selected_ing
-                    if selected_ing != "— select ingredient —" else "",
-                "amount":          amount,
-                "cost_per_unit":   cost_per_unit,
-            }
-
-        if remove_idx is not None:
-            del st.session_state[lines_key][remove_idx]
-            st.rerun()
-
-        last = working_lines[-1] if working_lines else {}
-        if last.get("ingredient_name") and \
-                last["ingredient_name"] != "— select ingredient —":
-            st.session_state[lines_key].append(_empty_line())
-            st.rerun()
-
-        st.divider()
-        if total_cost > 0:
-            st.markdown(f"**Reference recipe cost: € {total_cost:.4f}**")
-            st.caption("Cost of ingredients only at reference size. "
-                       "Labour, packaging and scaling applied in the calculator.")
+        # ── Format availability ───────────────────────────────────────────
+        has_individual = st.checkbox(
+            "Available as Individual",
+            key=f"field_has_individual_{p}"
+        )
+        if has_individual:
+            individual_weight = st.number_input(
+                "Individual weight (g)", min_value=1.0,
+                key=f"field_individual_weight_{p}",
+                help="Typical weight per individual portion"
+            )
         else:
-            st.caption("Ingredient costs will appear here once prices "
-                       "are set in the Ingredients screen.")
+            individual_weight = None
 
-        # ── PCC Steps ─────────────────────────────────────────────────────────
-        st.divider()
-        st.markdown("#### 🌡️ Puntos de Control Crítico (PCC)")
-        st.caption(
-            "Define los pasos de elaboración que requieren control de temperatura. "
-            "Estos pasos se mostrarán en el registro de producción para su confirmación. "
-            "Solo incluye pasos con aplicación de calor (horneado, cocción, pasteurización). "
-            "No incluyas pasos en frío — se controlan por prerrequisitos."
+        has_bocado = st.checkbox(
+            "Available as Bocado",
+            key=f"field_has_bocado_{p}"
         )
+        if has_bocado:
+            bocado_weight = st.number_input(
+                "Bocado weight (g)", min_value=1.0,
+                key=f"field_bocado_weight_{p}",
+                help="Typical weight per bocado piece"
+            )
+        else:
+            bocado_weight = None
 
-        pcc_key = f"pcc_steps_{selected_id}"
-        if pcc_key not in st.session_state:
-            # Load existing PCC steps from DB
-            existing_pcc = []
-            if selected_id != "new":
-                try:
-                    existing_pcc = db.get_pcc_steps(selected_id)
-                except Exception:
-                    pass
-            st.session_state[pcc_key] = existing_pcc or []
-            st.session_state[pcc_key].append(_empty_pcc_step())
-
-        working_pcc = st.session_state[pcc_key]
+        # ── Labour table ──────────────────────────────────────────────────
+        st.markdown("**Labour reference times**")
 
         # Header
-        ph1, ph2, ph3, ph4, ph5 = st.columns([2.5, 1, 1, 1, 0.5])
-        ph1.markdown("**Elaboración**")
-        ph2.markdown("**Temp. objetivo (°C)**")
-        ph3.markdown("**Tiempo (min)**")
-        ph4.markdown("**Límite crítico (°C)**")
-        ph5.markdown("")
+        lh0, lh1, lh2, lh3 = st.columns([1.2, 0.8, 1, 1])
+        lh0.markdown("**Format**")
+        lh1.markdown("**Batch**")
+        lh2.markdown("**Prep hrs**")
+        lh3.markdown("**Oven hrs**")
 
-        pcc_remove_idx = None
-        for idx, step in enumerate(working_pcc):
-            pc1, pc2, pc3, pc4, pc5 = st.columns([2.5, 1, 1, 1, 0.5])
-            with pc1:
-                step_name = st.text_input(
-                    "Elaboración", key=f"pcc_name_{selected_id}_{idx}",
-                    value=step.get("step_name", ""),
-                    placeholder="e.g. Horneado bizcocho",
-                    label_visibility="visible" if idx == 0 else "collapsed"
-                )
-            with pc2:
-                target_temp = st.number_input(
-                    "Temp. objetivo", key=f"pcc_temp_{selected_id}_{idx}",
-                    value=float(step.get("target_temp_c") or 0),
-                    min_value=0.0, max_value=300.0, step=5.0,
-                    label_visibility="visible" if idx == 0 else "collapsed"
-                )
-            with pc3:
-                target_time = st.number_input(
-                    "Tiempo", key=f"pcc_time_{selected_id}_{idx}",
-                    value=int(step.get("target_time_min") or 0),
-                    min_value=0, max_value=300, step=5,
-                    label_visibility="visible" if idx == 0 else "collapsed"
-                )
-            with pc4:
-                critical_limit = st.number_input(
-                    "Límite crítico", key=f"pcc_limit_{selected_id}_{idx}",
-                    value=float(step.get("critical_limit_temp_c") or 70.0),
-                    min_value=0.0, max_value=300.0, step=1.0,
-                    label_visibility="visible" if idx == 0 else "collapsed",
-                    help="Temperatura mínima que debe alcanzarse para destruir patógenos. "
-                         "Normalmente 70°C/2min o 75°C instantáneo."
-                )
-            with pc5:
-                if step_name.strip() and st.button(
-                    "✕", key=f"pcc_del_{selected_id}_{idx}",
-                    help="Eliminar este paso"
-                ):
-                    pcc_remove_idx = idx
+        # Standard row — always shown
+        ls0, ls1, ls2, ls3 = st.columns([1.2, 0.8, 1, 1])
+        ls0.markdown("Standard")
+        with ls1:
+            ref_batch_size = st.number_input(
+                "batch_std", min_value=0,
+                label_visibility="collapsed",
+                key=f"field_batch_size_{p}"
+            )
+        with ls2:
+            ref_prep_hours = st.number_input(
+                "prep_std", min_value=0.0, step=0.25,
+                label_visibility="collapsed",
+                key=f"field_prep_hours_{p}"
+            )
+        with ls3:
+            ref_oven_hours = st.number_input(
+                "oven_std", min_value=0.0, step=0.25,
+                label_visibility="collapsed",
+                key=f"field_oven_hours_{p}"
+            )
 
-            st.session_state[pcc_key][idx] = {
-                "id":                  step.get("id"),
-                "step_name":           step_name.strip(),
-                "target_temp_c":       target_temp if target_temp > 0 else None,
-                "target_time_min":     target_time if target_time > 0 else None,
-                "critical_limit_temp_c": critical_limit,
-                "sort_order":          idx,
+        # Individual row — only if has_individual ticked
+        if has_individual:
+            li0, li1, li2, li3 = st.columns([1.2, 0.8, 1, 1])
+            li0.markdown("Individual")
+            li1.markdown(f"`{ws_batch_ind}`")
+            with li2:
+                small_prep_hours = st.number_input(
+                    "prep_ind", min_value=0.0, step=0.25,
+                    label_visibility="collapsed",
+                    key=f"field_small_prep_{p}"
+                )
+            with li3:
+                small_oven_hours = st.number_input(
+                    "oven_ind", min_value=0.0, step=0.25,
+                    label_visibility="collapsed",
+                    key=f"field_small_oven_{p}"
+                )
+        else:
+            small_prep_hours = 0.0
+            small_oven_hours = 0.0
+
+        # Bocado row — only if has_bocado ticked
+        if has_bocado:
+            lb0, lb1, lb2, lb3 = st.columns([1.2, 0.8, 1, 1])
+            lb0.markdown("Bocado")
+            lb1.markdown(f"`{ws_batch_boc}`")
+            with lb2:
+                bocado_prep_hours = st.number_input(
+                    "prep_boc", min_value=0.0, step=0.25,
+                    label_visibility="collapsed",
+                    key=f"field_bocado_prep_{p}"
+                )
+            with lb3:
+                bocado_oven_hours = st.number_input(
+                    "oven_boc", min_value=0.0, step=0.25,
+                    label_visibility="collapsed",
+                    key=f"field_bocado_oven_{p}"
+                )
+        else:
+            bocado_prep_hours = 0.0
+            bocado_oven_hours = 0.0
+
+    # ── Ingredient lines ──────────────────────────────────────────────────
+    st.markdown("#### Ingredients")
+    st.caption(
+        "Select from the ingredient list — type to search. "
+        "Cost updates automatically when ingredient prices are set."
+    )
+
+    lines_key = f"lines_{selected_id}"
+    if lines_key not in st.session_state:
+        st.session_state[lines_key] = [
+            {
+                "ingredient_id":   l.get("ingredient_id"),
+                "ingredient_name": l.get("ingredient_name", ""),
+                "amount":          float(l.get("amount") or 0),
+                "cost_per_unit":   l.get("ingredient_cost_per_unit"),
             }
+            for l in lines
+        ]
+        st.session_state[lines_key].append(_empty_line())
 
-        if pcc_remove_idx is not None:
-            del st.session_state[pcc_key][pcc_remove_idx]
-            st.rerun()
+    working_lines = st.session_state[lines_key]
 
-        # Auto-add new row when last row has a name
-        last_pcc = working_pcc[-1] if working_pcc else {}
-        if last_pcc.get("step_name", "").strip():
-            st.session_state[pcc_key].append(_empty_pcc_step())
-            st.rerun()
+    h1, h2, h3, h4 = st.columns([3, 1.5, 1.5, 0.5])
+    h1.markdown("**Ingredient**")
+    h2.markdown("**Amount**")
+    h3.markdown("**Line cost**")
+    h4.markdown("")
 
-        # ── Save / Cancel ─────────────────────────────────────────────────────────
-        st.divider()
-        col_save, col_cancel = st.columns([1, 3])
+    total_cost = 0.0
+    remove_idx = None
 
-        with col_save:
-            if st.button("💾 Save recipe", type="primary",
-                         use_container_width=True):
-                error = _validate_recipe(
-                    name, selected_code_id, version,
-                    is_new, selected_id, recipes
+    for idx, line in enumerate(working_lines):
+        c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 0.5])
+
+        with c1:
+            ing_labels  = ["— select ingredient —"] + list(ing_options.keys())
+            current_ing = line.get("ingredient_name", "")
+            ing_idx     = ing_labels.index(current_ing) \
+                if current_ing in ing_labels else 0
+            selected_ing = st.selectbox(
+                "Ingredient", ing_labels, index=ing_idx,
+                key=f"line_ing_{selected_id}_{idx}",
+                label_visibility="collapsed"
+            )
+
+        with c2:
+            amount = st.number_input(
+                "Amount",
+                value=float(line.get("amount") or 0),
+                min_value=0.0,
+                key=f"line_amt_{selected_id}_{idx}",
+                label_visibility="collapsed"
+            )
+
+        with c3:
+            ing_id        = ing_options.get(selected_ing)
+            cost_per_unit = None
+            if ing_id:
+                ing_data      = next(
+                    (i for i in ingredients if i["id"] == ing_id), {}
                 )
-                if error:
-                    st.error(error)
-                else:
-                    saved = db.save_recipe({
-                        "id":                     None if is_new else selected_id,
-                        "name":                   name,
-                        "cake_code_id":           selected_code_id,
-                        "version":                version.strip().zfill(2),
-                        "size_type":              size_type,
-                        "ref_diameter_cm":        ref_diameter,
-                        "ref_height_cm":          ref_height,
-                        "ref_weight_kg":          ref_weight,
-                        "ref_portions":           ref_portions,
-                        "notes":                  notes or None,
-                        "ref_batch_size":         ref_batch_size or None,
-                        "ref_prep_hours":         ref_prep_hours or None,
-                        "ref_oven_hours":         ref_oven_hours or None,
-                        "is_sub_recipe":          is_sub_recipe,
-                        "catalogue_section":      catalogue_section if not is_sub_recipe else "tartas",
-                        "has_individual":         has_individual if not is_sub_recipe else False,
-                        "has_bocado":             has_bocado if not is_sub_recipe else False,
-                        "individual_weight_g":    individual_weight if not is_sub_recipe else None,
-                        "bocado_weight_g":        bocado_weight if not is_sub_recipe else None,
-                        "small_batch_prep_hours": small_prep_hours or None if not is_sub_recipe else None,
-                        "small_batch_oven_hours": small_oven_hours or None if not is_sub_recipe else None,
-                        "bocado_batch_prep_hours": bocado_prep_hours or None if not is_sub_recipe else None,
-                        "bocado_batch_oven_hours": bocado_oven_hours or None if not is_sub_recipe else None,
-                    })
-                    clean_lines = [
-                        {"ingredient_id": l["ingredient_id"],
-                         "amount": l["amount"]}
-                        for l in st.session_state[lines_key]
-                        if l.get("ingredient_id") and l.get("amount", 0) > 0
-                    ]
-                    db.replace_recipe_lines(saved["id"], clean_lines)
+                cost_per_unit = ing_data.get("cost_per_unit")
+            if cost_per_unit and amount:
+                line_cost   = cost_per_unit * amount
+                total_cost += line_cost
+                st.markdown(f"`€ {line_cost:.4f}`")
+            else:
+                st.markdown("—")
 
-                    # Save PCC steps
-                    clean_pcc = [
-                        {
-                            "id":                    s.get("id"),
-                            "step_name":             s["step_name"],
-                            "target_temp_c":         s.get("target_temp_c"),
-                            "target_time_min":       s.get("target_time_min"),
-                            "critical_limit_temp_c": s.get("critical_limit_temp_c") or 70.0,
-                            "sort_order":            s.get("sort_order", i),
-                        }
-                        for i, s in enumerate(st.session_state.get(f"pcc_steps_{selected_id}", []))
-                        if s.get("step_name", "").strip()
-                    ]
-                    db.replace_pcc_steps(saved["id"], clean_pcc)
+        with c4:
+            if selected_ing != "— select ingredient —":
+                if st.button("✕", key=f"line_del_{selected_id}_{idx}",
+                             help="Remove this ingredient"):
+                    remove_idx = idx
 
-                    st.success(f"Saved: {name}", icon="✅")
-                    _load_recipe(saved["id"], code_options)
+        st.session_state[lines_key][idx] = {
+            "ingredient_id":   ing_options.get(selected_ing),
+            "ingredient_name": selected_ing
+                if selected_ing != "— select ingredient —" else "",
+            "amount":          amount,
+            "cost_per_unit":   cost_per_unit,
+        }
 
-        with col_cancel:
-            if not is_new and st.button("Cancel changes",
-                                        use_container_width=True):
-                _load_recipe(selected_id, code_options)
+    if remove_idx is not None:
+        del st.session_state[lines_key][remove_idx]
+        st.rerun()
 
+    last = working_lines[-1] if working_lines else {}
+    if last.get("ingredient_name") and \
+            last["ingredient_name"] != "— select ingredient —":
+        st.session_state[lines_key].append(_empty_line())
+        st.rerun()
+
+    st.divider()
+    if total_cost > 0:
+        st.markdown(f"**Reference recipe cost: € {total_cost:.4f}**")
+        st.caption("Cost of ingredients only at reference size. "
+                   "Labour, packaging and scaling applied in the calculator.")
+    else:
+        st.caption("Ingredient costs will appear here once prices "
+                   "are set in the Ingredients screen.")
+
+    # ── PCC Steps ─────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### 🌡️ Puntos de Control Crítico (PCC)")
+    st.caption(
+        "Define los pasos de elaboración que requieren control de temperatura. "
+        "Estos pasos se mostrarán en el registro de producción para su confirmación. "
+        "Solo incluye pasos con aplicación de calor (horneado, cocción, pasteurización). "
+        "No incluyas pasos en frío — se controlan por prerrequisitos."
+    )
+
+    pcc_key = f"pcc_steps_{selected_id}"
+    if pcc_key not in st.session_state:
+        # Load existing PCC steps from DB
+        existing_pcc = []
+        if selected_id != "new":
+            try:
+                existing_pcc = db.get_pcc_steps(selected_id)
+            except Exception:
+                pass
+        st.session_state[pcc_key] = existing_pcc or []
+        st.session_state[pcc_key].append(_empty_pcc_step())
+
+    working_pcc = st.session_state[pcc_key]
+
+    # Header
+    ph1, ph2, ph3, ph4, ph5 = st.columns([2.5, 1, 1, 1, 0.5])
+    ph1.markdown("**Elaboración**")
+    ph2.markdown("**Temp. objetivo (°C)**")
+    ph3.markdown("**Tiempo (min)**")
+    ph4.markdown("**Límite crítico (°C)**")
+    ph5.markdown("")
+
+    pcc_remove_idx = None
+    for idx, step in enumerate(working_pcc):
+        pc1, pc2, pc3, pc4, pc5 = st.columns([2.5, 1, 1, 1, 0.5])
+        with pc1:
+            step_name = st.text_input(
+                "Elaboración", key=f"pcc_name_{selected_id}_{idx}",
+                value=step.get("step_name", ""),
+                placeholder="e.g. Horneado bizcocho",
+                label_visibility="visible" if idx == 0 else "collapsed"
+            )
+        with pc2:
+            target_temp = st.number_input(
+                "Temp. objetivo", key=f"pcc_temp_{selected_id}_{idx}",
+                value=float(step.get("target_temp_c") or 0),
+                min_value=0.0, max_value=300.0, step=5.0,
+                label_visibility="visible" if idx == 0 else "collapsed"
+            )
+        with pc3:
+            target_time = st.number_input(
+                "Tiempo", key=f"pcc_time_{selected_id}_{idx}",
+                value=int(step.get("target_time_min") or 0),
+                min_value=0, max_value=300, step=5,
+                label_visibility="visible" if idx == 0 else "collapsed"
+            )
+        with pc4:
+            critical_limit = st.number_input(
+                "Límite crítico", key=f"pcc_limit_{selected_id}_{idx}",
+                value=float(step.get("critical_limit_temp_c") or 70.0),
+                min_value=0.0, max_value=300.0, step=1.0,
+                label_visibility="visible" if idx == 0 else "collapsed",
+                help="Temperatura mínima que debe alcanzarse para destruir patógenos. "
+                     "Normalmente 70°C/2min o 75°C instantáneo."
+            )
+        with pc5:
+            if step_name.strip() and st.button(
+                "✕", key=f"pcc_del_{selected_id}_{idx}",
+                help="Eliminar este paso"
+            ):
+                pcc_remove_idx = idx
+
+        st.session_state[pcc_key][idx] = {
+            "id":                  step.get("id"),
+            "step_name":           step_name.strip(),
+            "target_temp_c":       target_temp if target_temp > 0 else None,
+            "target_time_min":     target_time if target_time > 0 else None,
+            "critical_limit_temp_c": critical_limit,
+            "sort_order":          idx,
+        }
+
+    if pcc_remove_idx is not None:
+        del st.session_state[pcc_key][pcc_remove_idx]
+        st.rerun()
+
+    # Auto-add new row when last row has a name
+    last_pcc = working_pcc[-1] if working_pcc else {}
+    if last_pcc.get("step_name", "").strip():
+        st.session_state[pcc_key].append(_empty_pcc_step())
+        st.rerun()
+
+    # ── Save / Cancel ─────────────────────────────────────────────────────────
+    st.divider()
+    col_save, col_cancel = st.columns([1, 3])
+
+    with col_save:
+        if st.button("💾 Save recipe", type="primary",
+                     use_container_width=True):
+            error = _validate_recipe(
+                name, selected_code_id, version,
+                is_new, selected_id, recipes
+            )
+            if error:
+                st.error(error)
+            else:
+                saved = db.save_recipe({
+                    "id":                     None if is_new else selected_id,
+                    "name":                   name,
+                    "cake_code_id":           selected_code_id,
+                    "version":                version.strip().zfill(2),
+                    "size_type":              size_type,
+                    "ref_diameter_cm":        ref_diameter,
+                    "ref_height_cm":          ref_height,
+                    "ref_weight_kg":          ref_weight,
+                    "ref_portions":           ref_portions,
+                    "notes":                  notes or None,
+                    "ref_batch_size":         ref_batch_size or None,
+                    "ref_prep_hours":         ref_prep_hours or None,
+                    "ref_oven_hours":         ref_oven_hours or None,
+                    "is_sub_recipe":          is_sub_recipe,
+                    "catalogue_section":      catalogue_section if not is_sub_recipe else "tartas",
+                    "has_individual":         has_individual if not is_sub_recipe else False,
+                    "has_bocado":             has_bocado if not is_sub_recipe else False,
+                    "individual_weight_g":    individual_weight if not is_sub_recipe else None,
+                    "bocado_weight_g":        bocado_weight if not is_sub_recipe else None,
+                    "small_batch_prep_hours": small_prep_hours or None if not is_sub_recipe else None,
+                    "small_batch_oven_hours": small_oven_hours or None if not is_sub_recipe else None,
+                    "bocado_batch_prep_hours": bocado_prep_hours or None if not is_sub_recipe else None,
+                    "bocado_batch_oven_hours": bocado_oven_hours or None if not is_sub_recipe else None,
+                })
+                clean_lines = [
+                    {"ingredient_id": l["ingredient_id"],
+                     "amount": l["amount"]}
+                    for l in st.session_state[lines_key]
+                    if l.get("ingredient_id") and l.get("amount", 0) > 0
+                ]
+                db.replace_recipe_lines(saved["id"], clean_lines)
+
+                # Save PCC steps
+                clean_pcc = [
+                    {
+                        "id":                    s.get("id"),
+                        "step_name":             s["step_name"],
+                        "target_temp_c":         s.get("target_temp_c"),
+                        "target_time_min":       s.get("target_time_min"),
+                        "critical_limit_temp_c": s.get("critical_limit_temp_c") or 70.0,
+                        "sort_order":            s.get("sort_order", i),
+                    }
+                    for i, s in enumerate(st.session_state.get(f"pcc_steps_{selected_id}", []))
+                    if s.get("step_name", "").strip()
+                ]
+                db.replace_pcc_steps(saved["id"], clean_pcc)
+
+                st.success(f"Saved: {name}", icon="✅")
+                _load_recipe(saved["id"], code_options)
+
+    with col_cancel:
+        if not is_new and st.button("Cancel changes",
+                                    use_container_width=True):
+            _load_recipe(selected_id, code_options)
 
 # =============================================================================
 # Helpers
