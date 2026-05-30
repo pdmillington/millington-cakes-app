@@ -233,7 +233,10 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
                    ing_options, recipes, settings,
                    ws_batch_ind=100, ws_batch_boc=250):
     """All the recipe edit widgets — called from inside a tab."""
-    is_new = selected_id == "new"
+    from core.settings import load_settings
+    is_new      = selected_id == "new"
+    ingredients = db.get_ingredients()
+    s           = load_settings()
     st.markdown("#### Recipe details")
     c1, c2 = st.columns(2)
     with c1:
