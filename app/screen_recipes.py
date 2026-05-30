@@ -212,7 +212,8 @@ multiples — no numeric size codes needed.
         if is_new:
             # New recipe — no analysis tab yet
             _recipe_editor(p, selected_id, recipe, lines, code_options,
-                           ing_options, recipes, settings)
+                           ing_options, recipes, settings,
+                           ws_batch_ind, ws_batch_boc)
         else:
             tab_edit, tab_analysis = st.tabs([
                 "✏️ Editar receta",
@@ -220,7 +221,8 @@ multiples — no numeric size codes needed.
             ])
             with tab_edit:
                 _recipe_editor(p, selected_id, recipe, lines, code_options,
-                               ing_options, recipes, settings)
+                               ing_options, recipes, settings,
+                               ws_batch_ind, ws_batch_boc)
             with tab_analysis:
                 screen_analysis(recipe_id=selected_id)
 
@@ -228,7 +230,8 @@ multiples — no numeric size codes needed.
 
 
 def _recipe_editor(p, selected_id, recipe, lines, code_options,
-                   ing_options, recipes, settings):
+                   ing_options, recipes, settings,
+                   ws_batch_ind=100, ws_batch_boc=250):
     """All the recipe edit widgets — called from inside a tab."""
     is_new = selected_id == "new"
     st.markdown("#### Recipe details")
