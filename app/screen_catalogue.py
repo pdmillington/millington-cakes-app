@@ -394,6 +394,16 @@ def screen_catalogue():
             "version":    version,
         })
 
+    # Debug expander — shows what the photo index is finding
+    with st.expander("🔍 Diagnóstico de fotos (temporal)", expanded=False):
+        for pr in photo_rows:
+            st.markdown(f"**{pr['name']}** — fmt_key: `{pr['fmt_key']}` — cc_code: `{pr['cc_code']}` — version: `{pr['version']}`")
+            st.caption(f"Base: `{pr['cc_code'].lower()}-{pr['version'].lower()}` — Auto photo: `{os.path.basename(pr['auto_photo']) if pr['auto_photo'] else 'None'}`")
+            if pr['all_photos']:
+                st.caption(f"All available: {[os.path.basename(p) for p in pr['all_photos']]}")
+            else:
+                st.caption("No photos found in index")
+
     # Initialise session state for photo selections
     for pr in photo_rows:
         key = f"cat_photo_{pr['rid']}"
@@ -411,7 +421,7 @@ def screen_catalogue():
                 sel_photo  = st.session_state.get(sel_key)
                 st.markdown(f"**{pr['name']}**")
                 if sel_photo and os.path.exists(sel_photo):
-                    st.image(sel_photo, width='stretch')
+                    st.image(sel_photo, use_container_width=True)
                     st.caption(os.path.basename(sel_photo))
                 else:
                     st.caption("Sin foto disponible")
@@ -421,7 +431,7 @@ def screen_catalogue():
                         for ph in pr["all_photos"]:
                             ph_name = os.path.basename(ph)
                             tc1, tc2 = st.columns([3, 1])
-                            tc1.image(ph, width='stretch')
+                            tc1.image(ph, use_container_width=True)
                             with tc2:
                                 st.write("")
                                 if st.button(
