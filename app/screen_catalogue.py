@@ -115,15 +115,19 @@ def _find_intro_photo(
     base = f"{code}-{ver}"
 
     # Size codes per format
-    fmt_size_codes = {
-        "bocado":     ["mi", "bo"],
-        "individual": ["ti", "in"],
+    # Priority order per format:
+    # individual → ti first, then mi (related small size), then la, then any
+    # bocado     → mi first, then ti (related small size), then la, then any
+    # standard   → la first, then any
+    fmt_priority = {
+        "bocado":     ["mi", "bo", "ti", "in", "la"],
+        "individual": ["ti", "in", "mi", "bo", "la"],
         "standard":   ["la", "xl", "xx", "dc"],
     }
 
-    # 1. Try format-specific photo first
-    if fmt_key and fmt_key in fmt_size_codes:
-        for sc in fmt_size_codes[fmt_key]:
+    # 1. Try format-priority codes in order
+    if fmt_key and fmt_key in fmt_priority:
+        for sc in fmt_priority[fmt_key]:
             candidates = index.get(f"{base}-{sc}")
             if candidates:
                 return random.choice(candidates)
@@ -133,7 +137,7 @@ def _find_intro_photo(
     if candidates:
         return random.choice(candidates)
 
-    # 3. Fall back to any size variant
+    # 3. Last resort — any photo for this recipe
     prefixed = [paths for key, paths in index.items()
                 if key.startswith(f"{base}-")]
     if prefixed:
