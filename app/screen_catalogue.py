@@ -96,21 +96,44 @@ def _find_intro_photo(
     index: dict[str, list[str]],
     cake_code: str,
     version: str,
+    fmt_key: str | None = None,
 ) -> str | None:
     """
-    For intro pages — any photo for this recipe, preferring recipe-level
-    (no size code) but falling back to any size variant.
+    For intro pages — picks the most appropriate photo for the recipe,
+    taking format into account.
+
+    Priority order:
+    1. Format-specific photo matching fmt_key (e.g. bo/mi for bocado,
+       in/ti for individual, la/xl/xx for standard)
+    2. Recipe-level photo (no size code) — multi-size marketing shot
+    3. Any size variant photo as last resort
+
+    This ensures bocado-only catalogues show bocado photos, not full cakes.
     """
     code = cake_code.lower()
     ver  = version.lower()
     base = f"{code}-{ver}"
 
-    # Prefer recipe-level photo (no size code) — intended for multi-size shots
+    # Size codes per format
+    fmt_size_codes = {
+        "bocado":     ["bo", "mi"],
+        "individual": ["in", "ti"],
+        "standard":   ["la", "xl", "xx", "dc"],
+    }
+
+    # 1. Try format-specific photo first
+    if fmt_key and fmt_key in fmt_size_codes:
+        for sc in fmt_size_codes[fmt_key]:
+            candidates = index.get(f"{base}-{sc}")
+            if candidates:
+                return random.choice(candidates)
+
+    # 2. Recipe-level photo (no size code) — intended for multi-size shots
     candidates = index.get(base)
     if candidates:
         return random.choice(candidates)
 
-    # Fall back to any size variant
+    # 3. Fall back to any size variant
     prefixed = [paths for key, paths in index.items()
                 if key.startswith(f"{base}-")]
     if prefixed:
@@ -322,6 +345,100 @@ def screen_catalogue():
 
     st.divider()
 
+    # ── Photo selection ───────────────────────────────────────────────────────
+    st.markdown("### Selección de fotos")
+    st.caption(
+        "Foto seleccionada automáticamente para cada producto. "
+        "Haz clic en **Cambiar** para elegir otra foto disponible."
+    )
+
+    photo_index_ui = _build_photo_index(PHOTOS_DIR)
+    cake_codes_ui  = db.get_cake_codes()
+    cc_by_id_ui    = {cc["id"]: cc["code"] for cc in cake_codes_ui}
+
+    # Build photo selection state — one entry per unique recipe in resolved_rows
+    seen_for_photos: set[str] = set()
+    photo_rows: list[dict] = []
+    for row in resolved_rows:
+        rid = row["recipe_id"]
+        if rid in seen_for_photos:
+            continue
+        seen_for_photos.add(rid)
+        recipe_r = recipe_by_id.get(rid, {})
+        cc_id    = recipe_r.get("cake_code_id")
+        version  = recipe_r.get("version") or "01"
+        cc_code  = cc_by_id_ui.get(cc_id, "") if cc_id else ""
+        fmt_key  = row.get("fmt_key")
+
+        # Auto-select best photo
+        auto_photo = _find_intro_photo(
+            photo_index_ui, cc_code, version, fmt_key
+        ) if cc_code else None
+
+        # All available photos for this recipe
+        base    = f"{cc_code.lower()}-{version.lower()}" if cc_code else ""
+        all_photos = []
+        if base:
+            for key, paths in photo_index_ui.items():
+                if key == base or key.startswith(f"{base}-"):
+                    all_photos.extend(paths)
+            all_photos = sorted(set(all_photos))
+
+        photo_rows.append({
+            "rid":        rid,
+            "name":       row["name"],
+            "fmt_key":    fmt_key,
+            "auto_photo": auto_photo,
+            "all_photos": all_photos,
+            "cc_code":    cc_code,
+            "version":    version,
+        })
+
+    # Initialise session state for photo selections
+    for pr in photo_rows:
+        key = f"cat_photo_{pr['rid']}"
+        if key not in st.session_state:
+            st.session_state[key] = pr["auto_photo"]
+
+    # Render photo picker grid — 3 columns
+    MAX_COLS = 3
+    for i in range(0, len(photo_rows), MAX_COLS):
+        chunk = photo_rows[i:i + MAX_COLS]
+        cols  = st.columns(MAX_COLS)
+        for col, pr in zip(cols, chunk):
+            with col:
+                sel_key    = f"cat_photo_{pr['rid']}"
+                sel_photo  = st.session_state.get(sel_key)
+                st.markdown(f"**{pr['name']}**")
+                if sel_photo and os.path.exists(sel_photo):
+                    st.image(sel_photo, use_container_width=True)
+                    st.caption(os.path.basename(sel_photo))
+                else:
+                    st.caption("Sin foto disponible")
+
+                if pr["all_photos"]:
+                    with st.expander("🔄 Cambiar foto"):
+                        for ph in pr["all_photos"]:
+                            ph_name = os.path.basename(ph)
+                            tc1, tc2 = st.columns([3, 1])
+                            tc1.image(ph, use_container_width=True)
+                            with tc2:
+                                st.write("")
+                                if st.button(
+                                    "Usar",
+                                    key=f"use_photo_{pr['rid']}_{ph_name}",
+                                ):
+                                    st.session_state[sel_key] = ph
+                                    st.rerun()
+
+    # Build photo_overrides dict to pass to PDF generator
+    photo_overrides: dict[str, str | None] = {
+        pr["rid"]: st.session_state.get(f"cat_photo_{pr['rid']}")
+        for pr in photo_rows
+    }
+
+    st.divider()
+
     # ── Ficha warnings ───────────────────────────────────────────────────────────
     # Check which selected products have approved label text
     unapproved = []
@@ -363,6 +480,7 @@ def screen_catalogue():
                     cond_returns   = custom_returns,
                     var_lookup     = full_var_lookup,
                     recipe_by_id   = recipe_by_id,
+                    photo_overrides = photo_overrides,
                 )
                 fname = (
                     f"millington_catalogo"
@@ -445,6 +563,7 @@ def _generate_pdf(
     include_fichas: bool = True,
     var_lookup: dict = None,
     recipe_by_id: dict = None,
+    photo_overrides: dict = None,
 ) -> bytes:
     from reportlab.platypus import (
         SimpleDocTemplate, Table, TableStyle, Paragraph,
@@ -562,7 +681,12 @@ def _generate_pdf(
         if not cc_id:
             continue
         cc_code = cake_code_by_id.get(cc_id, "")
-        photo   = _find_intro_photo(photo_index, cc_code, version)
+        fmt_key = row.get("fmt_key")
+        # Use manually selected photo if available, otherwise auto-select
+        if photo_overrides and rid in photo_overrides and photo_overrides[rid]:
+            photo = photo_overrides[rid]
+        else:
+            photo = _find_intro_photo(photo_index, cc_code, version, fmt_key)
         if photo:
             grid_items.append((row["name"], photo))
 
@@ -959,27 +1083,12 @@ def _add_ficha_page(
         declaration = {"contiene": [], "puede_contener": [], "warnings": []}
 
     # If no stored label text, generate from recipe
-    allergen_labels = {}
     if not label_text and recipe_id:
         try:
-            label_data      = db.get_ingredient_label_text(recipe_id)
-            label_text      = label_data.get("label_text") or ""
-            allergen_labels = label_data.get("allergen_fields") or {}
+            label_data = db.get_ingredient_label_text(recipe_id)
+            label_text = label_data.get("label_text") or ""
         except Exception:
             label_text = ""
-    elif recipe_id:
-        # Fetch allergen map for bolding even when stored label exists
-        try:
-            label_data      = db.get_ingredient_label_text(recipe_id)
-            allergen_labels = label_data.get("allergen_fields") or {}
-        except Exception:
-            allergen_labels = {}
-
-    # Apply allergen bolding and convert ** markers to ReportLab <b> tags
-    if label_text and allergen_labels:
-        import re as _re
-        label_text = db.apply_allergen_bold(label_text, allergen_labels)
-        label_text = _re.sub(r"\*\*(.+?)\*\*", r"<b></b>", label_text)
 
     contiene = (
         ", ".join(a.capitalize() for a in declaration.get("contiene", []))
