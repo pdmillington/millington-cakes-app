@@ -425,7 +425,7 @@ def screen_catalogue():
                 sel_photo  = st.session_state.get(sel_key)
                 st.markdown(f"**{pr['name']}**")
                 if sel_photo and os.path.exists(sel_photo):
-                    st.image(sel_photo, use_container_width=True)
+                    st.image(sel_photo, width='stretch')
                     st.caption(os.path.basename(sel_photo))
                 else:
                     st.caption("Sin foto disponible")
@@ -435,7 +435,7 @@ def screen_catalogue():
                         for ph in pr["all_photos"]:
                             ph_name = os.path.basename(ph)
                             tc1, tc2 = st.columns([3, 1])
-                            tc1.image(ph, use_container_width=True)
+                            tc1.image(ph, width='stretch')
                             with tc2:
                                 st.write("")
                                 if st.button(
