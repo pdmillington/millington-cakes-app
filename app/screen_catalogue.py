@@ -432,10 +432,19 @@ def screen_catalogue():
 
                 if pr["all_photos"]:
                     with st.expander("🔄 Cambiar foto"):
-                        for ph in pr["all_photos"]:
+                        # Show auto-selected photo first, then the rest
+                        auto = pr["auto_photo"]
+                        ordered = (
+                            [auto] + [p for p in pr["all_photos"] if p != auto]
+                            if auto else pr["all_photos"]
+                        )
+                        for ph in ordered:
                             ph_name = os.path.basename(ph)
+                            is_auto = (ph == auto)
                             tc1, tc2 = st.columns([3, 1])
                             tc1.image(ph, width='stretch')
+                            if is_auto:
+                                tc1.caption("⭐ Selección automática")
                             with tc2:
                                 st.write("")
                                 if st.button(
