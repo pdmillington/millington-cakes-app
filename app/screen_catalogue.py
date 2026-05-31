@@ -79,9 +79,9 @@ def _find_ficha_photo(
     base = f"{code}-{ver}"
 
     size_codes = {
-        "standard":   ["la"],
-        "bocado":     ["bo", "mi"],
-        "individual": ["in", "ti"],
+        "standard":   ["la", "xl", "xx", "dc"],
+        "bocado":     ["mi", "bo"],
+        "individual": ["ti", "in"],
     }.get(fmt_key, [])
 
     for sc in size_codes:
@@ -116,8 +116,8 @@ def _find_intro_photo(
 
     # Size codes per format
     fmt_size_codes = {
-        "bocado":     ["bo", "mi"],
-        "individual": ["in", "ti"],
+        "bocado":     ["mi", "bo"],
+        "individual": ["ti", "in"],
         "standard":   ["la", "xl", "xx", "dc"],
     }
 
