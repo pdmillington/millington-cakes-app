@@ -1048,7 +1048,7 @@ def _generate_labels_pdf(
 
     LABEL_W = (PAGE_W - 2 * MARGIN - (COLS - 1) * GAP) / COLS   # ≈ 177 pts / 62.5 mm
     LABEL_H = (PAGE_H - 2 * MARGIN - (ROWS - 1) * GAP) / ROWS   # ≈ 259 pts / 91.5 mm
-    PAD     = 2.5 * mm
+    PAD     = 3.0 * mm
     CONTENT_W = LABEL_W - 2 * PAD
 
     # ── Colours ───────────────────────────────────────────────────────────────
@@ -1066,11 +1066,11 @@ def _generate_labels_pdf(
     c = pdfcanvas.Canvas(buffer, pagesize=A4)
 
     # ── Font sizes for small label ────────────────────────────────────────────
-    FS_NAME    = 7.0    # product name
+    FS_NAME    = 8.0    # product name
     FS_SUB     = 5.0    # format / subtitle
-    FS_SECTION = 5.5    # section headers (INGREDIENTES, CONSERVACIÓN…)
-    FS_BODY    = 5.0    # body text
-    FS_FOOTER  = 4.0    # company footer
+    FS_SECTION = 6.5    # section headers (INGREDIENTES, CONSERVACIÓN…)
+    FS_BODY    = 6.0    # body text
+    FS_FOOTER  = 5.0    # company footer
 
     # ── Line heights (pts) ────────────────────────────────────────────────────
     LH_BODY    = 1.9 * mm
@@ -1106,7 +1106,7 @@ def _generate_labels_pdf(
                 reader = ImageReader(logo_path)
                 iw, ih = reader.getSize()
                 aspect = iw / ih if ih else 2
-                logo_h = 7 * mm
+                logo_h = 8 * mm
                 logo_w = min(logo_h * aspect, LABEL_W - 2 * PAD)
                 logo_x = x0 + (LABEL_W - logo_w) / 2
                 logo_y = y0 + LABEL_H - header_h + (header_h - logo_h) / 2
