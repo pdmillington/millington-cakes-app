@@ -569,19 +569,18 @@ def _label_from_run():
         st.session_state["_label_run_last_key"] = _run_key
         _qty = run["quantity"]
         if _run_by_weight:
-            st.session_state["label_run_qty"] = _math.ceil(_qty / max(0.001, kg_per_box))
+            st.session_state["label_run_qty_default"] = max(1, _math.ceil(_qty / max(0.001, kg_per_box)))
         else:
-            st.session_state["label_run_qty"] = _math.ceil(_qty / max(1, int(units_per_box)))
+            st.session_state["label_run_qty_default"] = max(1, _math.ceil(_qty / max(1, int(units_per_box))))
 
     with col_nlab:
         _default_qty = max(1, st.session_state.get("label_run_qty_val", run["quantity"]))
         n_labels = st.number_input(
             "Nº etiquetas", min_value=1,
-            value=_default_qty,
-            step=1, key="label_run_qty",
+            value=st.session_state.get("label_run_qty_default", max(1, run["quantity"])),
+            step=1, key="label_run_qty_widget",
             help="Por defecto: cantidad producida ÷ cantidad por caja"
         )
-        st.session_state["label_run_qty_val"] = n_labels
     with col_fdays:
         frozen_days = st.number_input(
             "Vida útil congelado (días)", min_value=1, value=90, step=1,
@@ -1076,8 +1075,8 @@ def _generate_labels_pdf(
     FS_MIN     = 4.8    # minimum body font before truncation
 
     # ── Base line heights ─────────────────────────────────────────────────────
-    LH_BODY    = 1.9 * mm
-    LH_SECTION = 2.0 * mm
+    LH_BODY    = 2.2 * mm
+    LH_SECTION = 2.3 * mm
 
     # ── Available content height (header to footer) ───────────────────────────
     HEADER_H_PT = 11 * mm
