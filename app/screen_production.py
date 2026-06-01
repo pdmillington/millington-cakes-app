@@ -1066,15 +1066,58 @@ def _generate_labels_pdf(
     c = pdfcanvas.Canvas(buffer, pagesize=A4)
 
     # ── Font sizes for small label ────────────────────────────────────────────
-    FS_NAME    = 8.0    # product name
-    FS_SUB     = 5.0    # format / subtitle
-    FS_SECTION = 6.5    # section headers (INGREDIENTES, CONSERVACIÓN…)
-    FS_BODY    = 6.0    # body text
-    FS_FOOTER  = 5.0    # company footer
+    FS_NAME    = 8.0    # product name (not scaled)
+    FS_SUB     = 5.0    # format / subtitle (not scaled)
+    FS_SECTION = 6.5    # section headers — scaled if overflow
+    FS_BODY    = 6.0    # body text — scaled if overflow
+    FS_FOOTER  = 5.0    # company footer (not scaled)
+    FS_MIN     = 4.8    # minimum body font before truncation
 
-    # ── Line heights (pts) ────────────────────────────────────────────────────
-    LH_BODY    = 2.1 * mm
-    LH_SECTION = 2.2 * mm
+    # ── Base line heights ─────────────────────────────────────────────────────
+    LH_BODY    = 1.9 * mm
+    LH_SECTION = 2.0 * mm
+
+    # ── Available content height (header to footer) ───────────────────────────
+    HEADER_H_PT = 11 * mm
+    FOOTER_H    = 6.5 * mm
+    AVAIL_H     = LABEL_H - HEADER_H_PT - FOOTER_H
+
+    def _estimate_h(fs_body, fs_section, lh_body, lh_section):
+        """Dry-run height estimate of variable label content in pts."""
+        h  = lh_section + 3 * mm + 2.5 * mm        # name/sub/divider
+        n_kv = 3 + (1 if weight_g else 0)
+        h += n_kv * lh_body + 1.5 * mm + 2.5 * mm  # key-value rows
+        h += lh_section                              # INGREDIENTES header
+        if ing_display:
+            wrapped = _wrap_text(c, ing_display, body_font, bold_font, fs_body, CONTENT_W)
+            h += len(wrapped) * lh_body
+        else:
+            h += lh_body
+        h += 1.5 * mm
+        if allergen_contiene_str or allergen_puede_str:
+            h += 2.5 * mm
+            if allergen_contiene_str:
+                h += lh_section
+                h += len(_simple_wrap(c, allergen_contiene_str, bold_font, fs_body, CONTENT_W)) * lh_body
+            if allergen_puede_str:
+                h += len(_simple_wrap(c, "Trazas: " + allergen_puede_str, body_font, fs_body, CONTENT_W)) * lh_body
+            h += 1 * mm
+        h += 2.5 * mm + lh_section                  # CONSERVACIÓN header
+        h += len(_simple_wrap(c, storage, body_font, fs_body, CONTENT_W)) * lh_body
+        return h
+
+    # ── Auto-scale: step down 0.25pt at a time until content fits ────────────
+    fs_body    = FS_BODY
+    fs_section = FS_SECTION
+    lh_body    = LH_BODY
+    lh_section = LH_SECTION
+    while fs_body > FS_MIN:
+        if _estimate_h(fs_body, fs_section, lh_body, lh_section) <= AVAIL_H:
+            break
+        fs_body    = round(fs_body    - 0.25, 2)
+        fs_section = round(fs_section - 0.25, 2)
+        lh_body    = round(lh_body    - 0.04 * mm, 5)
+        lh_section = round(lh_section - 0.04 * mm, 5)
 
     def draw_label(c, x0: float, y0: float,
                    label_upb: int = units_per_box,
@@ -1151,14 +1194,14 @@ def _generate_labels_pdf(
         # ── Key info rows ─────────────────────────────────────────────────────
         def _kv(label, value):
             nonlocal y
-            c.setFont(bold_font, FS_BODY)
+            c.setFont(bold_font, fs_body)
             c.setFillColor(mid)
             c.drawString(x0 + PAD, y, label)
-            lw = c.stringWidth(label, bold_font, FS_BODY) + 1.5 * mm
-            c.setFont(body_font, FS_BODY)
+            lw = c.stringWidth(label, bold_font, fs_body) + 1.5 * mm
+            c.setFont(body_font, fs_body)
             c.setFillColor(dark)
             c.drawString(x0 + PAD + lw, y, value)
-            y -= LH_BODY
+            y -= lh_body
 
         _kv("Lote:", lote)
         _kv("Elaborado:", prod_str)
@@ -1173,18 +1216,18 @@ def _generate_labels_pdf(
         y -= 2.5 * mm
 
         # ── Ingredients ───────────────────────────────────────────────────────
-        _draw_text(c, "INGREDIENTES:", x0 + PAD, y, bold_font, FS_SECTION, dark)
-        y -= LH_SECTION
+        _draw_text(c, "INGREDIENTES:", x0 + PAD, y, bold_font, fs_section, dark)
+        y -= lh_section
 
         if ing_display:
-            lines = _wrap_text(c, ing_display, body_font, bold_font, FS_BODY, CONTENT_W)
-            for line_parts in lines[:4]:   # cap at 4 lines on a small label
+            lines = _wrap_text(c, ing_display, body_font, bold_font, fs_body, CONTENT_W)
+            for line_parts in lines:
                 _draw_rich_line(c, x0 + PAD, y, line_parts,
-                                body_font, bold_font, FS_BODY, dark)
-                y -= LH_BODY
+                                body_font, bold_font, fs_body, dark)
+                y -= lh_body
         else:
-            _draw_text(c, "Ver ficha técnica.", x0 + PAD, y, body_font, FS_BODY, mid)
-            y -= LH_BODY
+            _draw_text(c, "Ver ficha técnica.", x0 + PAD, y, body_font, fs_body, mid)
+            y -= lh_body
 
         y -= 1.5 * mm
 
@@ -1195,17 +1238,17 @@ def _generate_labels_pdf(
             c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
             y -= 2.5 * mm
             if allergen_contiene_str:
-                _draw_text(c, "CONTIENE:", x0 + PAD, y, bold_font, FS_SECTION, dark)
-                y -= LH_SECTION
+                _draw_text(c, "CONTIENE:", x0 + PAD, y, bold_font, fs_section, dark)
+                y -= lh_section
                 for line in _simple_wrap(c, allergen_contiene_str,
-                                         bold_font, FS_BODY, CONTENT_W)[:2]:
-                    _draw_text(c, line, x0 + PAD, y, bold_font, FS_BODY, dark)
-                    y -= LH_BODY
+                                         bold_font, fs_body, CONTENT_W):
+                    _draw_text(c, line, x0 + PAD, y, bold_font, fs_body, dark)
+                    y -= lh_body
             if allergen_puede_str:
                 txt = "Trazas: " + allergen_puede_str
-                for line in _simple_wrap(c, txt, body_font, FS_BODY, CONTENT_W)[:2]:
-                    _draw_text(c, line, x0 + PAD, y, body_font, FS_BODY, mid)
-                    y -= LH_BODY
+                for line in _simple_wrap(c, txt, body_font, fs_body, CONTENT_W):
+                    _draw_text(c, line, x0 + PAD, y, body_font, fs_body, dark)
+                    y -= lh_body
             y -= 1 * mm
 
         # ── Storage ───────────────────────────────────────────────────────────
@@ -1213,11 +1256,11 @@ def _generate_labels_pdf(
         c.setLineWidth(0.3)
         c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
         y -= 2.5 * mm
-        _draw_text(c, "CONSERVACIÓN:", x0 + PAD, y, bold_font, FS_SECTION, dark)
-        y -= LH_SECTION
-        for line in _simple_wrap(c, storage, body_font, FS_BODY, CONTENT_W)[:3]:
-            _draw_text(c, line, x0 + PAD, y, body_font, FS_BODY, dark)
-            y -= LH_BODY
+        _draw_text(c, "CONSERVACIÓN:", x0 + PAD, y, bold_font, fs_section, dark)
+        y -= lh_section
+        for line in _simple_wrap(c, storage, body_font, fs_body, CONTENT_W):
+            _draw_text(c, line, x0 + PAD, y, body_font, fs_body, dark)
+            y -= lh_body
 
         # ── Footer (pinned to bottom of label) ────────────────────────────────
         footer_y = y0 + PAD
@@ -1225,12 +1268,12 @@ def _generate_labels_pdf(
         c.setLineWidth(0.3)
         c.line(x0 + PAD, footer_y + 5 * mm, x0 + LABEL_W - PAD, footer_y + 5 * mm)
         _draw_text(c, COMPANY_NAME, x0 + PAD, footer_y + 3.5 * mm,
-                   bold_font, FS_FOOTER, mid)
+                   bold_font, FS_FOOTER, dark)
         _draw_text(c, f"CIF: {COMPANY_CIF}", x0 + PAD, footer_y + 2 * mm,
-                   body_font, FS_FOOTER, light)
+                   body_font, FS_FOOTER, dark)
         addr_lines = _simple_wrap(c, COMPANY_ADDRESS, body_font, FS_FOOTER - 0.5, CONTENT_W)
         _draw_text(c, addr_lines[0] if addr_lines else COMPANY_ADDRESS,
-                   x0 + PAD, footer_y + 0.5 * mm, body_font, FS_FOOTER - 0.5, light)
+                   x0 + PAD, footer_y + 0.5 * mm, body_font, FS_FOOTER - 0.5, dark)
 
     # ── Lay out 9 labels per page in a 3×3 grid ───────────────────────────────
     labels_drawn = 0
