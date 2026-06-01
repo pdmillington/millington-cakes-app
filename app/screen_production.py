@@ -1068,11 +1068,11 @@ def _generate_labels_pdf(
     c = pdfcanvas.Canvas(buffer, pagesize=A4)
 
     # ── Font sizes for small label ────────────────────────────────────────────
-    FS_NAME    = 8.0    # product name (not scaled)
-    FS_SUB     = 5.0    # format / subtitle (not scaled)
-    FS_SECTION = 6.5    # section headers — scaled if overflow
-    FS_BODY    = 6.0    # body text — scaled if overflow
-    FS_FOOTER  = 5.0    # company footer (not scaled)
+    FS_NAME    = 9.0    # product name (not scaled)
+    FS_SUB     = 6.0    # format / subtitle (not scaled)
+    FS_SECTION = 7.5    # section headers — scaled if overflow
+    FS_BODY    = 7.0    # body text — scaled if overflow
+    FS_FOOTER  = 6.0    # company footer (not scaled)
     FS_MIN     = 4.8    # minimum body font before truncation
 
     # ── Base line heights ─────────────────────────────────────────────────────
@@ -1151,7 +1151,7 @@ def _generate_labels_pdf(
                 reader = ImageReader(logo_path)
                 iw, ih = reader.getSize()
                 aspect = iw / ih if ih else 2
-                logo_h = 8 * mm
+                logo_h = 9 * mm
                 logo_w = min(logo_h * aspect, LABEL_W - 2 * PAD)
                 logo_x = x0 + (LABEL_W - logo_w) / 2
                 logo_y = y0 + LABEL_H - header_h + (header_h - logo_h) / 2
@@ -1226,7 +1226,7 @@ def _generate_labels_pdf(
         # Give at most half the spare space as extra padding before ingredients
         extra_pad = min(spare * 0.5, 3 * mm) if spare > 0 else 0
 
-        y -= (2.5 * mm + extra_pad)
+        y -= 2.5 * mm
 
         # ── Ingredients ───────────────────────────────────────────────────────
         _draw_text(c, "INGREDIENTES:", x0 + PAD, y, bold_font, fs_section, dark)
@@ -1242,7 +1242,7 @@ def _generate_labels_pdf(
             _draw_text(c, "Ver ficha técnica.", x0 + PAD, y, body_font, fs_body, mid)
             y -= lh_body
 
-        y -= 1.5 * mm
+        y -= extra_pad
 
         # ── Allergens ─────────────────────────────────────────────────────────
         if allergen_contiene_str or allergen_puede_str:
@@ -1251,7 +1251,7 @@ def _generate_labels_pdf(
             c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
             # Give remaining spare space before allergens too
             extra_alg = min(spare * 0.25, 2 * mm) if spare > 0 else 0
-            y -= (2.5 * mm + extra_alg)
+            y -= 2.5 * mm 
             if allergen_contiene_str:
                 _draw_text(c, "CONTIENE:", x0 + PAD, y, bold_font, fs_section, dark)
                 y -= lh_section
@@ -1264,7 +1264,7 @@ def _generate_labels_pdf(
                 for line in _simple_wrap(c, txt, body_font, fs_body, CONTENT_W):
                     _draw_text(c, line, x0 + PAD, y, body_font, fs_body, dark)
                     y -= lh_body
-            y -= 1 * mm
+            y -= 1 * mm + extra_alg
 
         # ── Storage ───────────────────────────────────────────────────────────
         c.setStrokeColor(border)
@@ -1281,8 +1281,8 @@ def _generate_labels_pdf(
         footer_y = y0 + PAD
         c.setStrokeColor(border)
         c.setLineWidth(0.3)
-        c.line(x0 + PAD, footer_y + 5 * mm, x0 + LABEL_W - PAD, footer_y + 5 * mm)
-        _draw_text(c, COMPANY_NAME, x0 + PAD, footer_y + 3.5 * mm,
+        c.line(x0 + PAD, footer_y + 6 * mm, x0 + LABEL_W - PAD, footer_y + 6 * mm)
+        _draw_text(c, COMPANY_NAME, x0 + PAD, footer_y + 4.5 * mm,
                    bold_font, FS_FOOTER, dark)
         _draw_text(c, f"CIF: {COMPANY_CIF}", x0 + PAD, footer_y + 2 * mm,
                    body_font, FS_FOOTER, dark)
