@@ -1280,7 +1280,7 @@ def _generate_labels_pdf(
         footer_y = y0 + PAD
         c.setStrokeColor(border)
         c.setLineWidth(0.3)
-        c.line(x0 + PAD, footer_y + 6 * mm, x0 + LABEL_W - PAD, footer_y + 6 * mm)
+        c.line(x0 + PAD, footer_y + 7 * mm, x0 + LABEL_W - PAD, footer_y + 7 * mm)
         _draw_text(c, COMPANY_NAME, x0 + PAD, footer_y + 4.5 * mm,
                    bold_font, FS_FOOTER, dark)
         _draw_text(c, f"CIF: {COMPANY_CIF}", x0 + PAD, footer_y + 2 * mm,
