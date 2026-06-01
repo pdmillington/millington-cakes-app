@@ -574,12 +574,14 @@ def _label_from_run():
             st.session_state["label_run_qty"] = _math.ceil(_qty / max(1, int(units_per_box)))
 
     with col_nlab:
+        _default_qty = max(1, st.session_state.get("label_run_qty_val", run["quantity"]))
         n_labels = st.number_input(
             "Nº etiquetas", min_value=1,
-            value=st.session_state["label_run_qty"],
+            value=_default_qty,
             step=1, key="label_run_qty",
             help="Por defecto: cantidad producida ÷ cantidad por caja"
         )
+        st.session_state["label_run_qty_val"] = n_labels
     with col_fdays:
         frozen_days = st.number_input(
             "Vida útil congelado (días)", min_value=1, value=90, step=1,
@@ -1213,7 +1215,18 @@ def _generate_labels_pdf(
         c.setStrokeColor(border)
         c.setLineWidth(0.3)
         c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-        y -= 2.5 * mm
+
+        # ── Distribute spare space before ingredients ─────────────────────────
+        # Calculate how much space remains after all content
+        est_remaining = _estimate_h(fs_body, fs_section, lh_body, lh_section)
+        y_content_top = y0 + LABEL_H - HEADER_H_PT
+        y_content_bot = y0 + FOOTER_H
+        used_so_far   = y_content_top - y  # pts used from top to here
+        spare         = AVAIL_H - est_remaining
+        # Give at most half the spare space as extra padding before ingredients
+        extra_pad = min(spare * 0.5, 3 * mm) if spare > 0 else 0
+
+        y -= (2.5 * mm + extra_pad)
 
         # ── Ingredients ───────────────────────────────────────────────────────
         _draw_text(c, "INGREDIENTES:", x0 + PAD, y, bold_font, fs_section, dark)
@@ -1236,7 +1249,9 @@ def _generate_labels_pdf(
             c.setStrokeColor(border)
             c.setLineWidth(0.3)
             c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-            y -= 2.5 * mm
+            # Give remaining spare space before allergens too
+            extra_alg = min(spare * 0.25, 2 * mm) if spare > 0 else 0
+            y -= (2.5 * mm + extra_alg)
             if allergen_contiene_str:
                 _draw_text(c, "CONTIENE:", x0 + PAD, y, bold_font, fs_section, dark)
                 y -= lh_section
