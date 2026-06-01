@@ -1073,8 +1073,8 @@ def _generate_labels_pdf(
     FS_FOOTER  = 5.0    # company footer
 
     # ── Line heights (pts) ────────────────────────────────────────────────────
-    LH_BODY    = 1.9 * mm
-    LH_SECTION = 2.0 * mm
+    LH_BODY    = 2.1 * mm
+    LH_SECTION = 2.2 * mm
 
     def draw_label(c, x0: float, y0: float,
                    label_upb: int = units_per_box,
