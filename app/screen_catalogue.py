@@ -434,7 +434,7 @@ def screen_catalogue():
                 ph = label_to_path.get(lbl)
                 with preview_cols[i % 3]:
                     if ph and os.path.exists(ph):
-                        st.image(ph, use_container_width=True)
+                        st.image(ph, width='stretch')
                     st.caption(lbl)
     else:
         st.info("Sin fotos seleccionadas — la página de portada no incluirá rejilla de fotos.")
