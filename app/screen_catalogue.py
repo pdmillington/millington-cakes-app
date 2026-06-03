@@ -349,116 +349,105 @@ def screen_catalogue():
 
     st.divider()
 
-    # ── Photo selection ───────────────────────────────────────────────────────
-    st.markdown("### Selección de fotos")
+    # ── Photo selection — intro page 3×3 grid ────────────────────────────────
+    st.markdown("### Fotos de portada")
     st.caption(
-        "Foto seleccionada automáticamente para cada producto. "
-        "Haz clic en **Cambiar** para elegir otra foto disponible."
+        "Selecciona hasta 9 fotos de toda la biblioteca para la página de portada. "
+        "El orden de selección determina la posición en la rejilla 3×3."
     )
 
     photo_index_ui = _build_photo_index(PHOTOS_DIR)
     cake_codes_ui  = db.get_cake_codes()
     cc_by_id_ui    = {cc["id"]: cc["code"] for cc in cake_codes_ui}
+    # Reverse map: cc_code (lower) → recipe name
+    # Build from all recipes for full library
+    all_recipes_ui = db.get_recipes()
+    name_by_code: dict[str, str] = {}
+    for r in all_recipes_ui:
+        cid = r.get("cake_code_id")
+        if cid and cid in {cc["id"]: cc for cc in cake_codes_ui}:
+            code = cc_by_id_ui.get(cid, "").lower()
+            if code:
+                name_by_code[code] = r["name"]
 
-    # Build photo selection state — one entry per unique recipe in resolved_rows
-    seen_for_photos: set[str] = set()
-    photo_rows: list[dict] = []
-    for row in resolved_rows:
-        rid = row["recipe_id"]
-        if rid in seen_for_photos:
-            continue
-        seen_for_photos.add(rid)
-        recipe_r = recipe_by_id.get(rid, {})
-        cc_id    = recipe_r.get("cake_code_id")
-        version  = recipe_r.get("version") or "01"
-        cc_code  = cc_by_id_ui.get(cc_id, "") if cc_id else ""
-        fmt_key  = row.get("fmt_key")
-
-        # Auto-select best photo
-        auto_photo = _find_intro_photo(
-            photo_index_ui, cc_code, version, fmt_key
-        ) if cc_code else None
-
-        # All available photos for this recipe
-        base    = f"{cc_code.lower()}-{version.lower()}" if cc_code else ""
-        all_photos = []
-        if base:
-            for key, paths in photo_index_ui.items():
-                if key == base or key.startswith(f"{base}-"):
-                    all_photos.extend(paths)
-            all_photos = sorted(set(all_photos))
-
-        photo_rows.append({
-            "rid":        rid,
-            "name":       row["name"],
-            "fmt_key":    fmt_key,
-            "auto_photo": auto_photo,
-            "all_photos": all_photos,
-            "cc_code":    cc_code,
-            "version":    version,
-        })
-
-    # Debug expander — shows what the photo index is finding
-    with st.expander("🔍 Diagnóstico de fotos (temporal)", expanded=False):
-        for pr in photo_rows:
-            st.markdown(f"**{pr['name']}** — fmt_key: `{pr['fmt_key']}` — cc_code: `{pr['cc_code']}` — version: `{pr['version']}`")
-            st.caption(f"Base: `{pr['cc_code'].lower()}-{pr['version'].lower()}` — Auto photo: `{os.path.basename(pr['auto_photo']) if pr['auto_photo'] else 'None'}`")
-            if pr['all_photos']:
-                st.caption(f"All available: {[os.path.basename(p) for p in pr['all_photos']]}")
-            else:
-                st.caption("No photos found in index")
-
-    # Initialise session state for photo selections
-    for pr in photo_rows:
-        key = f"cat_photo_{pr['rid']}"
-        if key not in st.session_state:
-            st.session_state[key] = pr["auto_photo"]
-
-    # Render photo picker grid — 3 columns
-    MAX_COLS = 3
-    for i in range(0, len(photo_rows), MAX_COLS):
-        chunk = photo_rows[i:i + MAX_COLS]
-        cols  = st.columns(MAX_COLS)
-        for col, pr in zip(cols, chunk):
-            with col:
-                sel_key    = f"cat_photo_{pr['rid']}"
-                sel_photo  = st.session_state.get(sel_key)
-                st.markdown(f"**{pr['name']}**")
-                if sel_photo and os.path.exists(sel_photo):
-                    st.image(sel_photo, width='stretch')
-                    st.caption(os.path.basename(sel_photo))
-                else:
-                    st.caption("Sin foto disponible")
-
-                if pr["all_photos"]:
-                    with st.expander("🔄 Cambiar foto"):
-                        # Show auto-selected photo first, then the rest
-                        auto = pr["auto_photo"]
-                        ordered = (
-                            [auto] + [p for p in pr["all_photos"] if p != auto]
-                            if auto else pr["all_photos"]
-                        )
-                        for ph in ordered:
-                            ph_name = os.path.basename(ph)
-                            is_auto = (ph == auto)
-                            tc1, tc2 = st.columns([3, 1])
-                            tc1.image(ph, width='stretch')
-                            if is_auto:
-                                tc1.caption("⭐ Selección automática")
-                            with tc2:
-                                st.write("")
-                                if st.button(
-                                    "Usar",
-                                    key=f"use_photo_{pr['rid']}_{ph_name}",
-                                ):
-                                    st.session_state[sel_key] = ph
-                                    st.rerun()
-
-    # Build photo_overrides dict to pass to PDF generator
-    photo_overrides: dict[str, str | None] = {
-        pr["rid"]: st.session_state.get(f"cat_photo_{pr['rid']}")
-        for pr in photo_rows
+    SIZE_LABELS = {
+        "la": "estándar",
+        "xl": "estándar XL",
+        "xx": "estándar XXX",
+        "dc": "estándar DC",
+        "ti": "individual",
+        "in": "individual",
+        "mi": "bocado",
+        "bo": "bocado",
     }
+
+    def _photo_human_label(path: str) -> str:
+        """Convert photo filename to human-readable label."""
+        fname  = os.path.splitext(os.path.basename(path))[0]  # e.g. lp-01-ti_2
+        # Extract photo number suffix
+        m_num  = re.match(r"^(.+?)_(\d+)$", fname)
+        num    = int(m_num.group(2)) if m_num else 1
+        stem   = m_num.group(1) if m_num else fname    # e.g. lp-01-ti
+
+        parts  = stem.split("-")                        # ['lp', '01', 'ti']
+        code   = parts[0].lower() if parts else ""
+        size_c = parts[2].lower() if len(parts) >= 3 else ""
+
+        recipe_name = name_by_code.get(code, code.upper())
+        size_label  = SIZE_LABELS.get(size_c, size_c) if size_c else "todas las tallas"
+        num_suffix  = f" ({num})" if num > 1 else ""
+
+        return f"{recipe_name} — {size_label}{num_suffix}"
+
+    # Build full library: list of (human_label, path) sorted by label
+    all_library: list[tuple[str, str]] = []
+    for prefix, paths in sorted(photo_index_ui.items()):
+        for path in sorted(paths):
+            label = _photo_human_label(path)
+            all_library.append((label, path))
+    all_library.sort(key=lambda x: x[0])
+
+    # Label → path lookup (labels should be unique after numbering)
+    label_to_path = {lbl: path for lbl, path in all_library}
+    all_labels    = [lbl for lbl, _ in all_library]
+
+    # Restore previous selection from session state
+    prev = st.session_state.get("cat_intro_photos", [])
+    prev_valid = [l for l in prev if l in label_to_path]
+
+    selected_labels = st.multiselect(
+        "Fotos seleccionadas (máx. 9, en orden de posición en la rejilla)",
+        options=all_labels,
+        default=prev_valid,
+        max_selections=9,
+        key="cat_intro_photos_sel",
+        help="Selecciona en el orden en que quieras que aparezcan: izquierda→derecha, arriba→abajo",
+    )
+    st.session_state["cat_intro_photos"] = selected_labels
+
+    if selected_labels:
+        st.caption(f"{len(selected_labels)} de 9 fotos seleccionadas")
+        # Show small preview of selected photos in a 3×3 grid
+        with st.expander("Vista previa de selección", expanded=True):
+            preview_cols = st.columns(3)
+            for i, lbl in enumerate(selected_labels):
+                ph = label_to_path.get(lbl)
+                with preview_cols[i % 3]:
+                    if ph and os.path.exists(ph):
+                        st.image(ph, use_container_width=True)
+                    st.caption(lbl)
+    else:
+        st.info("Sin fotos seleccionadas — la página de portada no incluirá rejilla de fotos.")
+
+    # Build grid_items for PDF — (label, path) in selection order
+    intro_grid_items: list[tuple[str, str]] = [
+        (lbl, label_to_path[lbl])
+        for lbl in selected_labels
+        if lbl in label_to_path
+    ]
+
+    # photo_overrides not needed in new system — kept for compatibility
+    photo_overrides: dict[str, str | None] = {}
 
     st.divider()
 
@@ -491,19 +480,20 @@ def screen_catalogue():
                     full_var_lookup.setdefault(v["recipe_id"], {})[v["format"]] = v
 
                 pdf_bytes = _generate_pdf(
-                    rows           = resolved_rows,
-                    settings       = settings,
-                    title          = catalogue_title,
-                    cat_date       = catalogue_date,
-                    client_name    = client_name.strip() or None,
-                    include_cond   = include_conditions,
-                    include_fichas = include_fichas,
-                    cond_allergen  = custom_allergen,
-                    cond_avail     = custom_availability,
-                    cond_returns   = custom_returns,
-                    var_lookup     = full_var_lookup,
-                    recipe_by_id   = recipe_by_id,
+                    rows            = resolved_rows,
+                    settings        = settings,
+                    title           = catalogue_title,
+                    cat_date        = catalogue_date,
+                    client_name     = client_name.strip() or None,
+                    include_cond    = include_conditions,
+                    include_fichas  = include_fichas,
+                    cond_allergen   = custom_allergen,
+                    cond_avail      = custom_availability,
+                    cond_returns    = custom_returns,
+                    var_lookup      = full_var_lookup,
+                    recipe_by_id    = recipe_by_id,
                     photo_overrides = photo_overrides,
+                    intro_grid      = intro_grid_items,
                 )
                 fname = (
                     f"millington_catalogo"
@@ -587,6 +577,7 @@ def _generate_pdf(
     var_lookup: dict = None,
     recipe_by_id: dict = None,
     photo_overrides: dict = None,
+    intro_grid: list = None,
 ) -> bytes:
     from reportlab.platypus import (
         SimpleDocTemplate, Table, TableStyle, Paragraph,
@@ -692,26 +683,8 @@ def _generate_pdf(
 
     # Deduplicate: one entry per recipe (first occurrence wins)
     seen_recipes: set[str] = set()
-    grid_items: list[tuple[str, str]] = []   # (recipe_name, photo_path)
-    for row in rows:
-        rid = row["recipe_id"]
-        if rid in seen_recipes:
-            continue
-        seen_recipes.add(rid)
-        recipe  = (recipe_by_id or {}).get(rid, {})
-        cc_id   = recipe.get("cake_code_id")
-        version = recipe.get("version") or "01"
-        if not cc_id:
-            continue
-        cc_code = cake_code_by_id.get(cc_id, "")
-        fmt_key = row.get("fmt_key")
-        # Use manually selected photo if available, otherwise auto-select
-        if photo_overrides and rid in photo_overrides and photo_overrides[rid]:
-            photo = photo_overrides[rid]
-        else:
-            photo = _find_intro_photo(photo_index, cc_code, version, fmt_key)
-        if photo:
-            grid_items.append((row["name"], photo))
+    # Use explicitly selected intro grid from UI
+    grid_items: list[tuple[str, str]] = intro_grid or []
 
     if grid_items:
         COLS      = 3
