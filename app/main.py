@@ -79,7 +79,7 @@ def sidebar() -> str:
             st.session_state.screen = "kpis"
         if st.button("Calculadora de variantes", use_container_width=True):
             st.session_state.screen = "calculator"
-        if st.button("Producción y etiquetas", use_container_width=True):
+        if st.button("Recepción producción y etiquetas", use_container_width=True):
             st.session_state.screen = "production"
 
         st.divider()
