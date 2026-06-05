@@ -2108,3 +2108,82 @@ def save_todo(record: dict) -> dict:
 def delete_todo(todo_id: str) -> None:
     """Delete a todo by id."""
     get_client().table("todos").delete().eq("id", todo_id).execute()
+
+# =============================================================================
+# GOODS RECEIPTS  (Registro de Recepción — APPCC ELD R7-01)
+# =============================================================================
+ 
+def save_goods_receipt(
+    *,
+    receipt_date: "date",
+    supplier: str,
+    albaran_ref: str | None,
+    received_by: str | None,
+    items: list[dict],          # list of item dicts — see schema
+    notes: str | None,
+) -> dict:
+    """
+    Save one goods-receipt header + its line items.
+    Returns the saved header dict with 'id' populated.
+    """
+    sb = get_client()
+ 
+    header = {
+        "receipt_date":  receipt_date.isoformat(),
+        "supplier":      supplier.strip(),
+        "albaran_ref":   (albaran_ref or "").strip() or None,
+        "received_by":   (received_by or "").strip() or None,
+        "notes":         (notes or "").strip() or None,
+    }
+    result = sb.table("goods_receipts").insert(header).execute()
+    saved  = (result.data or [{}])[0]
+    rid    = saved["id"]
+ 
+    for item in items:
+        sb.table("goods_receipt_items").insert({
+            "receipt_id":          rid,
+            "product_name":        item.get("product_name", "").strip(),
+            "supplier_lot":        (item.get("supplier_lot") or "").strip() or None,
+            "quantity":            item.get("quantity"),
+            "quantity_unit":       item.get("quantity_unit"),
+            "temp_type":           item.get("temp_type", "ambient"),   # 'refrigerated'|'frozen'|'ambient'
+            "temp_measured_c":     item.get("temp_measured_c"),        # None for ambient
+            "temp_limit_c":        item.get("temp_limit_c"),           # None for ambient
+            "packaging_ok":        item.get("packaging_ok", True),
+            "labelling_ok":        item.get("labelling_ok", True),
+            "accepted":            item.get("accepted", True),
+            "rejection_reason":    (item.get("rejection_reason") or "").strip() or None,
+        }).execute()
+ 
+    saved["items"] = items
+    return saved
+ 
+ 
+def get_goods_receipts(limit: int = 30) -> list[dict]:
+    """Return recent goods receipts, newest first, with items attached."""
+    sb   = get_client()
+    rows = (
+        sb.table("goods_receipts")
+          .select("*")
+          .order("receipt_date", desc=True)
+          .order("created_at",   desc=True)
+          .limit(limit)
+          .execute()
+          .data or []
+    )
+    if not rows:
+        return rows
+    receipt_ids = [r["id"] for r in rows]
+    items = (
+        sb.table("goods_receipt_items")
+          .select("*")
+          .in_("receipt_id", receipt_ids)
+          .execute()
+          .data or []
+    )
+    items_by_receipt: dict[str, list] = {}
+    for it in items:
+        items_by_receipt.setdefault(it["receipt_id"], []).append(it)
+    for row in rows:
+        row["items"] = items_by_receipt.get(row["id"], [])
+    return rows

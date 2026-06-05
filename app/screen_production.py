@@ -32,11 +32,7 @@ FORMAT_DISPLAY = {
     "standard":   "Tarta estándar",
     "individual": "Individual",
     "bocado":     "Bocado",
-    "plancha":    "Plancha",
 }
-
-# Formats that default to unit-based production; everything else defaults to kg
-UNIT_FORMATS = {"standard", "individual", "bocado"}
 
 COMPANY_NAME    = "Millington Cakes, S.L."
 COMPANY_CIF     = "B13998596"
@@ -54,12 +50,19 @@ def screen_production():
         "para etiquetar cada producto antes de la entrega."
     )
 
-    tab1, tab2 = st.tabs(["📋 Registro de producción", "🏷️ Imprimir etiquetas"])
+    tab1, tab2, tab3 = st.tabs([
+        "📦 Recepción de materias primas",
+        "📋 Registro de producción",
+        "🏷️ Imprimir etiquetas",
+    ])
 
     with tab1:
-        _tab_log()
+        _tab_reception()
 
     with tab2:
+        _tab_log()
+
+    with tab3:
         _tab_labels()
 
 
@@ -86,7 +89,7 @@ def _tab_log():
             "Receta", ["— selecciona —"] + recipe_names, key="prod_recipe"
         )
     with col_f:
-        fmt_options = ["standard", "individual", "bocado", "plancha"]
+        fmt_options = ["standard", "individual", "bocado"]
         fmt_labels  = [FORMAT_DISPLAY[f] for f in fmt_options]
         fmt_idx     = st.selectbox(
             "Formato", fmt_labels, key="prod_fmt"
@@ -121,32 +124,15 @@ def _tab_log():
             st.session_state.pop(f"prod_alb_{i}", None)
 
     # ── Basic details ─────────────────────────────────────────────────────────
-    col_d, col_m, col_q = st.columns([2, 1.5, 2])
+    col_d, col_q = st.columns(2)
     with col_d:
         prod_date = st.date_input(
             "Fecha de producción", value=date.today(), key="prod_date"
         )
-    _by_weight_default = selected_fmt not in UNIT_FORMATS
-    with col_m:
-        qty_mode = st.radio(
-            "Unidad de producción",
-            ["Unidades", "Kg"],
-            index=1 if _by_weight_default else 0,
-            key=f"prod_qty_mode_{selected_fmt}",
-            horizontal=True,
-        )
-    by_weight = qty_mode == "Kg"
     with col_q:
-        if by_weight:
-            quantity = st.number_input(
-                "Kg producidos", min_value=0.01, value=1.0,
-                step=0.5, format="%.2f", key="prod_qty"
-            )
-        else:
-            quantity = st.number_input(
-                "Unidades producidas", min_value=1, value=1,
-                step=1, key="prod_qty"
-            )
+        quantity = st.number_input(
+            "Unidades producidas", min_value=1, value=1, step=1, key="prod_qty"
+        )
 
     # ── PCC steps — pre-populated from recipe ────────────────────────────────
     st.markdown("#### Control de Puntos Críticos (PCC) — registro APPCC")
@@ -345,17 +331,16 @@ def _tab_log():
     if st.button("💾 Guardar registro y obtener número de lote", type="primary"):
         try:
             run = db.save_production_run(
-                recipe_id     = recipe["id"],
-                recipe_name   = recipe["name"],
-                fmt           = selected_fmt,
-                prod_date     = prod_date,
-                quantity      = float(quantity) if by_weight else int(quantity),
-                quantity_unit = "kg" if by_weight else "units",
-                oven_temp_c   = None,
-                bake_time_min = None,
-                notes         = notes.strip() or None,
-                ing_refs      = ing_refs,
-                pcc_log       = pcc_log,
+                recipe_id    = recipe["id"],
+                recipe_name  = recipe["name"],
+                fmt          = selected_fmt,
+                prod_date    = prod_date,
+                quantity     = int(quantity),
+                oven_temp_c  = None,
+                bake_time_min= None,
+                notes        = notes.strip() or None,
+                ing_refs     = ing_refs,
+                pcc_log      = pcc_log,
             )
             st.session_state["last_saved_run"] = run
             st.session_state["prod_n_refs"]    = 3   # reset rows
@@ -490,18 +475,12 @@ def _label_from_run():
 
     # Pull variant data for the ingredient list
     variant = None
-    variants = []
     try:
         variants = db.get_variants_for_recipe(run["recipe_id"])
         fmt = run.get("format", "standard")
         variant = next((v for v in variants if v.get("format") == fmt), None)
-        # Fallback: if no variant for this format (e.g. plancha), use the
-        # standard variant for the same recipe — ingredients are the same
-        if variant is None and fmt != "standard":
-            variant = next((v for v in variants if v.get("format") == "standard"), None)
-    except Exception as _ve:
-        st.error(f"Variant lookup error: {_ve}")
-
+    except Exception:
+        pass
 
     shelf_hours = int((variant or {}).get("shelf_life_hours") or 48)
     fresh_storage = (variant or {}).get("storage_instructions") or "Refrigerada entre 0 y 5°C"
@@ -543,43 +522,20 @@ def _label_from_run():
     )
     frozen = delivery_mode.startswith("❄️")
 
-    import math as _math
-    _run_by_weight = run.get("quantity_unit", "units") == "kg"
-
     col_nlab, col_upb, col_fdays = st.columns(3)
     with col_upb:
-        if _run_by_weight:
-            kg_per_box = st.number_input(
-                "Kg por caja", min_value=0.01, value=1.0,
-                step=0.5, format="%.2f", key="label_run_upb_kg",
-                help="Peso neto de cada caja"
-            )
-            units_per_box = 1
-        else:
-            units_per_box = st.number_input(
-                "Unidades por caja", min_value=1, value=1, step=1,
-                key="label_run_upb",
-                help="Número de piezas individuales que contiene cada caja"
-            )
-            kg_per_box = None
-
-    _box_size = kg_per_box if _run_by_weight else units_per_box
-    _run_key  = (run["id"], _box_size)
-    if st.session_state.get("_label_run_last_key") != _run_key or "label_run_qty" not in st.session_state:
-        st.session_state["_label_run_last_key"] = _run_key
-        _qty = run["quantity"]
-        if _run_by_weight:
-            st.session_state["label_run_qty_default"] = max(1, _math.ceil(_qty / max(0.001, kg_per_box)))
-        else:
-            st.session_state["label_run_qty_default"] = max(1, _math.ceil(_qty / max(1, int(units_per_box))))
-
+        units_per_box = st.number_input(
+            "Unidades por caja", min_value=1, value=1, step=1,
+            key="label_run_upb",
+            help="Número de piezas individuales que contiene cada caja"
+        )
+    import math as _math
+    _default_n = min(_math.ceil(run["quantity"] / max(1, int(units_per_box))), 9)
     with col_nlab:
-        _default_qty = max(1, st.session_state.get("label_run_qty_val", run["quantity"]))
         n_labels = st.number_input(
             "Nº etiquetas", min_value=1,
-            value=st.session_state.get("label_run_qty_default", max(1, run["quantity"])),
-            step=1, key="label_run_qty_widget",
-            help="Por defecto: cantidad producida ÷ cantidad por caja"
+            value=_default_n, step=1, key="label_run_qty",
+            help="Por defecto: unidades ÷ uds por caja (máx. 9 = una página completa)"
         )
     with col_fdays:
         frozen_days = st.number_input(
@@ -612,38 +568,18 @@ def _label_from_run():
 
     if st.button("🏷️ Generar etiquetas PDF", type="primary", key="label_run_gen"):
         try:
-            if _run_by_weight:
-                _last_kg = round(
-                    run["quantity"] - (int(n_labels) - 1) * kg_per_box, 3
-                ) if int(n_labels) > 1 else run["quantity"]
-                pdf_bytes = _generate_labels_pdf(
-                    recipe_name      = run["recipe_name"],
-                    fmt              = run.get("format", "standard"),
-                    lote             = run["lote_number"],
-                    prod_date        = raw_date,
-                    best_before      = best_before_d,
-                    storage_text     = storage_text,
-                    variant          = variant,
-                    n_labels         = int(n_labels),
-                    units_per_box    = 1,
-                    last_label_units = 0,
-                    by_weight        = True,
-                    kg_per_box       = float(kg_per_box),
-                    last_label_kg    = float(_last_kg),
-                )
-            else:
-                pdf_bytes = _generate_labels_pdf(
-                    recipe_name      = run["recipe_name"],
-                    fmt              = run.get("format", "standard"),
-                    lote             = run["lote_number"],
-                    prod_date        = raw_date,
-                    best_before      = best_before_d,
-                    storage_text     = storage_text,
-                    variant          = variant,
-                    n_labels         = int(n_labels),
-                    units_per_box    = int(units_per_box),
-                    last_label_units = int(run["quantity"]) % int(units_per_box),
-                )
+            pdf_bytes = _generate_labels_pdf(
+                recipe_name   = run["recipe_name"],
+                fmt           = run.get("format", "standard"),
+                lote          = run["lote_number"],
+                prod_date     = raw_date,
+                best_before   = best_before_d,
+                storage_text  = storage_text,
+                variant       = variant,
+                n_labels         = int(n_labels),
+                units_per_box    = int(units_per_box),
+                last_label_units = int(run["quantity"]) % int(units_per_box),
+            )
             st.download_button(
                 "⬇️ Descargar etiquetas",
                 data=pdf_bytes,
@@ -666,7 +602,7 @@ def _label_manual():
             "Receta", ["— selecciona —"] + recipe_names, key="lm_recipe"
         )
     with col_f:
-        fmt_options = ["standard", "individual", "bocado", "plancha"]
+        fmt_options = ["standard", "individual", "bocado"]
         fmt_labels  = [FORMAT_DISPLAY[f] for f in fmt_options]
         fmt_label   = st.selectbox("Formato", fmt_labels, key="lm_fmt")
         selected_fmt = fmt_options[fmt_labels.index(fmt_label)]
@@ -702,16 +638,6 @@ def _label_manual():
     )
     frozen = delivery_mode.startswith("❄️")
 
-    _manual_by_weight_default = selected_fmt not in UNIT_FORMATS
-    qty_mode_m = st.radio(
-        "Unidad de producción",
-        ["Unidades", "Kg"],
-        index=1 if _manual_by_weight_default else 0,
-        key=f"lm_qty_mode_{selected_fmt}",
-        horizontal=True,
-    )
-    by_weight_m = qty_mode_m == "Kg"
-
     col_l, col_d, col_q, col_upb, col_fdays = st.columns(5)
     with col_l:
         lote = st.text_input(
@@ -727,19 +653,10 @@ def _label_manual():
             help="9 = una página completa"
         )
     with col_upb:
-        if by_weight_m:
-            kg_per_box_m = st.number_input(
-                "Kg por caja", min_value=0.01, value=1.0,
-                step=0.5, format="%.2f", key="lm_upb_kg",
-                help="Peso neto de cada caja"
-            )
-            units_per_box_m = 1
-        else:
-            units_per_box_m = st.number_input(
-                "Uds por caja", min_value=1, value=1, step=1, key="lm_upb",
-                help="Número de piezas individuales que contiene cada caja"
-            )
-            kg_per_box_m = None
+        units_per_box = st.number_input(
+            "Uds por caja", min_value=1, value=1, step=1, key="lm_upb",
+            help="Número de piezas individuales que contiene cada caja"
+        )
     with col_fdays:
         frozen_days = st.number_input(
             "Vida útil congelado (días)", min_value=1, value=90, step=1,
@@ -767,36 +684,18 @@ def _label_manual():
             st.error("Introduce el número de lote.")
             return
         try:
-            _bb = best_before if isinstance(best_before, date) else best_before.date()
-            if by_weight_m:
-                pdf_bytes = _generate_labels_pdf(
-                    recipe_name      = recipe_name,
-                    fmt              = selected_fmt,
-                    lote             = lote.strip(),
-                    prod_date        = prod_date,
-                    best_before      = _bb,
-                    storage_text     = storage_text,
-                    variant          = variant,
-                    n_labels         = int(n_labels),
-                    units_per_box    = 1,
-                    last_label_units = 0,
-                    by_weight        = True,
-                    kg_per_box       = float(kg_per_box_m),
-                    last_label_kg    = float(kg_per_box_m),
-                )
-            else:
-                pdf_bytes = _generate_labels_pdf(
-                    recipe_name      = recipe_name,
-                    fmt              = selected_fmt,
-                    lote             = lote.strip(),
-                    prod_date        = prod_date,
-                    best_before      = _bb,
-                    storage_text     = storage_text,
-                    variant          = variant,
-                    n_labels         = int(n_labels),
-                    units_per_box    = int(units_per_box_m),
-                    last_label_units = 0,
-                )
+            pdf_bytes = _generate_labels_pdf(
+                recipe_name   = recipe_name,
+                fmt           = selected_fmt,
+                lote          = lote.strip(),
+                prod_date     = prod_date,
+                best_before   = best_before if isinstance(best_before, date) else best_before.date(),
+                storage_text  = storage_text,
+                variant       = variant,
+                n_labels         = int(n_labels),
+                units_per_box    = int(units_per_box),
+                last_label_units = 0,  # no quantity known in manual mode
+            )
             st.download_button(
                 "⬇️ Descargar etiquetas",
                 data=pdf_bytes,
@@ -976,9 +875,6 @@ def _generate_labels_pdf(
     n_labels: int,
     units_per_box: int = 1,
     last_label_units: int = 0,
-    by_weight: bool = False,
-    kg_per_box: float = 1.0,
-    last_label_kg: float | None = None,
     storage_text: str | None = None,
 ) -> bytes:
     from reportlab.lib.pagesizes import A4
@@ -1049,7 +945,7 @@ def _generate_labels_pdf(
 
     LABEL_W = (PAGE_W - 2 * MARGIN - (COLS - 1) * GAP) / COLS   # ≈ 177 pts / 62.5 mm
     LABEL_H = (PAGE_H - 2 * MARGIN - (ROWS - 1) * GAP) / ROWS   # ≈ 259 pts / 91.5 mm
-    PAD     = 3.0 * mm
+    PAD     = 2.5 * mm
     CONTENT_W = LABEL_W - 2 * PAD
 
     # ── Colours ───────────────────────────────────────────────────────────────
@@ -1067,62 +963,17 @@ def _generate_labels_pdf(
     c = pdfcanvas.Canvas(buffer, pagesize=A4)
 
     # ── Font sizes for small label ────────────────────────────────────────────
-    FS_NAME    = 9.0    # product name (not scaled)
-    FS_SUB     = 6.0    # format / subtitle (not scaled)
-    FS_SECTION = 7.5    # section headers — scaled if overflow
-    FS_BODY    = 7.0    # body text — scaled if overflow
-    FS_FOOTER  = 6.0    # company footer (not scaled)
-    FS_MIN     = 4.8    # minimum body font before truncation
+    FS_NAME    = 7.0    # product name
+    FS_SUB     = 5.0    # format / subtitle
+    FS_SECTION = 5.5    # section headers (INGREDIENTES, CONSERVACIÓN…)
+    FS_BODY    = 5.0    # body text
+    FS_FOOTER  = 4.0    # company footer
 
-    # ── Base line heights ─────────────────────────────────────────────────────
-    LH_BODY    = 2.2 * mm
-    LH_SECTION = 2.3 * mm
+    # ── Line heights (pts) ────────────────────────────────────────────────────
+    LH_BODY    = 1.9 * mm
+    LH_SECTION = 2.0 * mm
 
-    # ── Available content height (header to footer) ───────────────────────────
-    HEADER_H_PT = 11 * mm
-    FOOTER_H    = 6.5 * mm
-    AVAIL_H     = LABEL_H - HEADER_H_PT - FOOTER_H
-
-    def _estimate_h(fs_body, fs_section, lh_body, lh_section):
-        """Dry-run height estimate of variable label content in pts."""
-        h  = lh_section + 3 * mm + 2.5 * mm        # name/sub/divider
-        n_kv = 3 + (1 if weight_g else 0)
-        h += n_kv * lh_body + 1.5 * mm + 2.5 * mm  # key-value rows
-        h += lh_section                              # INGREDIENTES header
-        if ing_display:
-            wrapped = _wrap_text(c, ing_display, body_font, bold_font, fs_body, CONTENT_W)
-            h += len(wrapped) * lh_body
-        else:
-            h += lh_body
-        h += 1.5 * mm
-        if allergen_contiene_str or allergen_puede_str:
-            h += 2.5 * mm
-            if allergen_contiene_str:
-                h += lh_section
-                h += len(_simple_wrap(c, allergen_contiene_str, bold_font, fs_body, CONTENT_W)) * lh_body
-            if allergen_puede_str:
-                h += len(_simple_wrap(c, "Trazas: " + allergen_puede_str, body_font, fs_body, CONTENT_W)) * lh_body
-            h += 1 * mm
-        h += 2.5 * mm + lh_section                  # CONSERVACIÓN header
-        h += len(_simple_wrap(c, storage, body_font, fs_body, CONTENT_W)) * lh_body
-        return h
-
-    # ── Auto-scale: step down 0.25pt at a time until content fits ────────────
-    fs_body    = FS_BODY
-    fs_section = FS_SECTION
-    lh_body    = LH_BODY
-    lh_section = LH_SECTION
-    while fs_body > FS_MIN:
-        if _estimate_h(fs_body, fs_section, lh_body, lh_section) <= AVAIL_H:
-            break
-        fs_body    = round(fs_body    - 0.25, 2)
-        fs_section = round(fs_section - 0.25, 2)
-        lh_body    = round(lh_body    - 0.04 * mm, 5)
-        lh_section = round(lh_section - 0.04 * mm, 5)
-
-    def draw_label(c, x0: float, y0: float,
-                   label_upb: int = units_per_box,
-                   label_kg: float | None = None):
+    def draw_label(c, x0: float, y0: float, label_upb: int = units_per_box):
         """Draw one small label with bottom-left at (x0, y0)."""
 
         # Background + border
@@ -1150,7 +1001,7 @@ def _generate_labels_pdf(
                 reader = ImageReader(logo_path)
                 iw, ih = reader.getSize()
                 aspect = iw / ih if ih else 2
-                logo_h = 9 * mm
+                logo_h = 7 * mm
                 logo_w = min(logo_h * aspect, LABEL_W - 2 * PAD)
                 logo_x = x0 + (LABEL_W - logo_w) / 2
                 logo_y = y0 + LABEL_H - header_h + (header_h - logo_h) / 2
@@ -1163,11 +1014,8 @@ def _generate_labels_pdf(
             _draw_centred(c, "Millington Cakes", x0,
                           y0 + LABEL_H - 5 * mm, LABEL_W, bold_font, 6.5, dark)
 
-        # Weight / quantity string — depends on mode and this label's count
-        if by_weight:
-            _this_kg   = label_kg if label_kg is not None else kg_per_box
-            weight_str = f"{_this_kg:.3f} kg"
-        elif weight_g and label_upb > 1:
+        # Weight string — depends on this label's unit count
+        if weight_g and label_upb > 1:
             weight_str = f"{int(weight_g * label_upb)} g  ({label_upb} × {int(weight_g)} g)"
         elif weight_g:
             weight_str = f"{int(weight_g)} g"
@@ -1179,9 +1027,7 @@ def _generate_labels_pdf(
         _draw_text(c, recipe_name, x0 + PAD, y, bold_font, FS_NAME, dark)
         y -= LH_SECTION
         sub = fmt_display
-        if by_weight:
-            pass  # weight shown in info rows
-        elif label_upb > 1:
+        if label_upb > 1:
             sub += f"  ·  {label_upb} uds/caja"
         _draw_text(c, sub, x0 + PAD, y, body_font, FS_SUB, mid)
         y -= 3 * mm
@@ -1195,14 +1041,14 @@ def _generate_labels_pdf(
         # ── Key info rows ─────────────────────────────────────────────────────
         def _kv(label, value):
             nonlocal y
-            c.setFont(bold_font, fs_body)
+            c.setFont(bold_font, FS_BODY)
             c.setFillColor(mid)
             c.drawString(x0 + PAD, y, label)
-            lw = c.stringWidth(label, bold_font, fs_body) + 1.5 * mm
-            c.setFont(body_font, fs_body)
+            lw = c.stringWidth(label, bold_font, FS_BODY) + 1.5 * mm
+            c.setFont(body_font, FS_BODY)
             c.setFillColor(dark)
             c.drawString(x0 + PAD + lw, y, value)
-            y -= lh_body
+            y -= LH_BODY
 
         _kv("Lote:", lote)
         _kv("Elaborado:", prod_str)
@@ -1214,80 +1060,67 @@ def _generate_labels_pdf(
         c.setStrokeColor(border)
         c.setLineWidth(0.3)
         c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-
-        # ── Distribute spare space before ingredients ─────────────────────────
-        # Calculate how much space remains after all content
-        est_remaining = _estimate_h(fs_body, fs_section, lh_body, lh_section)
-        y_content_top = y0 + LABEL_H - HEADER_H_PT
-        y_content_bot = y0 + FOOTER_H
-        used_so_far   = y_content_top - y  # pts used from top to here
-        spare         = AVAIL_H - est_remaining
-        # Give at most half the spare space as extra padding before ingredients
-        extra_pad = min(spare * 0.5, 3 * mm) if spare > 0 else 0
-
         y -= 2.5 * mm
 
         # ── Ingredients ───────────────────────────────────────────────────────
-        _draw_text(c, "INGREDIENTES:", x0 + PAD, y, bold_font, fs_section, dark)
-        y -= lh_section
+        _draw_text(c, "INGREDIENTES:", x0 + PAD, y, bold_font, FS_SECTION, dark)
+        y -= LH_SECTION
 
         if ing_display:
-            lines = _wrap_text(c, ing_display, body_font, bold_font, fs_body, CONTENT_W)
-            for line_parts in lines:
+            lines = _wrap_text(c, ing_display, body_font, bold_font, FS_BODY, CONTENT_W)
+            for line_parts in lines[:4]:   # cap at 4 lines on a small label
                 _draw_rich_line(c, x0 + PAD, y, line_parts,
-                                body_font, bold_font, fs_body, dark)
-                y -= lh_body
+                                body_font, bold_font, FS_BODY, dark)
+                y -= LH_BODY
         else:
-            _draw_text(c, "Ver ficha técnica.", x0 + PAD, y, body_font, fs_body, mid)
-            y -= lh_body
+            _draw_text(c, "Ver ficha técnica.", x0 + PAD, y, body_font, FS_BODY, mid)
+            y -= LH_BODY
 
-        y -= extra_pad
+        y -= 1.5 * mm
 
         # ── Allergens ─────────────────────────────────────────────────────────
         if allergen_contiene_str or allergen_puede_str:
             c.setStrokeColor(border)
             c.setLineWidth(0.3)
             c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-            # Give remaining spare space before allergens too
-            extra_alg = min(spare * 0.25, 2 * mm) if spare > 0 else 0
-            y -= 2.5 * mm 
+            y -= 2.5 * mm
             if allergen_contiene_str:
-                _draw_text(c, "CONTIENE:", x0 + PAD, y, bold_font, fs_section, dark)
-                y -= lh_section
+                _draw_text(c, "CONTIENE:", x0 + PAD, y, bold_font, FS_SECTION, dark)
+                y -= LH_SECTION
                 for line in _simple_wrap(c, allergen_contiene_str,
-                                         bold_font, fs_body, CONTENT_W):
-                    _draw_text(c, line, x0 + PAD, y, bold_font, fs_body, dark)
-                    y -= lh_body
+                                         bold_font, FS_BODY, CONTENT_W)[:2]:
+                    _draw_text(c, line, x0 + PAD, y, bold_font, FS_BODY, dark)
+                    y -= LH_BODY
             if allergen_puede_str:
                 txt = "Trazas: " + allergen_puede_str
-                for line in _simple_wrap(c, txt, body_font, fs_body, CONTENT_W):
-                    _draw_text(c, line, x0 + PAD, y, body_font, fs_body, dark)
-                    y -= lh_body
-            y -= 1 * mm + extra_alg
+                for line in _simple_wrap(c, txt, body_font, FS_BODY, CONTENT_W)[:2]:
+                    _draw_text(c, line, x0 + PAD, y, body_font, FS_BODY, mid)
+                    y -= LH_BODY
+            y -= 1 * mm
 
         # ── Storage ───────────────────────────────────────────────────────────
         c.setStrokeColor(border)
         c.setLineWidth(0.3)
         c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
         y -= 2.5 * mm
-        _draw_text(c, "CONSERVACIÓN:", x0 + PAD, y, bold_font, fs_section, dark)
-        y -= lh_section
-        for line in _simple_wrap(c, storage, body_font, fs_body, CONTENT_W):
-            _draw_text(c, line, x0 + PAD, y, body_font, fs_body, dark)
-            y -= lh_body
+        _draw_text(c, "CONSERVACIÓN:", x0 + PAD, y, bold_font, FS_SECTION, dark)
+        y -= LH_SECTION
+        for line in _simple_wrap(c, storage, body_font, FS_BODY, CONTENT_W)[:3]:
+            _draw_text(c, line, x0 + PAD, y, body_font, FS_BODY, dark)
+            y -= LH_BODY
 
         # ── Footer (pinned to bottom of label) ────────────────────────────────
         footer_y = y0 + PAD
         c.setStrokeColor(border)
         c.setLineWidth(0.3)
-        c.line(x0 + PAD, footer_y + 7 * mm, x0 + LABEL_W - PAD, footer_y + 7 * mm)
-        _draw_text(c, COMPANY_NAME, x0 + PAD, footer_y + 4.5 * mm,
-                   bold_font, FS_FOOTER, dark)
+        c.line(x0 + PAD, footer_y + 5 * mm, x0 + LABEL_W - PAD, footer_y + 5 * mm)
+        _draw_text(c, COMPANY_NAME, x0 + PAD, footer_y + 3.5 * mm,
+                   bold_font, FS_FOOTER, mid)
         _draw_text(c, f"CIF: {COMPANY_CIF}", x0 + PAD, footer_y + 2 * mm,
-                   body_font, FS_FOOTER, dark)
+                   body_font, FS_FOOTER, light)
         addr_lines = _simple_wrap(c, COMPANY_ADDRESS, body_font, FS_FOOTER - 0.5, CONTENT_W)
         _draw_text(c, addr_lines[0] if addr_lines else COMPANY_ADDRESS,
-                   x0 + PAD, footer_y + 0.5 * mm, body_font, FS_FOOTER - 0.5, dark)
+                   x0 + PAD, footer_y + 0.5 * mm, body_font, FS_FOOTER - 0.5, light)
 
     # ── Lay out 9 labels per page in a 3×3 grid ───────────────────────────────
     labels_drawn = 0
@@ -1299,14 +1132,9 @@ def _generate_labels_pdf(
                 x0 = MARGIN + col * (LABEL_W + GAP)
                 y0 = MARGIN + row * (LABEL_H + GAP)
                 is_last = (labels_drawn == n_labels - 1)
-                if by_weight:
-                    _lkg = (last_label_kg if (is_last and last_label_kg is not None)
-                            else kg_per_box)
-                    draw_label(c, x0, y0, label_kg=_lkg)
-                else:
-                    upb_this = (last_label_units if (is_last and last_label_units > 0)
-                                else units_per_box)
-                    draw_label(c, x0, y0, label_upb=upb_this)
+                upb_this = (last_label_units if (is_last and last_label_units > 0)
+                            else units_per_box)
+                draw_label(c, x0, y0, label_upb=upb_this)
                 labels_drawn += 1
             if labels_drawn >= n_labels:
                 break
@@ -1440,3 +1268,563 @@ def _simple_wrap(c, text: str, font: str, size: float, max_w: float) -> list:
     if cur:
         lines.append(cur)
     return lines or [text]
+
+
+# =============================================================================
+# Tab 3 — Recepción de materias primas (APPCC ELD R7-01)
+# =============================================================================
+
+# Temperature limits per product type, per Millingtons APPCC Prerrequisitos p.29
+_TEMP_LIMITS = {
+    "refrigerated": 4.0,   # ≤4°C (ovoproductos, lácteos, pastelería, etc.)
+    "frozen":      -18.0,  # ≤ -18°C (alimentos congelados y ultracongelados)
+    "ambient":      None,  # no temperature check required
+}
+
+# Tolerance allowed during unloading / reception only (APPCC p.29)
+_TEMP_TOLERANCE = 2.0   # °C
+
+_TEMP_TYPE_LABELS = {
+    "refrigerated": "Refrigerado (≤4°C)",
+    "frozen":       "Congelado (≤ -18°C)",
+    "ambient":      "Temperatura ambiente",
+}
+
+
+def _tab_reception():
+    st.markdown("### Nueva recepción de mercancía")
+    st.caption(
+        "Registro obligatorio APPCC — ELD R7-01. Registra cada albarán de proveedor "
+        "con los controles de temperatura, estado y trazabilidad requeridos por Sanidad."
+    )
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    col_date, col_prov, col_alb = st.columns([1.2, 2, 1.8])
+    with col_date:
+        rec_date = st.date_input("Fecha de recepción", value=date.today(), key="rec_date")
+    with col_prov:
+        supplier = st.text_input(
+            "Proveedor", placeholder="Nombre del proveedor", key="rec_supplier"
+        )
+    with col_alb:
+        albaran = st.text_input(
+            "Nº albarán", placeholder="Ref. albarán / factura", key="rec_albaran"
+        )
+
+    _SIGNERS = ["Christine Millington", "Blanca Sánchez"]
+    received_by = st.selectbox(
+        "Recibido por", _SIGNERS, key="rec_by"
+    )
+
+    st.divider()
+
+    # ── Line items ────────────────────────────────────────────────────────────
+    st.markdown("#### Productos recibidos")
+    st.caption(
+        "Añade una fila por cada tipo de producto del albarán. "
+        "Para productos refrigerados o congelados, la temperatura es un **Punto de Control Crítico (PCC)**."
+    )
+
+    n_items = st.session_state.get("rec_n_items", 1)
+
+    items_data = []
+    any_rejected = False
+
+    for i in range(n_items):
+        with st.expander(f"Producto {i + 1}", expanded=True):
+            c1, c2, c3, c4 = st.columns([2.8, 1.2, 1.2, 1.4])
+            with c1:
+                prod_name = st.text_input(
+                    "Nombre del producto / ingrediente",
+                    placeholder="Ej: Huevo líquido pasteurizado",
+                    key=f"rec_prod_{i}",
+                )
+            with c2:
+                lot_ref = st.text_input(
+                    "Lote proveedor", placeholder="Nº lote", key=f"rec_lot_{i}"
+                )
+            with c3:
+                quantity = st.number_input(
+                    "Cantidad",
+                    min_value=0.0,
+                    value=None,
+                    step=0.1,
+                    format="%.2f",
+                    placeholder="0.00",
+                    key=f"rec_qty_{i}",
+                )
+            with c4:
+                qty_unit = st.selectbox(
+                    "Unidad",
+                    ["kg", "l", "ud", "g", "ml", "caja"],
+                    key=f"rec_unit_{i}",
+                )
+
+            # Temperature type
+            temp_type_keys = list(_TEMP_TYPE_LABELS.keys())
+            temp_type_labels = list(_TEMP_TYPE_LABELS.values())
+            temp_type_idx = st.radio(
+                "Tipo de conservación",
+                options=range(len(temp_type_keys)),
+                format_func=lambda x: temp_type_labels[x],
+                horizontal=True,
+                key=f"rec_ttype_{i}",
+            )
+            temp_type = temp_type_keys[temp_type_idx]
+            limit_c   = _TEMP_LIMITS[temp_type]
+
+            # Temperature measurement — only for refrigerated / frozen (PCC)
+            temp_measured = None
+            temp_ok = True
+            if temp_type != "ambient":
+                col_t, col_lim, col_status = st.columns([1.5, 1.5, 2])
+                with col_t:
+                    temp_measured = st.number_input(
+                        "Temperatura medida (°C)",
+                        min_value=-40.0,
+                        max_value=40.0,
+                        value=float(limit_c),
+                        step=0.1,
+                        key=f"rec_temp_{i}",
+                        format="%.1f",
+                    )
+                with col_lim:
+                    st.metric("Límite crítico", f"{limit_c}°C")
+                with col_status:
+                    st.write("")  # spacing
+                    if temp_type == "refrigerated":
+                        # Limit ≤4°C, tolerance +2°C during unloading
+                        if temp_measured <= limit_c:
+                            st.success("✅ Temperatura conforme")
+                            temp_ok = True
+                        elif temp_measured <= limit_c + _TEMP_TOLERANCE:
+                            st.warning(
+                                f"⚠️ En tolerancia (+{_TEMP_TOLERANCE}°C). "
+                                "Aceptar. Notificar al proveedor, acortar vida útil a 24h "
+                                "y destinar a elaboraciones con tratamiento térmico."
+                            )
+                            temp_ok = True  # within tolerance — still accepted
+                        else:
+                            st.error("🚫 Temperatura fuera de límite — RECHAZAR")
+                            temp_ok = False
+                    else:  # frozen
+                        # Limit ≤ -18°C (APPCC: alimentos congelados ≤ -18°C)
+                        if temp_measured <= limit_c:
+                            st.success("✅ Temperatura conforme")
+                            temp_ok = True
+                        elif temp_measured <= limit_c + _TEMP_TOLERANCE:
+                            st.warning(
+                                f"⚠️ En tolerancia (+{_TEMP_TOLERANCE}°C). "
+                                "Aceptar con aviso al proveedor. Usar inmediatamente o "
+                                "trasladar a otra cámara. No recongelar."
+                            )
+                            temp_ok = True
+                        else:
+                            st.error("🚫 Temperatura fuera de límite — RECHAZAR")
+                            temp_ok = False
+
+            # Visual / organoleptic checks
+            st.markdown("**Controles visuales**")
+            col_pkg, col_lbl = st.columns(2)
+            with col_pkg:
+                pkg_ok = st.checkbox(
+                    "📦 Envase íntegro (sin roturas, golpes ni fugas)",
+                    value=True,
+                    key=f"rec_pkg_{i}",
+                )
+            with col_lbl:
+                lbl_ok = st.checkbox(
+                    "🏷️ Etiquetado correcto (lote y caducidad visibles)",
+                    value=True,
+                    key=f"rec_lbl_{i}",
+                )
+
+            # Acceptance decision (auto-suggest based on checks)
+            auto_accept = temp_ok and pkg_ok and lbl_ok
+            accepted = st.checkbox(
+                "✅ Mercancía ACEPTADA",
+                value=auto_accept,
+                key=f"rec_acc_{i}",
+            )
+
+            rejection_reason = None
+            if not accepted:
+                any_rejected = True
+                rejection_reason = st.text_area(
+                    "Motivo de rechazo / acción correctora",
+                    placeholder="Describe el motivo del rechazo y la acción tomada "
+                                "(devolución al proveedor, apertura de incidencia, etc.)",
+                    key=f"rec_rej_{i}",
+                    height=70,
+                )
+
+            # Only include items with a product name filled in
+            if prod_name.strip():
+                items_data.append({
+                    "product_name":     prod_name.strip(),
+                    "supplier_lot":     lot_ref.strip() or None,
+                    "quantity":         quantity,
+                    "quantity_unit":    qty_unit,
+                    "temp_type":        temp_type,
+                    "temp_measured_c":  temp_measured,
+                    "temp_limit_c":     limit_c,
+                    "packaging_ok":     pkg_ok,
+                    "labelling_ok":     lbl_ok,
+                    "accepted":         accepted,
+                    "rejection_reason": (rejection_reason or "").strip() or None,
+                })
+
+    col_add, col_rem = st.columns([1, 5])
+    with col_add:
+        if st.button("＋ Añadir producto", key="rec_add_item"):
+            st.session_state["rec_n_items"] = n_items + 1
+            st.rerun()
+    if n_items > 1:
+        with col_rem:
+            if st.button("－ Eliminar último", key="rec_rem_item"):
+                st.session_state["rec_n_items"] = n_items - 1
+                st.rerun()
+
+    # ── Notes ─────────────────────────────────────────────────────────────────
+    st.markdown("#### Observaciones generales")
+    notes = st.text_area(
+        "Notas",
+        placeholder="Ninguna incidencia — o indica cualquier observación sobre la entrega.",
+        key="rec_notes",
+        height=70,
+        label_visibility="collapsed",
+    )
+
+    if any_rejected:
+        st.warning(
+            "⚠️ Hay productos rechazados. Recuerda notificar al proveedor por escrito "
+            "y abrir un parte de incidencias (ELD R2-01)."
+        )
+
+    st.divider()
+
+    # ── Validation & Save ──────────────────────────────────────────────────────
+    if st.button("💾 Guardar registro de recepción", type="primary", key="rec_save"):
+        errors = []
+        if not supplier.strip():
+            errors.append("El proveedor es obligatorio.")
+        if not items_data:
+            errors.append("Añade al menos un producto con nombre.")
+        for it in items_data:
+            if not it["accepted"] and not it.get("rejection_reason"):
+                errors.append(
+                    f"El producto '{it['product_name']}' está rechazado pero falta el motivo."
+                )
+
+        if errors:
+            for e in errors:
+                st.error(e)
+        else:
+            try:
+                saved = db.save_goods_receipt(
+                    receipt_date=rec_date,
+                    supplier=supplier.strip(),
+                    albaran_ref=albaran.strip() or None,
+                    received_by=received_by.strip() or None,
+                    items=items_data,
+                    notes=notes.strip() or None,
+                )
+                st.session_state["last_saved_receipt"] = saved
+                st.session_state["rec_n_items"] = 1
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al guardar: {e}")
+
+    # ── Success callout ────────────────────────────────────────────────────────
+    last = st.session_state.get("last_saved_receipt")
+    if last:
+        n_accepted = sum(1 for it in last.get("items", []) if it.get("accepted"))
+        n_rejected = len(last.get("items", [])) - n_accepted
+        st.success(
+            f"✅ Registro guardado — {n_accepted} producto(s) aceptado(s)"
+            + (f", {n_rejected} rechazado(s)" if n_rejected else "")
+        )
+        col_pdf, col_clear = st.columns([2, 1])
+        with col_pdf:
+            try:
+                pdf_bytes = _generate_receipt_pdf(last)
+                fname = (
+                    f"recepcion_{last['receipt_date']}_{last['supplier'][:15].replace(' ','_')}.pdf"
+                )
+                st.download_button(
+                    "📄 Descargar registro PDF",
+                    data=pdf_bytes,
+                    file_name=fname,
+                    mime="application/pdf",
+                    key="rec_dl_pdf",
+                )
+            except Exception as e:
+                st.warning(f"No se pudo generar el PDF: {e}")
+        with col_clear:
+            if st.button("Nueva recepción", key="rec_clear"):
+                st.session_state.pop("last_saved_receipt", None)
+                st.rerun()
+
+    st.divider()
+    _show_recent_receipts()
+
+
+def _show_recent_receipts():
+    st.markdown("### Recepciones recientes")
+    try:
+        receipts = db.get_goods_receipts(limit=20)
+    except Exception:
+        st.caption("Sin registros todavía.")
+        return
+
+    if not receipts:
+        st.caption("Sin registros todavía.")
+        return
+
+    h1, h2, h3, h4, h5, h6 = st.columns([1.3, 2, 1.5, 0.8, 0.8, 0.8])
+    h1.markdown("**Fecha**")
+    h2.markdown("**Proveedor**")
+    h3.markdown("**Albarán**")
+    h4.markdown("**Productos**")
+    h5.markdown("**Estado**")
+    h6.markdown("**PDF**")
+
+    for r in receipts:
+        n_items    = len(r.get("items", []))
+        n_rejected = sum(1 for it in r.get("items", []) if not it.get("accepted", True))
+        c1, c2, c3, c4, c5, c6 = st.columns([1.3, 2, 1.5, 0.8, 0.8, 0.8])
+        c1.write(str(r["receipt_date"])[:10])
+        c2.write(r["supplier"])
+        c3.write(r.get("albaran_ref") or "—")
+        c4.write(str(n_items))
+        if n_rejected:
+            c5.markdown(f"❌ {n_rejected} rechaz.")
+        else:
+            c5.markdown("✅ OK")
+        with c6:
+            try:
+                pdf_bytes = _generate_receipt_pdf(r)
+                fname = (
+                    f"recepcion_{r['receipt_date']}_{r['supplier'][:10].replace(' ','_')}.pdf"
+                )
+                st.download_button(
+                    "📄",
+                    data=pdf_bytes,
+                    file_name=fname,
+                    mime="application/pdf",
+                    key=f"rec_dl_{r['id']}",
+                )
+            except Exception:
+                st.write("—")
+
+
+# =============================================================================
+# PDF generator for goods receipt (APPCC ELD R7-01 format)
+# =============================================================================
+
+def _generate_receipt_pdf(receipt: dict) -> bytes:
+    """Generate a Sanidad-compliant goods-reception record PDF."""
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable,
+    )
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+
+    # ── Fonts ─────────────────────────────────────────────────────────────────
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    body_font = "Helvetica"
+    bold_font = "Helvetica-Bold"
+    try:
+        reg_path  = os.path.join(DATA_DIR, "EBGaramond-Regular.ttf")
+        bold_path = os.path.join(DATA_DIR, "EBGaramond-Bold.ttf")
+        if os.path.exists(reg_path) and os.path.exists(bold_path):
+            pdfmetrics.registerFont(TTFont("EBGaramond", reg_path))
+            pdfmetrics.registerFont(TTFont("EBGaramond-Bold", bold_path))
+            body_font = "EBGaramond"
+            bold_font = "EBGaramond-Bold"
+    except Exception:
+        pass
+
+    # ── Colours (same palette as production PDF) ──────────────────────────────
+    dark  = colors.HexColor("#1a1a1a")
+    mid   = colors.HexColor("#4b5563")
+    light = colors.HexColor("#f3f0eb")
+    accent = colors.HexColor("#92400e")   # warm brown
+
+    def ps(name, font=None, size=11, color=dark, sa=6, sb=0, align=TA_LEFT):
+        return ParagraphStyle(
+            name, fontName=font or body_font, fontSize=size,
+            textColor=color, spaceAfter=sa, spaceBefore=sb, alignment=align,
+        )
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=2*cm, rightMargin=2*cm,
+        topMargin=2*cm,  bottomMargin=2*cm,
+    )
+
+    story = []
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    story.append(Paragraph(COMPANY_NAME, ps("Co", font=bold_font, size=10, color=mid, sa=2)))
+    story.append(Paragraph(f"CIF {COMPANY_CIF}  ·  {COMPANY_ADDRESS}",
+                           ps("Ca", size=9, color=mid, sa=0)))
+    story.append(HRFlowable(width="100%", thickness=1, color=light, spaceAfter=8))
+    story.append(Paragraph(
+        "REGISTRO DE RECEPCIÓN DE MATERIAS PRIMAS",
+        ps("Title", font=bold_font, size=14, color=dark, sa=2, align=TA_CENTER),
+    ))
+    story.append(Paragraph(
+        "APPCC — Plan de Proveedores  ·  ELD R7-01",
+        ps("Sub", size=9, color=mid, sa=10, align=TA_CENTER),
+    ))
+
+    # ── Summary table ─────────────────────────────────────────────────────────
+    receipt_date = str(receipt.get("receipt_date", ""))[:10]
+    summary_data = [
+        ["Fecha recepción",   receipt_date],
+        ["Proveedor",         receipt.get("supplier", "—")],
+        ["Nº albarán",        receipt.get("albaran_ref") or "—"],
+        ["Recibido por",      receipt.get("received_by") or "—"],
+    ]
+    summary_tbl = Table(summary_data, colWidths=[4.5*cm, 12*cm])
+    summary_tbl.setStyle(TableStyle([
+        ("BACKGROUND",     (0, 0), (0, -1), light),
+        ("FONTNAME",       (0, 0), (0, -1), bold_font),
+        ("FONTNAME",       (1, 0), (1, -1), body_font),
+        ("FONTSIZE",       (0, 0), (-1, -1), 10),
+        ("LEADING",        (0, 0), (-1, -1), 14),
+        ("TOPPADDING",     (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1), 5),
+        ("LEFTPADDING",    (0, 0), (-1, -1), 7),
+        ("GRID",           (0, 0), (-1, -1), 0.5, colors.HexColor("#d1cdc7")),
+        ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.white, colors.HexColor("#faf9f7")]),
+    ]))
+    story.append(summary_tbl)
+    story.append(Spacer(1, 0.5*cm))
+
+    # ── Products table ────────────────────────────────────────────────────────
+    story.append(Paragraph("Control de productos recibidos (PCC)",
+                           ps("Ph", font=bold_font, size=11, sa=4)))
+
+    items = receipt.get("items", [])
+    col_w = [3.0*cm, 1.8*cm, 1.8*cm, 2.0*cm, 1.5*cm, 1.5*cm, 1.5*cm, 2.0*cm]
+    header_row = [
+        Paragraph("<b>Producto</b>",   ps("h", font=bold_font, size=8, sa=0)),
+        Paragraph("<b>Lote prov.</b>", ps("h", font=bold_font, size=8, sa=0)),
+        Paragraph("<b>Cantidad</b>",   ps("h", font=bold_font, size=8, sa=0)),
+        Paragraph("<b>Tipo temp.</b>", ps("h", font=bold_font, size=8, sa=0)),
+        Paragraph("<b>T° medida</b>",  ps("h", font=bold_font, size=8, sa=0)),
+        Paragraph("<b>Envase OK</b>",  ps("h", font=bold_font, size=8, sa=0)),
+        Paragraph("<b>Etiq. OK</b>",   ps("h", font=bold_font, size=8, sa=0)),
+        Paragraph("<b>Resultado</b>",  ps("h", font=bold_font, size=8, sa=0)),
+    ]
+    rows = [header_row]
+    style_cmds = [
+        ("BACKGROUND",   (0, 0), (-1, 0), accent),
+        ("TEXTCOLOR",    (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE",     (0, 0), (-1, -1), 8),
+        ("LEADING",      (0, 0), (-1, -1), 11),
+        ("TOPPADDING",   (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 5),
+        ("GRID",         (0, 0), (-1, -1), 0.4, colors.HexColor("#d1cdc7")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#faf9f7")]),
+    ]
+
+    for idx, it in enumerate(items):
+        temp_type = it.get("temp_type", "ambient")
+        temp_meas = it.get("temp_measured_c")
+        temp_str  = f"{temp_meas:.1f}°C" if temp_meas is not None else "N/A"
+        accepted  = it.get("accepted", True)
+        result_str = "✓ Aceptado" if accepted else "✗ Rechazado"
+        qty       = it.get("quantity")
+        qty_unit  = it.get("quantity_unit") or ""
+        qty_str   = f"{qty:g} {qty_unit}".strip() if qty is not None else "—"
+
+        row = [
+            Paragraph(it.get("product_name", ""), ps("td", size=8, sa=0)),
+            Paragraph(it.get("supplier_lot") or "—", ps("td", size=8, sa=0)),
+            Paragraph(qty_str, ps("td", size=8, sa=0)),
+            Paragraph(_TEMP_TYPE_LABELS.get(temp_type, temp_type), ps("td", size=7, sa=0)),
+            Paragraph(temp_str, ps("td", size=8, sa=0)),
+            Paragraph("✓" if it.get("packaging_ok", True) else "✗", ps("td", size=9, sa=0)),
+            Paragraph("✓" if it.get("labelling_ok", True) else "✗", ps("td", size=9, sa=0)),
+            Paragraph(result_str, ps("td", size=8, sa=0, color=(dark if accepted else colors.red))),
+        ]
+        rows.append(row)
+        if not accepted and it.get("rejection_reason"):
+            # Span a rejection reason row across all columns
+            reason_row = [
+                Paragraph(
+                    f"  Motivo rechazo: {it['rejection_reason']}",
+                    ps("rej", size=7, sa=0, color=colors.red),
+                ),
+                "", "", "", "", "", "",
+            ]
+            rows.append(reason_row)
+            style_cmds.append(
+                ("SPAN", (0, len(rows) - 1), (-1, len(rows) - 1))
+            )
+            style_cmds.append(
+                ("BACKGROUND", (0, len(rows) - 1), (-1, len(rows) - 1), colors.HexColor("#fff1f1"))
+            )
+
+    items_tbl = Table(rows, colWidths=col_w)
+    items_tbl.setStyle(TableStyle(style_cmds))
+    story.append(items_tbl)
+    story.append(Spacer(1, 0.4*cm))
+
+    # ── Notes ─────────────────────────────────────────────────────────────────
+    notes = receipt.get("notes")
+    if notes:
+        story.append(Paragraph("Observaciones / incidencias", ps("Nh", font=bold_font, size=10, sa=2)))
+        story.append(Paragraph(notes, ps("Nb", size=10, sa=6)))
+
+    # ── Temperature reference table ───────────────────────────────────────────
+    story.append(Spacer(1, 0.3*cm))
+    story.append(Paragraph(
+        "Temperaturas de referencia (Prerrequisitos APPCC — Millington Cakes, S.L.)",
+        ps("Ref", size=8, color=mid, sa=2),
+    ))
+    ref_data = [
+        ["Producto", "Temperatura de conservación", "Tolerancia en recepción"],
+        ["Congelados / ultracongelados", "< -18°C", "+2°C"],
+        ["Ovoproductos (huevo líquido)", "≤ 4°C", "+2°C"],
+        ["Lácteos (leche, nata, yogures)", "Según etiquetado", "+2°C"],
+        ["Pastelería", "≤ 4°C", "+2°C"],
+        ["Temperatura ambiente (harinas, frutos secos…)", "Según etiquetado", "—"],
+    ]
+    ref_tbl = Table(ref_data, colWidths=[6*cm, 5*cm, 4.5*cm])
+    ref_tbl.setStyle(TableStyle([
+        ("BACKGROUND",   (0, 0), (-1, 0), colors.HexColor("#e5e0d8")),
+        ("FONTNAME",     (0, 0), (-1, 0), bold_font),
+        ("FONTNAME",     (0, 1), (-1, -1), body_font),
+        ("FONTSIZE",     (0, 0), (-1, -1), 7),
+        ("LEADING",      (0, 0), (-1, -1), 10),
+        ("TOPPADDING",   (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 5),
+        ("GRID",         (0, 0), (-1, -1), 0.4, colors.HexColor("#d1cdc7")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#faf9f7")]),
+    ]))
+    story.append(ref_tbl)
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=light, spaceAfter=4))
+    story.append(Paragraph(
+        f"Documento generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}  ·  "
+        f"APPCC Rev.02_2025  ·  {COMPANY_NAME}",
+        ps("Ft", size=7, color=mid, sa=0, align=TA_CENTER),
+    ))
+
+    doc.build(story)
+    return buf.getvalue()
