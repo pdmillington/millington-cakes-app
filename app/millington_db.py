@@ -473,7 +473,8 @@ def get_all_variants_full() -> list[dict]:
             "id, recipe_id, format, channel, size_description, "
             "ref_diameter_cm, ref_height_cm, "
             "ws_price_ex_vat, ws_price_approved, ws_price_approved_at, "
-            "rt_price_inc_vat, rt_price_approved, rt_price_approved_at"
+            "rt_price_inc_vat, rt_price_approved, rt_price_approved_at, "
+            "label_approved"
         )
         .execute()
     )
@@ -945,7 +946,6 @@ def apply_allergen_bold(label_text: str, allergen_labels: dict) -> str:
     Returns the label text with allergen names wrapped in ** for bold.
     Capitalisation of the first letter of the whole string is preserved.
     """
-    import re
     if not label_text or not allergen_labels:
         return label_text
 
@@ -1280,7 +1280,7 @@ def get_client_prices_for_catalogue(client_name: str) -> dict[str, dict]:
     Used in catalogue generation to override standard approved prices.
     """
     sb = get_client()
-    today = str(__import__("datetime").date.today())
+    today = str(date.today())
     result = (
         sb.table("client_prices")
         .select("variant_id, ws_price_ex_vat, rt_price_inc_vat")
@@ -1659,9 +1659,6 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
     if header_idx is None:
         raise ValueError("No se encontró la fila de cabecera 'SKU' en el fichero.")
 
-    for row in rows[header_idx+1:header_idx+6]:
-        st.write(f"  raw[0]={repr(row[0])}  raw[1]={repr(row[1])}")
-
     SKU_RE = re.compile(
         r'^[A-Z]{2}-?\d{2}-?[A-Z]{2}-?[A-Z]{2,4}(?:-[A-Z]{2,4})?$'
     )
@@ -1709,12 +1706,7 @@ def parse_inventory_excel(file_bytes: bytes) -> list[dict]:
                 'price_ex_vat': price,
             }
 
-    print(f"Parsed {len(seen)} products, first few: {list(seen.values())[:3]}")
-    result = list(seen.values())
-    st.write(f"DEBUG: Parsed {len(result)} products")
-    if result:
-        st.write(f"First product: {result[0]}")
-    return result
+    return list(seen.values())
  
  
 def upsert_holded_products(rows: list[dict]) -> int:
@@ -1722,7 +1714,6 @@ def upsert_holded_products(rows: list[dict]) -> int:
     if not rows:
         return 0
     sb = get_client()
-    print(f"upserting {len(rows)} rows, first: {rows[0]}")
     payload = [
         {
             'sku':          r['sku'],
@@ -1732,8 +1723,7 @@ def upsert_holded_products(rows: list[dict]) -> int:
         }
         for r in rows
     ]
-    result = sb.table('holded_products').upsert(payload).execute()
-    print(f"Result: {result}")
+    sb.table('holded_products').upsert(payload).execute()
     return len(payload)
  
  
@@ -1802,7 +1792,7 @@ def save_production_run(
     oven_temp_c:   float | None = None,
     bake_time_min: int | None = None,
     notes:         str | None = None,
-    ing_refs:      list[dict] = [],
+    ing_refs:      list[dict] | None = None,
     pcc_log:       list[dict] | None = None,
 ) -> dict:
     """
@@ -1810,6 +1800,8 @@ def save_production_run(
     Returns the saved run dict (with lote_number and id).
     """
     import json as _json
+    if ing_refs is None:
+        ing_refs = []
     sb   = get_client()
     lote = _next_lote_number(sb, prod_date)
 
@@ -2059,8 +2051,11 @@ def replace_pcc_steps(recipe_id: str, steps: list[dict]) -> None:
     # Delete removed steps
     ids_to_delete = existing_ids - incoming_ids
     if ids_to_delete:
-        sb.table("recipe_pcc_steps")           .delete()           .in_("id", list(ids_to_delete))           .execute()
- 
+        (sb.table("recipe_pcc_steps")
+           .delete()
+           .in_("id", list(ids_to_delete))
+           .execute())
+
     # Upsert remaining
     for i, step in enumerate(steps):
         row = {
@@ -2072,9 +2067,14 @@ def replace_pcc_steps(recipe_id: str, steps: list[dict]) -> None:
             "sort_order":            step.get("sort_order", i),
         }
         if step.get("id"):
-            sb.table("recipe_pcc_steps")               .update(row)               .eq("id", step["id"])               .execute()
+            (sb.table("recipe_pcc_steps")
+               .update(row)
+               .eq("id", step["id"])
+               .execute())
         else:
-            sb.table("recipe_pcc_steps")               .insert(row)               .execute()
+            (sb.table("recipe_pcc_steps")
+               .insert(row)
+               .execute())
 
 # =============================================================================
 # TO DO list DB FUNCTIONS

@@ -252,7 +252,6 @@ def screen_calculator():
             "Number of cakes / units",
             min_value=1, value=1, key="calc_order_qty"
         )
-    order_qty = st.session_state.get("calc_order_qty", 1)
 
     st.divider()
 
