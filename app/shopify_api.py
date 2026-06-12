@@ -15,9 +15,11 @@ import time
 import requests
 import streamlit as st
 from datetime import datetime, timezone
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"), override=True)
+_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+load_dotenv(_ENV_PATH, override=True)
+_ENV = dotenv_values(_ENV_PATH)   # direct read — fallback if env vars don't stick
 
 _API_VERSION = "2024-01"
 _SESSION_TTL = 5 * 60   # 5 minutes
@@ -27,14 +29,14 @@ def _store() -> str:
     try:
         return st.secrets["SHOPIFY_STORE"]
     except Exception:
-        return os.getenv("SHOPIFY_STORE", "")
+        return os.getenv("SHOPIFY_STORE") or _ENV.get("SHOPIFY_STORE", "")
 
 
 def _token() -> str:
     try:
         return st.secrets["SHOPIFY_TOKEN"]
     except Exception:
-        return os.getenv("SHOPIFY_TOKEN", "")
+        return os.getenv("SHOPIFY_TOKEN") or _ENV.get("SHOPIFY_TOKEN", "")
 
 
 def _headers() -> dict:
