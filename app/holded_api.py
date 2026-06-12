@@ -168,3 +168,85 @@ def last_synced() -> str | None:
     if secs < 60:   return "just now"
     if secs < 3600: return f"{secs // 60} min ago"
     return f"{secs // 3600}h ago"
+
+
+# =============================================================================
+# Presupuestos (wholesale estimates / delivery notes)
+# =============================================================================
+
+def _normalise_estimate(doc: dict) -> dict:
+    """Convert a Holded estimate document to the common order dict format."""
+    order_ts    = doc.get("date", 0)
+    due_ts      = doc.get("dueDate") or doc.get("due_date") or order_ts
+    order_date  = datetime.fromtimestamp(order_ts, tz=timezone.utc).date() if order_ts else None
+    due_date    = datetime.fromtimestamp(due_ts,   tz=timezone.utc).date() if due_ts   else order_date
+
+    contact = doc.get("contact") or {}
+    client  = (
+        contact.get("name")
+        or doc.get("contactName")
+        or doc.get("contact_name")
+        or "Unknown"
+    )
+
+    lines = []
+    for item in (doc.get("products") or []):
+        raw_sku = item.get("sku")
+        sku_ok  = raw_sku and raw_sku != 0 and str(raw_sku) != "0"
+        lines.append({
+            "name":     (item.get("name") or "").strip(),
+            "variant":  "",
+            "sku":      str(raw_sku) if sku_ok else "",
+            "quantity": float(item.get("units") or 0),
+        })
+
+    return {
+        "source":     "Holded",
+        "ref":        doc.get("docNumber") or doc.get("id", ""),
+        "client":     client,
+        "order_date": order_date,
+        "due_date":   due_date,
+        "lines":      lines,
+        "note":       doc.get("notes") or "",
+    }
+
+
+def get_estimates(force_refresh: bool = False) -> list[dict]:
+    """
+    Fetch open Holded presupuestos (estimates) and return them normalised.
+    Only returns non-draft documents. Cached for 5 minutes.
+    """
+    cache_key = "_holded_estimates"
+    ts_key    = "_holded_estimates_ts"
+    now       = time.time()
+
+    if (
+        not force_refresh
+        and cache_key in st.session_state
+        and (now - st.session_state.get(ts_key, 0)) < 5 * 60
+    ):
+        return st.session_state[cache_key]
+
+    try:
+        raw  = _fetch_all_pages("estimate")
+        docs = [_normalise_estimate(d) for d in raw if not d.get("draft")]
+    except Exception as e:
+        st.session_state[cache_key] = []
+        st.session_state[ts_key]    = now
+        st.session_state["_holded_estimates_error"] = str(e)
+        return []
+
+    st.session_state.pop("_holded_estimates_error", None)
+    st.session_state[cache_key] = docs
+    st.session_state[ts_key]    = now
+    return docs
+
+
+def estimates_last_synced() -> str | None:
+    ts = st.session_state.get("_holded_estimates_ts")
+    if not ts:
+        return None
+    secs = int(time.time() - ts)
+    if secs < 60:   return "just now"
+    if secs < 3600: return f"{secs // 60} min ago"
+    return f"{secs // 3600}h ago"

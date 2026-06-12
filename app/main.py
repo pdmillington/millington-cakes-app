@@ -26,6 +26,7 @@ from screen_precios     import screen_precios
 from screen_kpis        import screen_kpis
 from screen_todos       import screen_todos
 from screen_production  import screen_production
+from screen_orders      import screen_orders
 
 # =============================================================================
 # Page config
@@ -75,6 +76,8 @@ def sidebar() -> str:
         st.markdown("**Uso diario**")
         if st.button("📋 Tareas", use_container_width=True):
             st.session_state.screen = "todos"
+        if st.button("📦 Pedidos", use_container_width=True):
+            st.session_state.screen = "orders"
         if st.button("KPIs del negocio", use_container_width=True):
             st.session_state.screen = "kpis"
         if st.button("Calculadora de variantes", use_container_width=True):
@@ -264,7 +267,8 @@ SCREENS = {
     "prices":      screen_precios,
     "kpis":        screen_kpis,
     "todos":       screen_todos,
-    "production":  screen_production
+    "production":  screen_production,
+    "orders":      screen_orders,
 }
 
 
