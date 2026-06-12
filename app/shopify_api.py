@@ -60,7 +60,7 @@ def _fetch_open_orders() -> list[dict]:
         "limit":               250,
         "fields": (
             "id,name,created_at,customer,"
-            "line_items,note,fulfillment_status"
+            "line_items,note,note_attributes,fulfillment_status"
         ),
     }
     while url:
@@ -97,20 +97,28 @@ def _normalise(order: dict) -> dict:
             "quantity": float(item.get("quantity") or 0),
         })
 
-    # Delivery date: Shopify has no native field — use note if populated,
-    # otherwise fall back to created_at date.
     created = order.get("created_at", "")
     try:
         order_date = datetime.fromisoformat(created).date()
     except Exception:
         order_date = None
 
+    # Delivery date lives in note_attributes as "Order Due Date": "Tue, 16 Jun 2026"
+    due_date = order_date
+    for attr in (order.get("note_attributes") or []):
+        if attr.get("name") == "Order Due Date":
+            try:
+                due_date = datetime.strptime(attr["value"], "%a, %d %b %Y").date()
+            except Exception:
+                pass
+            break
+
     return {
         "source":     "Shopify",
         "ref":        order.get("name", ""),
         "client":     name,
         "order_date": order_date,
-        "due_date":   order_date,   # no native delivery date in Shopify
+        "due_date":   due_date,
         "lines":      lines,
         "note":       order.get("note") or "",
     }
