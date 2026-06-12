@@ -4,7 +4,10 @@ from math import pi
 import millington_db as db
 from core.constants import FORMAT_TIER_CODES, VAT_MULTIPLIER
 from core.settings import load_settings
-from core.pricing_engine import calc_ingredient_cost, calc_labour_cost
+from core.pricing_engine import (
+    calc_ingredient_cost, calc_labour_cost,
+    AnchorPoint, InterpolatedCostResult, calc_interpolated_cost,
+)
 from ui.components import missing_prices_warning, cost_breakdown_metrics, weight_estimate_expander
 
 
@@ -99,57 +102,101 @@ def screen_calculator():
         labour_ref_oven  = ref_oven_hours
         labour_ref_batch = ref_batch_size
 
-        if size_type == "diameter":
-            st.markdown("**Size**")
-            c1, c2 = st.columns(2)
-            with c1:
-                target_diameter = st.number_input(
-                    "Diameter (cm)", min_value=1.0,
-                    value=ref_diameter, key="calc_diameter"
-                )
-            with c2:
-                target_height = st.number_input(
-                    "Height (cm)", min_value=0.0,
-                    value=ref_height if ref_height else 5.0,
-                    key="calc_height"
-                )
-            if ref_height and target_height:
-                scale = (target_diameter ** 2 * target_height) / \
-                        (ref_diameter ** 2 * ref_height)
-                st.info(
-                    f"Volume scaling: ({target_diameter:.0f}² × "
-                    f"{target_height:.1f}) / ({ref_diameter:.0f}² × "
-                    f"{ref_height:.1f}) = **{scale:.3f}×**"
-                )
-            else:
-                scale = (target_diameter ** 2) / (ref_diameter ** 2)
-                st.warning(
-                    f"⚠️ No reference height — scaling by area only "
-                    f"({scale:.3f}×). Add height in recipe editor."
-                )
-            size_labour_factor = target_diameter / ref_diameter
-
-        elif size_type == "weight":
-            target_weight = st.number_input(
-                "Weight (kg)", min_value=0.1,
-                value=ref_weight_kg, key="calc_weight"
+        # ── Sizing mode toggle ────────────────────────────────────────────────
+        # Custom weight mode is only available when the recipe has at least one
+        # small format (individual or bocado) to use as an interpolation anchor.
+        if has_individual or has_bocado:
+            size_mode = st.radio(
+                "Sizing mode",
+                ["By dimensions", "By weight — custom (interpolated)"],
+                horizontal=True, key="calc_size_mode",
             )
-            scale              = target_weight / ref_weight_kg
-            size_labour_factor = 1.0
-            st.info(f"Weight scaling: {target_weight:.2f} / "
-                    f"{ref_weight_kg:.2f} = **{scale:.3f}×**")
+        else:
+            size_mode = "By dimensions"
+
+        using_interpolation  = size_mode != "By dimensions"
+        target_weight_interp = 0.0
+        scale                = 1.0      # default; overwritten in non-interp path
+        size_labour_factor   = 1.0
+
+        if not using_interpolation:
+            if size_type == "diameter":
+                st.markdown("**Size**")
+                c1, c2 = st.columns(2)
+                with c1:
+                    target_diameter = st.number_input(
+                        "Diameter (cm)", min_value=1.0,
+                        value=ref_diameter, key="calc_diameter"
+                    )
+                with c2:
+                    target_height = st.number_input(
+                        "Height (cm)", min_value=0.0,
+                        value=ref_height if ref_height else 5.0,
+                        key="calc_height"
+                    )
+                if ref_height and target_height:
+                    scale = (target_diameter ** 2 * target_height) / \
+                            (ref_diameter ** 2 * ref_height)
+                    st.info(
+                        f"Volume scaling: ({target_diameter:.0f}² × "
+                        f"{target_height:.1f}) / ({ref_diameter:.0f}² × "
+                        f"{ref_height:.1f}) = **{scale:.3f}×**"
+                    )
+                else:
+                    scale = (target_diameter ** 2) / (ref_diameter ** 2)
+                    st.warning(
+                        f"⚠️ No reference height — scaling by area only "
+                        f"({scale:.3f}×). Add height in recipe editor."
+                    )
+                size_labour_factor = target_diameter / ref_diameter
+
+            elif size_type == "weight":
+                target_weight = st.number_input(
+                    "Weight (kg)", min_value=0.1,
+                    value=ref_weight_kg, key="calc_weight"
+                )
+                scale              = target_weight / ref_weight_kg
+                size_labour_factor = 1.0
+                st.info(f"Weight scaling: {target_weight:.2f} / "
+                        f"{ref_weight_kg:.2f} = **{scale:.3f}×**")
+
+            else:
+                target_portions = st.number_input(
+                    "Portions", min_value=1,
+                    value=ref_portions, key="calc_portions"
+                )
+                scale              = target_portions / ref_portions
+                size_labour_factor = 1.0
+                st.info(f"Portion scaling: {target_portions} / "
+                        f"{ref_portions} = **{scale:.3f}×**")
 
         else:
-            target_portions = st.number_input(
-                "Portions", min_value=1,
-                value=ref_portions, key="calc_portions"
+            # Custom weight — interpolate between bocado / individual / standard
+            _std_ref_g = ref_weight_kg * 1000 if ref_weight_kg > 0 else ref_weight_g
+            _default_w = max(ind_weight * 1.5, 100.0) if ind_weight else 150.0
+            target_weight_interp = st.number_input(
+                "Target weight (g)",
+                min_value=1.0,
+                value=float(min(_default_w, _std_ref_g * 0.4) if _std_ref_g > 0 else _default_w),
+                step=10.0,
+                key="calc_interp_weight",
             )
-            scale              = target_portions / ref_portions
-            size_labour_factor = 1.0
-            st.info(f"Portion scaling: {target_portions} / "
-                    f"{ref_portions} = **{scale:.3f}×**")
+            _anchor_labels = []
+            if has_bocado:
+                _anchor_labels.append(f"bocado ({boc_weight:.0f}g)")
+            if has_individual:
+                _anchor_labels.append(f"individual ({ind_weight:.0f}g)")
+            _anchor_labels.append(
+                f"standard ({_std_ref_g:.0f}g)" if _std_ref_g > 0 else "standard (ref)"
+            )
+            st.info(
+                f"Interpolating between: {' → '.join(_anchor_labels)}. "
+                "Ingredients scale linearly; labour scales by power law."
+            )
 
     elif selected_format == "Individual":
+        using_interpolation  = False
+        target_weight_interp = 0.0
         batch_size       = s.ws_batch_individual if channel == "Wholesale" else s.rt_batch_individual
         margin           = s.ws_margin if channel == "Wholesale" else s.rt_margin_individual
         labour_ref_prep  = small_prep_hours if small_prep_hours else ref_prep_hours
@@ -174,6 +221,8 @@ def screen_calculator():
             )
 
     else:  # Bocado
+        using_interpolation  = False
+        target_weight_interp = 0.0
         batch_size       = s.ws_batch_bocado if channel == "Wholesale" else s.rt_batch_bocado
         margin           = s.ws_margin if channel == "Wholesale" else s.rt_margin_bocado
         labour_ref_prep  = bocado_prep_hours if bocado_prep_hours else ref_prep_hours
@@ -258,27 +307,12 @@ def screen_calculator():
     # ── Calculate ─────────────────────────────────────────────────────────────
     if st.button("Calculate", type="primary", use_container_width=True):
 
-        lines = db.get_recipe_lines(recipe["id"])
+        lines      = db.get_recipe_lines(recipe["id"])
+        ing_result = calc_ingredient_cost(lines, ing_map)
+        missing_prices = ing_result.missing_prices
 
-        # ── Ingredient cost per unit ──────────────────────────────────────────
-        ing_result      = calc_ingredient_cost(lines, ing_map)
-        ingredient_cost = ing_result.total * scale    # scale applied HERE, not inside the loop
-        missing_prices  = ing_result.missing_prices
-
-        # ── Labour cost per unit ──────────────────────────────────────────────
-        labour = calc_labour_cost(
-            batch_size, labour_ref_batch, labour_ref_prep, labour_ref_oven, s,
-            size_labour_factor=size_labour_factor
-        )
-        labour_cost   = labour.labour_cost
-        oven_cost     = labour.oven_cost
-        qty_factor    = labour.qty_factor       # needed for the detail expander
-        prep_per_unit = labour.prep_per_unit
-        oven_per_unit = labour.oven_per_unit
-
-        # ── Packaging cost per unit ───────────────────────────────────────────
+        # ── Packaging cost (shared by both paths) ─────────────────────────────
         packaging_cost = 0.0
-
         if preset_lines:
             for line in preset_lines:
                 cpu = line.get("consumable_cost_per_unit") or 0
@@ -295,60 +329,175 @@ def screen_calculator():
                     cpu = con.get("cost_per_unit") or 0
                     packaging_cost += cpu * con_qty
 
+        # ── Cost computation ──────────────────────────────────────────────────
+        interp_result        = None
+        anchors              = []
+        ingredient_cost_per_g = 0.0
+        qty_factor    = 0.0
+        prep_per_unit = 0.0
+        oven_per_unit = 0.0
+
+        if using_interpolation:
+            # --- Interpolated path: power-law between anchor formats ----------
+            std_ref_weight_g = ref_weight_kg * 1000 if ref_weight_kg > 0 else ref_weight_g
+            if std_ref_weight_g <= 0:
+                st.error(
+                    "Cannot interpolate: reference weight is 0. "
+                    "Set ref_weight_kg in the recipe editor."
+                )
+                return
+            ingredient_cost_per_g = ing_result.total / std_ref_weight_g
+
+            all_variants    = db.get_all_variants_full()
+            recipe_variants = [v for v in all_variants if v.get("recipe_id") == recipe["id"]]
+
+            def _approved(fmt):
+                key = "ws_price_approved" if channel == "Wholesale" else "rt_price_approved"
+                for v in recipe_variants:
+                    if (v.get("format") or "").lower() == fmt.lower():
+                        p = v.get(key)
+                        if p:
+                            return float(p)
+                return None
+
+            if has_bocado:
+                r = calc_labour_cost(
+                    s.ws_batch_bocado if channel == "Wholesale" else s.rt_batch_bocado,
+                    s.ws_batch_bocado,
+                    bocado_prep_hours or ref_prep_hours,
+                    bocado_oven_hours or ref_oven_hours,
+                    s,
+                )
+                anchors.append(AnchorPoint(
+                    label="bocado", weight_g=boc_weight,
+                    labour_cost=r.labour_cost, oven_cost=r.oven_cost,
+                    ingredient_cost=ingredient_cost_per_g * boc_weight,
+                    approved_price=_approved("bocado"),
+                ))
+
+            if has_individual:
+                r = calc_labour_cost(
+                    s.ws_batch_individual if channel == "Wholesale" else s.rt_batch_individual,
+                    s.ws_batch_individual,
+                    small_prep_hours or ref_prep_hours,
+                    small_oven_hours or ref_oven_hours,
+                    s,
+                )
+                anchors.append(AnchorPoint(
+                    label="individual", weight_g=ind_weight,
+                    labour_cost=r.labour_cost, oven_cost=r.oven_cost,
+                    ingredient_cost=ingredient_cost_per_g * ind_weight,
+                    approved_price=_approved("individual"),
+                ))
+
+            r = calc_labour_cost(batch_size, labour_ref_batch, labour_ref_prep, labour_ref_oven, s)
+            anchors.append(AnchorPoint(
+                label="standard", weight_g=std_ref_weight_g,
+                labour_cost=r.labour_cost, oven_cost=r.oven_cost,
+                ingredient_cost=ing_result.total,
+                approved_price=_approved("standard"),
+            ))
+
+            interp_result   = calc_interpolated_cost(target_weight_interp, anchors, ingredient_cost_per_g)
+            ingredient_cost = interp_result.ingredient_cost
+            labour_cost     = interp_result.labour_cost
+            oven_cost       = interp_result.oven_cost
+
+        else:
+            # --- Normal path: direct scale from format -----------------------
+            labour          = calc_labour_cost(
+                batch_size, labour_ref_batch, labour_ref_prep, labour_ref_oven, s,
+                size_labour_factor=size_labour_factor,
+            )
+            ingredient_cost = ing_result.total * scale
+            labour_cost     = labour.labour_cost
+            oven_cost       = labour.oven_cost
+            qty_factor      = labour.qty_factor
+            prep_per_unit   = labour.prep_per_unit
+            oven_per_unit   = labour.oven_per_unit
+
         # ── Totals ────────────────────────────────────────────────────────────
-        cost_per_unit  = (ingredient_cost + labour_cost
-                          + oven_cost + packaging_cost)
-        price_per_unit = cost_per_unit * margin
+        cost_per_unit = ingredient_cost + labour_cost + oven_cost + packaging_cost
 
-        # ── Fetch current prices for comparison ──────────────────────────────
-        cake_code_id = recipe.get("cake_code_id")
-        cake_codes   = db.get_cake_codes()
-        code_by_id   = {cc["id"]: cc["code"] for cc in cake_codes}
-        code_str     = code_by_id.get(cake_code_id, "")
+        if interp_result and interp_result.implied_margin is not None:
+            price_per_unit = cost_per_unit * interp_result.implied_margin
+        else:
+            price_per_unit = cost_per_unit * margin
 
+        # ── Live price lookup (not applicable for custom weight sizes) ────────
+        if not using_interpolation:
+            cake_code_id   = recipe.get("cake_code_id")
+            cake_codes     = db.get_cake_codes()
+            code_by_id     = {cc["id"]: cc["code"] for cc in cake_codes}
+            code_str       = code_by_id.get(cake_code_id, "")
+            relevant_codes = FORMAT_TIER_CODES.get(selected_format, [])
+            live_prices    = db.get_current_prices(code_str) if code_str else []
 
-        relevant_codes = FORMAT_TIER_CODES.get(selected_format, [])
-        live_prices    = db.get_current_prices(code_str) if code_str else []
+            def find_price(chan):
+                """Return best matching current price ex-VAT for channel.
+                For WS, also checks MD as fallback since MD prices mirror WS."""
+                channels = [chan]
+                if chan == "WS":
+                    channels.append("MD")
+                matches = [
+                    p for p in live_prices
+                    if p["channel"] in channels
+                    and any(f"-{fc}-" in p["sku_code"] for fc in relevant_codes)
+                ]
+                if not matches:
+                    return None, None
+                ws_match = next((p for p in matches if p["channel"] == "WS"), None)
+                best     = ws_match if ws_match else matches[0]
+                return float(best["price_ex_vat"]), best["sku_code"]
 
-        def find_price(chan):
-            """Return best matching current price ex-VAT for channel.
-            For WS, also checks MD as fallback since MD prices mirror WS."""
-            channels = [chan]
-            if chan == "WS":
-                channels.append("MD")
-            matches = [
-                p for p in live_prices
-                if p["channel"] in channels
-                and any(f"-{fc}-" in p["sku_code"] for fc in relevant_codes)
-            ]
-            if not matches:
-                return None, None
-            ws_match = next((p for p in matches if p["channel"] == "WS"), None)
-            best     = ws_match if ws_match else matches[0]
-            return float(best["price_ex_vat"]), best["sku_code"]
-
-        current_ws_ex, current_ws_sku = find_price("WS")
-        current_gw_ex, current_gw_sku = find_price("GW")
+            current_ws_ex, current_ws_sku = find_price("WS")
+            current_gw_ex, current_gw_sku = find_price("GW")
+        else:
+            current_ws_ex = current_ws_sku = None
+            current_gw_ex = current_gw_sku = None
 
         # ── Display results ───────────────────────────────────────────────────
         st.markdown("---")
-        st.markdown(f"### {selected_name} — {selected_format} — {channel}")
+        if using_interpolation:
+            st.markdown(
+                f"### {selected_name} — {target_weight_interp:.0f}g (custom) — {channel}"
+            )
+        else:
+            st.markdown(f"### {selected_name} — {selected_format} — {channel}")
 
         missing_prices_warning(missing_prices)
 
-        # Cost per unit — always shown
-        st.metric("Cost per unit", f"€ {cost_per_unit:.2f}")
+        # Interpolation margin info
+        if interp_result:
+            for w in interp_result.warnings:
+                st.warning(w)
+            if interp_result.implied_margin is not None:
+                st.info(
+                    f"Margin: {interp_result.margin_source} → "
+                    f"**{interp_result.implied_margin:.2f}×**"
+                )
+            else:
+                st.warning(
+                    f"Margin unavailable ({interp_result.margin_source}). "
+                    f"Falling back to settings margin {margin:.1f}×."
+                )
 
+        st.metric("Cost per unit", f"€ {cost_per_unit:.2f}")
         st.divider()
 
         if channel == "Wholesale":
             # ── Wholesale view ────────────────────────────────────────────────
             c1, c2 = st.columns(2)
             with c1:
+                _margin_label = (
+                    f"{interp_result.implied_margin:.2f}× (interpolated)"
+                    if interp_result and interp_result.implied_margin is not None
+                    else f"{margin:.1f}× (settings)"
+                )
                 st.metric(
                     "Suggested wholesale (ex-VAT)",
                     f"€ {price_per_unit:.2f}",
-                    help=f"Cost × {s.ws_margin:.1f}× margin"
+                    help=f"Cost × {_margin_label}",
                 )
             with c2:
                 if current_ws_ex:
@@ -358,7 +507,7 @@ def screen_calculator():
                         f"Current price (ex-VAT) [{current_ws_sku}]",
                         f"€ {current_ws_ex:.2f}",
                         delta=f"{ws_margin_achieved:.2f}× cost",
-                        delta_color="off"
+                        delta_color="off",
                     )
                 else:
                     st.metric("Current wholesale price", "—")
@@ -375,18 +524,19 @@ def screen_calculator():
                 st.divider()
                 st.markdown(f"**Total for {order_qty} unit(s)**")
                 col_g, col_h = st.columns(2)
-                col_g.metric("Total cost",
-                             f"€ {cost_per_unit * order_qty:.2f}")
-                col_h.metric("Total wholesale",
-                             f"€ {price_per_unit * order_qty:.2f}")
+                col_g.metric("Total cost",      f"€ {cost_per_unit * order_qty:.2f}")
+                col_h.metric("Total wholesale", f"€ {price_per_unit * order_qty:.2f}")
 
         else:
             # ── Retail view ───────────────────────────────────────────────────
-            rt_margin_used = (
-                s.rt_margin_large if selected_format == "Standard"
-                else s.rt_margin_individual if selected_format == "Individual"
-                else s.rt_margin_bocado
-            )
+            if interp_result and interp_result.implied_margin is not None:
+                rt_margin_used = interp_result.implied_margin
+            else:
+                rt_margin_used = (
+                    s.rt_margin_large      if selected_format == "Standard"
+                    else s.rt_margin_individual if selected_format == "Individual"
+                    else s.rt_margin_bocado
+                )
             rt_price_ex  = cost_per_unit * rt_margin_used
             rt_price_inc = rt_price_ex * VAT_MULTIPLIER
 
@@ -395,12 +545,9 @@ def screen_calculator():
                 st.metric(
                     "Suggested retail (ex-VAT)",
                     f"€ {rt_price_ex:.2f}",
-                    help=f"Cost × {rt_margin_used:.1f}× margin"
+                    help=f"Cost × {rt_margin_used:.2f}× margin",
                 )
-                st.metric(
-                    "Suggested retail (inc-VAT 10%)",
-                    f"€ {rt_price_inc:.2f}"
-                )
+                st.metric("Suggested retail (inc-VAT 10%)", f"€ {rt_price_inc:.2f}")
             with c2:
                 if current_gw_ex:
                     gw_margin_achieved = current_gw_ex / cost_per_unit \
@@ -409,11 +556,11 @@ def screen_calculator():
                         f"Current price ex-VAT [{current_gw_sku}]",
                         f"€ {current_gw_ex:.2f}",
                         delta=f"{gw_margin_achieved:.2f}× cost",
-                        delta_color="off"
+                        delta_color="off",
                     )
                     st.metric(
                         "Current price inc-VAT",
-                        f"€ {current_gw_ex * VAT_MULTIPLIER:.2f}"
+                        f"€ {current_gw_ex * VAT_MULTIPLIER:.2f}",
                     )
                 else:
                     st.metric("Current retail price", "—")
@@ -430,42 +577,82 @@ def screen_calculator():
                 st.divider()
                 st.markdown(f"**Total for {order_qty} unit(s)**")
                 col_g, col_h = st.columns(2)
-                col_g.metric("Total cost",
-                             f"€ {cost_per_unit * order_qty:.2f}")
-                col_h.metric("Total retail (inc-VAT)",
-                             f"€ {rt_price_inc * order_qty:.2f}")
+                col_g.metric("Total cost",           f"€ {cost_per_unit * order_qty:.2f}")
+                col_h.metric("Total retail (inc-VAT)", f"€ {rt_price_inc * order_qty:.2f}")
 
         # ── Cost breakdown ────────────────────────────────────────────────────
         st.divider()
-        
         cost_breakdown_metrics(ingredient_cost, labour_cost, oven_cost, packaging_cost)
 
-        with st.expander("Labour calculation detail"):
-            st.markdown(f"""
+        if interp_result:
+            with st.expander("Interpolation detail"):
+                lo = interp_result.lower_anchor
+                hi = interp_result.upper_anchor
+                lo_total = lo.ingredient_cost + lo.labour_cost + lo.oven_cost
+                hi_total = hi.ingredient_cost + hi.labour_cost + hi.oven_cost
+                st.markdown(f"""
+**Target weight:** {target_weight_interp:.0f}g — bracketed by
+**{lo.label}** ({lo.weight_g:.0f}g) and **{hi.label}** ({hi.weight_g:.0f}g)
+
+**Ingredient cost per gram:** €{ingredient_cost_per_g:.6f}
+(= recipe ingredient cost €{ing_result.total:.4f} ÷ {std_ref_weight_g:.0f}g ref weight)
+
+**Anchor labour costs per unit:**
+- {lo.label} ({lo.weight_g:.0f}g): labour €{lo.labour_cost:.4f} · oven €{lo.oven_cost:.4f}
+- {hi.label} ({hi.weight_g:.0f}g): labour €{hi.labour_cost:.4f} · oven €{hi.oven_cost:.4f}
+
+**Interpolated at {target_weight_interp:.0f}g:**
+- Ingredients: €{interp_result.ingredient_cost:.4f} (linear)
+- Labour: €{interp_result.labour_cost:.4f} (power-law)
+- Oven: €{interp_result.oven_cost:.4f} (power-law)
+
+**Margin:** {interp_result.margin_source}
+                """)
+                st.markdown("**All anchors:**")
+                for a in sorted(anchors, key=lambda x: x.weight_g):
+                    a_total    = a.ingredient_cost + a.labour_cost + a.oven_cost
+                    price_str  = f"€{a.approved_price:.2f}" if a.approved_price else "—"
+                    implied_m  = (
+                        f"{a.approved_price / a_total:.2f}×"
+                        if a.approved_price and a_total > 0 else "—"
+                    )
+                    st.caption(
+                        f"**{a.label}** {a.weight_g:.0f}g  |  "
+                        f"cost €{a_total:.4f}  |  "
+                        f"approved {price_str}  |  "
+                        f"implied margin {implied_m}"
+                    )
+        else:
+            with st.expander("Labour calculation detail"):
+                st.markdown(f"""
 **Format:** {selected_format} · **Channel:** {channel}
 
-**Labour reference:** {labour_ref_batch:.0f} units — 
+**Labour reference:** {labour_ref_batch:.0f} units —
 {labour_ref_prep:.2f}h prep · {labour_ref_oven:.2f}h oven
 (rates from settings: €{s.default_labour_rate:.2f}/hr labour · €{s.default_oven_rate:.2f}/hr oven)
 
 **Pricing batch:** {batch_size} units
 
-- qty_factor: ({batch_size} / {labour_ref_batch:.0f})^{s.labour_power} 
+- qty_factor: ({batch_size} / {labour_ref_batch:.0f})^{s.labour_power}
   / {batch_size} = **{qty_factor:.5f}**
 - Size labour factor: **{size_labour_factor:.3f}**
-- Prep per unit: {labour_ref_prep:.2f} × {qty_factor:.5f} × 
+- Prep per unit: {labour_ref_prep:.2f} × {qty_factor:.5f} ×
   {size_labour_factor:.3f} = **{prep_per_unit:.5f}h**
-- Oven per unit: {labour_ref_oven:.2f} × {qty_factor:.5f} = 
+- Oven per unit: {labour_ref_oven:.2f} × {qty_factor:.5f} =
   **{oven_per_unit:.5f}h**
 - Labour: **€ {labour_cost:.4f}** · Oven: **€ {oven_cost:.4f}**
-- Packaging: **€ {packaging_cost:.4f}** 
+- Packaging: **€ {packaging_cost:.4f}**
   (÷ {units_per_pack} units per pack)
 - Margin: **{margin:.1f}×** ({channel})
 - Ingredient scale: **{scale:.5f}×**
-            """)
+                """)
 
         st.caption(
             f"Labour: €{s.default_labour_rate:.2f}/hr · "
             f"Oven: €{s.default_oven_rate:.2f}/hr · "
-            f"Scale: {scale:.4f}×"
+            + (
+                f"Weight: {target_weight_interp:.0f}g (interpolated)"
+                if using_interpolation
+                else f"Scale: {scale:.4f}×"
+            )
         )
