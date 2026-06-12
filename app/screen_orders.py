@@ -15,6 +15,7 @@ from datetime import date, timedelta
 import streamlit as st
 
 import millington_db as db
+import shopify_api as _shopify_mod
 from shopify_api  import get_open_orders, last_synced as shopify_synced
 from holded_api   import get_estimates,   estimates_last_synced
 from core.settings import load_settings
@@ -42,6 +43,16 @@ def _source_badge(source: str) -> str:
 def screen_orders():
     st.title("Pedidos")
     st.caption("Shopify (retail) + Holded presupuestos (mayorista) — próximos 7 días")
+
+    # ── Temporary debug ───────────────────────────────────────────────────────
+    with st.expander("🔧 Debug Shopify (temp)", expanded=False):
+        import os
+        st.write("_ENV_PATH:", _shopify_mod._ENV_PATH)
+        st.write("_ENV_PATH exists:", os.path.exists(_shopify_mod._ENV_PATH))
+        st.write("_ENV keys:", list(_shopify_mod._ENV.keys()))
+        st.write("SHOPIFY_STORE in _ENV:", "SHOPIFY_STORE" in _shopify_mod._ENV)
+        st.write("_store() value:", repr(_shopify_mod._store()))
+        st.write("__file__:", _shopify_mod.__file__)
 
     # ── Refresh controls ──────────────────────────────────────────────────────
     col_a, col_b, col_c = st.columns([1, 1, 4])
