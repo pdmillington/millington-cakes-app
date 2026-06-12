@@ -17,7 +17,7 @@ import streamlit as st
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"), override=True)
 
 _API_VERSION = "2024-01"
 _SESSION_TTL = 5 * 60   # 5 minutes
