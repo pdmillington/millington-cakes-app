@@ -182,12 +182,15 @@ def _normalise_estimate(doc: dict) -> dict:
     due_date    = datetime.fromtimestamp(due_ts,   tz=timezone.utc).date() if due_ts   else order_date
 
     contact = doc.get("contact") or {}
-    client  = (
-        contact.get("name")
-        or doc.get("contactName")
-        or doc.get("contact_name")
-        or "Unknown"
-    )
+    if isinstance(contact, str):
+        client = contact or "Unknown"
+    else:
+        client = (
+            contact.get("name")
+            or doc.get("contactName")
+            or doc.get("contact_name")
+            or "Unknown"
+        )
 
     lines = []
     for item in (doc.get("products") or []):
