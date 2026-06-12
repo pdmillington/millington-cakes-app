@@ -46,13 +46,18 @@ def screen_orders():
 
     # ── Temporary debug ───────────────────────────────────────────────────────
     with st.expander("🔧 Debug Shopify (temp)", expanded=False):
-        import os
-        st.write("_ENV_PATH:", _shopify_mod._ENV_PATH)
-        st.write("_ENV_PATH exists:", os.path.exists(_shopify_mod._ENV_PATH))
-        st.write("_ENV keys:", list(_shopify_mod._ENV.keys()))
-        st.write("SHOPIFY_STORE in _ENV:", "SHOPIFY_STORE" in _shopify_mod._ENV)
-        st.write("_store() value:", repr(_shopify_mod._store()))
-        st.write("__file__:", _shopify_mod.__file__)
+        import os, requests as _req
+        st.write("store:", repr(_shopify_mod._store()))
+        st.write("base URL:", _shopify_mod._base())
+        if st.button("Test raw API call"):
+            url = f"{_shopify_mod._base()}/orders.json"
+            params = {"status": "open", "fulfillment_status": "unfulfilled", "limit": 5}
+            try:
+                r = _req.get(url, headers=_shopify_mod._headers(), params=params, timeout=15)
+                st.write("Status code:", r.status_code)
+                st.json(r.json())
+            except Exception as e:
+                st.error(str(e))
 
     # ── Refresh controls ──────────────────────────────────────────────────────
     col_a, col_b, col_c = st.columns([1, 1, 4])
