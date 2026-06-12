@@ -2,23 +2,22 @@
 # =============================================================================
 # Pedidos — combined Shopify (retail) + Holded presupuestos (wholesale).
 #
-# Shows all open orders grouped by delivery date for the next 7 days,
-# with a production summary (total units per product) and a weekly
-# labour estimate at the bottom.
+# Layout:
+#   1. Production matrix  — products × days, with prep hours as final row
+#   2. Orders by day      — individual order detail grouped by delivery date
 # =============================================================================
 
 from __future__ import annotations
-import math
 from collections import defaultdict
 from datetime import date, timedelta
 
+import pandas as pd
 import streamlit as st
 
 import millington_db as db
-import shopify_api as _shopify_mod
-from shopify_api  import get_open_orders, last_synced as shopify_synced
-from holded_api   import get_estimates,   estimates_last_synced
-from core.settings import load_settings
+from shopify_api        import get_open_orders, last_synced as shopify_synced
+from holded_api         import get_estimates,   estimates_last_synced
+from core.settings      import load_settings
 from core.pricing_engine import calc_labour_cost
 
 _LOCALE_DAYS = {
@@ -40,29 +39,33 @@ def _source_badge(source: str) -> str:
     return "🛒" if source == "Shopify" else "📋"
 
 
+def _match_recipe(product: str, recipe_map: dict) -> tuple | None:
+    """Return (recipe, format_key) or None."""
+    clean      = product.lower().split("(")[0].strip()
+    name_lower = product.lower()
+    recipe     = next(
+        (r for name, r in recipe_map.items() if clean in name or name in clean),
+        None,
+    )
+    if not recipe:
+        return None
+    if "bocado" in name_lower or "bite" in name_lower:
+        fmt = "bocado"
+    elif "individual" in name_lower or "tartaleta" in name_lower:
+        fmt = "individual"
+    else:
+        fmt = "standard"
+    return recipe, fmt
+
+
 def screen_orders():
     st.title("Pedidos")
     st.caption("Shopify (retail) + Holded presupuestos (mayorista) — próximos 7 días")
 
-    # ── Temporary debug ───────────────────────────────────────────────────────
-    with st.expander("🔧 Debug Shopify (temp)", expanded=False):
-        import os, requests as _req
-        st.write("store:", repr(_shopify_mod._store()))
-        st.write("base URL:", _shopify_mod._base())
-        if st.button("Test raw API call"):
-            url = f"{_shopify_mod._base()}/orders.json"
-            params = {"status": "open", "fulfillment_status": "unfulfilled", "limit": 5}
-            try:
-                r = _req.get(url, headers=_shopify_mod._headers(), params=params, timeout=15)
-                st.write("Status code:", r.status_code)
-                st.json(r.json())
-            except Exception as e:
-                st.error(str(e))
-
-    # ── Refresh controls ──────────────────────────────────────────────────────
+    # ── Controls ──────────────────────────────────────────────────────────────
     col_a, col_b, col_c = st.columns([1, 1, 4])
     with col_a:
-        refresh = st.button("🔄 Actualizar", use_container_width=True)
+        refresh  = st.button("🔄 Actualizar", use_container_width=True)
     with col_b:
         show_all = st.toggle("Ver todos", value=False, key="orders_show_all")
 
@@ -72,7 +75,6 @@ def screen_orders():
 
     shopify_err = st.session_state.get("_shopify_error")
     holded_err  = st.session_state.get("_holded_estimates_error")
-
     if shopify_err:
         st.warning(f"⚠️ Shopify: {shopify_err}")
     if holded_err:
@@ -88,21 +90,17 @@ def screen_orders():
 
     st.divider()
 
-    # ── Date range ────────────────────────────────────────────────────────────
-    today     = date.today()
-    next_week = today + timedelta(days=7)
-
+    # ── Date filtering ────────────────────────────────────────────────────────
+    today      = date.today()
+    next_week  = today + timedelta(days=7)
     all_orders = shopify_orders + holded_orders
 
     def _in_range(order: dict) -> bool:
         d = order.get("due_date") or order.get("order_date")
-        if d is None:
-            return show_all
-        return today <= d <= next_week
+        return (today <= d <= next_week) if d else show_all
 
     def _date_key(order: dict) -> date:
-        d = order.get("due_date") or order.get("order_date")
-        return d or date.max
+        return order.get("due_date") or order.get("order_date") or date.max
 
     visible = [o for o in all_orders if show_all or _in_range(o)]
 
@@ -113,144 +111,111 @@ def screen_orders():
         )
         return
 
-    # ── Group by delivery date ────────────────────────────────────────────────
-    by_date: dict[date, list[dict]] = defaultdict(list)
+    # ── Build product × day quantities ────────────────────────────────────────
+    product_by_day: dict[str, dict[date, float]] = defaultdict(lambda: defaultdict(float))
     for order in visible:
-        key = _date_key(order)
-        by_date[key].append(order)
-
-    # ── Orders by day ─────────────────────────────────────────────────────────
-    for day in sorted(by_date.keys()):
-        orders_today = by_date[day]
-        label        = _fmt_date(day) if day != date.max else "Sin fecha"
-        is_today     = (day == today)
-        is_past      = (day < today)
-
-        prefix = "📅 " if is_today else ("⚠️ " if is_past else "")
-        st.markdown(f"#### {prefix}{label}")
-
-        for order in sorted(orders_today, key=lambda o: o["source"]):
-            badge  = _source_badge(order["source"])
-            ref    = order["ref"]
-            client = order["client"]
-            lines  = order["lines"]
-
-            with st.container():
-                c1, c2 = st.columns([1, 4])
-                with c1:
-                    st.markdown(f"{badge} **{ref}**")
-                    st.caption(client)
-                with c2:
-                    for line in lines:
-                        qty  = int(line["quantity"]) if line["quantity"] == int(line["quantity"]) else line["quantity"]
-                        name = line["name"]
-                        var  = f" — {line['variant']}" if line["variant"] else ""
-                        sku  = f" `{line['sku']}`" if line["sku"] else ""
-                        st.markdown(f"× {qty}  {name}{var}{sku}")
-                    if order.get("note"):
-                        st.caption(f"📝 {order['note']}")
-
-        st.divider()
-
-    # ── Production summary ────────────────────────────────────────────────────
-    st.markdown("### Resumen de producción")
-
-    product_totals: dict[str, float] = defaultdict(float)
-    for order in visible:
+        d = _date_key(order)
         for line in order["lines"]:
             name = line["name"]
             if line["variant"]:
                 name = f"{name} ({line['variant']})"
             if name:
-                product_totals[name] += line["quantity"]
+                product_by_day[name][d] += line["quantity"]
 
-    if product_totals:
-        col_h1, col_h2 = st.columns([4, 1])
-        col_h1.markdown("**Producto**")
-        col_h2.markdown("**Uds**")
-        for product, qty in sorted(product_totals.items(), key=lambda x: -x[1]):
-            c1, c2 = st.columns([4, 1])
-            c1.write(product)
-            c2.write(int(qty) if qty == int(qty) else qty)
+    days       = sorted({d for dm in product_by_day.values() for d in dm})
+    day_labels = [(_fmt_date(d) if d != date.max else "Sin fecha") for d in days]
 
-    # ── Labour estimate ───────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("### Mano de obra estimada")
+    # ── Prep hours per product per day ────────────────────────────────────────
+    recipes    = db.get_recipes()
+    s          = load_settings()
+    recipe_map = {r["name"].lower(): r for r in recipes}
 
-    recipes     = db.get_recipes()
-    s           = load_settings()
-    recipe_map  = {r["name"].lower(): r for r in recipes}
+    prep_by_day: dict[date, float] = defaultdict(float)
+    unmatched: list[str] = []
 
-    total_labour_h = 0.0
-    total_oven_h   = 0.0
-    matched        = []
-    unmatched      = []
-
-    for product, qty in product_totals.items():
-        # Try to match product name to a recipe (case-insensitive substring)
-        clean   = product.lower().split("(")[0].strip()
-        recipe  = next(
-            (r for name, r in recipe_map.items() if clean in name or name in clean),
-            None,
-        )
-        if not recipe:
+    for product, day_qtys in product_by_day.items():
+        match = _match_recipe(product, recipe_map)
+        if not match:
             unmatched.append(product)
             continue
+        recipe, fmt = match
 
-        # Determine format from product name
-        name_lower = product.lower()
-        if "bocado" in name_lower or "bite" in name_lower:
-            fmt        = "bocado"
-            batch_sz   = s.ws_batch_bocado
-            prep_h     = recipe.get("bocado_batch_prep_hours") or recipe.get("ref_prep_hours") or 0
-            oven_h     = recipe.get("bocado_batch_oven_hours") or recipe.get("ref_oven_hours")  or 0
-            ref_batch  = s.ws_batch_bocado
-        elif "individual" in name_lower or "tartaleta" in name_lower:
-            fmt        = "individual"
-            batch_sz   = s.ws_batch_individual
-            prep_h     = recipe.get("small_batch_prep_hours") or recipe.get("ref_prep_hours") or 0
-            oven_h     = recipe.get("small_batch_oven_hours") or recipe.get("ref_oven_hours")  or 0
-            ref_batch  = s.ws_batch_individual
+        if fmt == "bocado":
+            prep_h    = recipe.get("bocado_batch_prep_hours") or recipe.get("ref_prep_hours") or 0
+            ref_batch = s.ws_batch_bocado
+            batch_sz  = s.ws_batch_bocado
+        elif fmt == "individual":
+            prep_h    = recipe.get("small_batch_prep_hours") or recipe.get("ref_prep_hours") or 0
+            ref_batch = s.ws_batch_individual
+            batch_sz  = s.ws_batch_individual
         else:
-            fmt        = "standard"
-            batch_sz   = s.ws_batch_large
-            prep_h     = recipe.get("ref_prep_hours") or 0
-            oven_h     = recipe.get("ref_oven_hours")  or 0
-            ref_batch  = float(recipe.get("ref_batch_size") or 20)
+            prep_h    = recipe.get("ref_prep_hours") or 0
+            ref_batch = float(recipe.get("ref_batch_size") or 20)
+            batch_sz  = s.ws_batch_large
 
-        labour = calc_labour_cost(batch_sz, ref_batch, prep_h, oven_h, s)
-        labour_h = (labour.prep_per_unit * qty)
-        oven_h_t = (labour.oven_per_unit * qty)
+        labour = calc_labour_cost(batch_sz, ref_batch, prep_h, 0, s)
+        for d, qty in day_qtys.items():
+            prep_by_day[d] += labour.prep_per_unit * qty
 
-        total_labour_h += labour_h
-        total_oven_h   += oven_h_t
-        matched.append((product, fmt, qty, labour_h, oven_h_t))
+    # ── Production matrix ─────────────────────────────────────────────────────
+    st.markdown("### Resumen de producción")
 
-    if matched:
-        col_h1, col_h2, col_h3, col_h4 = st.columns([4, 1, 1.2, 1.2])
-        col_h1.markdown("**Producto**")
-        col_h2.markdown("**Uds**")
-        col_h3.markdown("**Prep h**")
-        col_h4.markdown("**Horno h**")
+    rows: dict[str, list] = {}
+    for product in sorted(product_by_day.keys()):
+        row   = []
+        total = 0.0
+        for d in days:
+            qty = product_by_day[product].get(d, 0)
+            total += qty
+            row.append(int(qty) if qty else "")
+        row.append(int(total))
+        rows[product] = row
 
-        for product, fmt, qty, lh, oh in matched:
-            c1, c2, c3, c4 = st.columns([4, 1, 1.2, 1.2])
-            c1.write(f"{product} _{fmt}_")
-            c2.write(int(qty) if qty == int(qty) else qty)
-            c3.write(f"{lh:.1f}")
-            c4.write(f"{oh:.1f}")
+    # Prep row
+    prep_row   = []
+    total_prep = 0.0
+    for d in days:
+        h = prep_by_day.get(d, 0.0)
+        total_prep += h
+        prep_row.append(f"{h:.1f}h" if h else "")
+    prep_row.append(f"{total_prep:.1f}h")
+    rows["⏱ Prep (h)"] = prep_row
 
-        st.divider()
-        col_x, col_y = st.columns(2)
-        col_x.metric("Total prep", f"{total_labour_h:.1f} h")
-        col_y.metric("Total horno", f"{total_oven_h:.1f} h")
-        st.metric(
-            "Total mano de obra",
-            f"{total_labour_h + total_oven_h:.1f} h",
-        )
+    df = pd.DataFrame(rows, index=day_labels + ["Total"]).T
+    st.dataframe(df, use_container_width=True)
 
     if unmatched:
         st.caption(
-            "⚠️ Sin receta coincidente (excluidos del cálculo): "
-            + ", ".join(unmatched)
+            "⚠️ Sin receta coincidente (excluidos del cálculo de prep): "
+            + ", ".join(sorted(unmatched))
         )
+
+    st.divider()
+
+    # ── Orders by day ─────────────────────────────────────────────────────────
+    by_date: dict[date, list[dict]] = defaultdict(list)
+    for order in visible:
+        by_date[_date_key(order)].append(order)
+
+    for day in sorted(by_date.keys()):
+        label   = _fmt_date(day) if day != date.max else "Sin fecha"
+        is_past = day < today
+        prefix  = "⚠️ " if is_past else ""
+        st.markdown(f"#### {prefix}{label}")
+
+        for order in sorted(by_date[day], key=lambda o: o["source"]):
+            badge  = _source_badge(order["source"])
+            c1, c2 = st.columns([1, 4])
+            with c1:
+                st.markdown(f"{badge} **{order['ref']}**")
+                st.caption(order["client"])
+            with c2:
+                for line in order["lines"]:
+                    qty  = int(line["quantity"]) if line["quantity"] == int(line["quantity"]) else line["quantity"]
+                    var  = f" — {line['variant']}" if line["variant"] else ""
+                    sku  = f" `{line['sku']}`"     if line["sku"]     else ""
+                    st.markdown(f"× {qty}  {line['name']}{var}{sku}")
+                if order.get("note"):
+                    st.caption(f"📝 {order['note']}")
+
+        st.divider()
