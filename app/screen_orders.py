@@ -14,6 +14,10 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
+
+def _dataframe(df: pd.DataFrame) -> None:
+    st.dataframe(df, width="stretch")
+
 import millington_db as db
 from shopify_api        import get_open_orders, last_synced as shopify_synced
 from holded_api         import get_estimates,   estimates_last_synced
@@ -132,6 +136,7 @@ def screen_orders():
 
     prep_by_day: dict[date, float] = defaultdict(float)
     unmatched: list[str] = []
+    calc_debug: list[dict] = []   # for the detail expander
 
     for product, day_qtys in product_by_day.items():
         match = _match_recipe(product, recipe_map)
@@ -141,14 +146,17 @@ def screen_orders():
         recipe, fmt = match
 
         if fmt == "bocado":
+            bocado_specific = bool(recipe.get("bocado_batch_prep_hours"))
             prep_h    = recipe.get("bocado_batch_prep_hours") or recipe.get("ref_prep_hours") or 0
             ref_batch = s.ws_batch_bocado
             batch_sz  = s.ws_batch_bocado
         elif fmt == "individual":
+            bocado_specific = False
             prep_h    = recipe.get("small_batch_prep_hours") or recipe.get("ref_prep_hours") or 0
             ref_batch = s.ws_batch_individual
             batch_sz  = s.ws_batch_individual
         else:
+            bocado_specific = False
             prep_h    = recipe.get("ref_prep_hours") or 0
             ref_batch = float(recipe.get("ref_batch_size") or 20)
             batch_sz  = s.ws_batch_large
@@ -157,6 +165,18 @@ def screen_orders():
         # bocado qty from orders is in boxes (e.g. 1 box = rt_batch_bocado units).
         # prep_per_unit is per individual bocado, so scale up accordingly.
         units_per_order_qty = s.rt_batch_bocado if fmt == "bocado" else 1
+        total_qty = sum(day_qtys.values()) * units_per_order_qty
+        total_h   = labour.prep_per_unit * total_qty
+        calc_debug.append({
+            "Producto": product,
+            "Formato": fmt,
+            "prep_h usado": prep_h,
+            "¿bocado_batch_prep_hours?": "✅" if fmt == "bocado" and bocado_specific else ("⚠️ fallback ref_prep_hours" if fmt == "bocado" else "—"),
+            "ref_batch": ref_batch,
+            "prep/unidad (h)": round(labour.prep_per_unit, 4),
+            "uds totales": int(total_qty),
+            "total prep (h)": round(total_h, 2),
+        })
         for d, qty in day_qtys.items():
             prep_by_day[d] += labour.prep_per_unit * qty * units_per_order_qty
 
@@ -186,13 +206,17 @@ def screen_orders():
     rows["⏱ Prep (h)"] = prep_row
 
     df = pd.DataFrame(rows, index=day_labels + ["Total"]).T
-    st.dataframe(df, width="stretch")
+    _dataframe(df)
 
     if unmatched:
         st.caption(
             "⚠️ Sin receta coincidente (excluidos del cálculo de prep): "
             + ", ".join(sorted(unmatched))
         )
+
+    if calc_debug:
+        with st.expander("🔍 Detalle del cálculo de prep"):
+            _dataframe(pd.DataFrame(calc_debug))
 
     st.divider()
 
