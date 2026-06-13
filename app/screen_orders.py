@@ -163,6 +163,7 @@ def screen_orders():
     # ── Production matrix ─────────────────────────────────────────────────────
     st.markdown("### Resumen de producción")
 
+    # All cells must be the same type (str) to avoid Arrow serialisation errors.
     rows: dict[str, list] = {}
     for product in sorted(product_by_day.keys()):
         row   = []
@@ -170,8 +171,8 @@ def screen_orders():
         for d in days:
             qty = product_by_day[product].get(d, 0)
             total += qty
-            row.append(int(qty) if qty else "")
-        row.append(int(total))
+            row.append(str(int(qty)) if qty else "")
+        row.append(str(int(total)))
         rows[product] = row
 
     # Prep row
@@ -185,7 +186,7 @@ def screen_orders():
     rows["⏱ Prep (h)"] = prep_row
 
     df = pd.DataFrame(rows, index=day_labels + ["Total"]).T
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
 
     if unmatched:
         st.caption(
