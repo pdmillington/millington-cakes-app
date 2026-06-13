@@ -20,7 +20,7 @@ def _dataframe(df: pd.DataFrame) -> None:
 
 import millington_db as db
 from shopify_api        import get_open_orders, last_synced as shopify_synced
-from holded_api         import get_estimates,   estimates_last_synced
+from holded_api         import get_estimates, estimates_last_synced
 from core.settings      import load_settings
 from core.pricing_engine import calc_labour_cost
 
@@ -115,8 +115,17 @@ def screen_orders():
         )
         return
 
-    # ── Build product × day quantities ────────────────────────────────────────
+    # ── Build product × day quantities + SKU lookup ───────────────────────────
+    # units_per_pack from holded_products tells us how many individual units
+    # (e.g. bocados) are in each ordered "box" — same source used by KPIs screen.
+    holded_products  = db.get_holded_products()
+    sku_units_per_pack: dict[str, int] = {
+        p["sku"]: int(p.get("units_per_pack") or 1)
+        for p in holded_products if p.get("sku")
+    }
+
     product_by_day: dict[str, dict[date, float]] = defaultdict(lambda: defaultdict(float))
+    product_sku:    dict[str, str]                = {}   # product display name → SKU
     for order in visible:
         d = _date_key(order)
         for line in order["lines"]:
@@ -125,6 +134,8 @@ def screen_orders():
                 name = f"{name} ({line['variant']})"
             if name:
                 product_by_day[name][d] += line["quantity"]
+                if line.get("sku") and name not in product_sku:
+                    product_sku[name] = line["sku"]
 
     days       = sorted({d for dm in product_by_day.values() for d in dm})
     day_labels = [(_fmt_date(d) if d != date.max else "Sin fecha") for d in days]
@@ -158,22 +169,30 @@ def screen_orders():
             prep_h    = recipe.get("ref_prep_hours") or 0
             ref_batch = float(recipe.get("ref_batch_size") or 20)
 
-        # Pass the actual order quantity as batch_sz so the power law scales
-        # prep time relative to the reference batch — same logic as the calculator.
-        for d, qty in day_qtys.items():
-            labour = calc_labour_cost(qty, ref_batch, prep_h, 0, s)
-            prep_by_day[d] += labour.prep_per_unit * qty
+        # Convert order qty → individual production units using holded_products.units_per_pack.
+        # E.g. 6 bocado boxes × 25 uds/box = 150 individual bocados to prepare.
+        sku              = product_sku.get(product, "")
+        units_per_pack   = sku_units_per_pack.get(sku, 1)
 
-        total_qty = sum(day_qtys.values())
-        labour_total = calc_labour_cost(total_qty, ref_batch, prep_h, 0, s)
+        for d, qty in day_qtys.items():
+            individual_units = qty * units_per_pack
+            labour = calc_labour_cost(individual_units, ref_batch, prep_h, 0, s)
+            prep_by_day[d] += labour.prep_per_unit * individual_units
+
+        total_qty        = sum(day_qtys.values())
+        total_units      = total_qty * units_per_pack
+        labour_total     = calc_labour_cost(total_units, ref_batch, prep_h, 0, s)
         calc_debug.append({
-            "Producto":   product,
-            "Formato":    fmt,
-            "prep_h":     prep_h,
-            "ref_batch":  ref_batch,
-            "qty (pedido)": int(total_qty),
-            "prep/ud (h)": round(labour_total.prep_per_unit, 4),
-            "total (h)":  round(labour_total.prep_per_unit * total_qty, 2),
+            "Producto":        product,
+            "SKU":             sku or "—",
+            "Formato":         fmt,
+            "prep_h":          prep_h,
+            "ref_batch":       ref_batch,
+            "uds/caja":        units_per_pack,
+            "qty (cajas)":     int(total_qty),
+            "uds totales":     int(total_units),
+            "prep/ud (h)":     round(labour_total.prep_per_unit, 4),
+            "total (h)":       round(labour_total.prep_per_unit * total_units, 2),
             "bocado_batch_prep_hours": "✅" if fmt == "bocado" and bocado_specific else ("⚠️ usando ref_prep_hours" if fmt == "bocado" else "—"),
         })
 

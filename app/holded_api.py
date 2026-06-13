@@ -25,6 +25,9 @@ import time
 import requests
 import streamlit as st
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_MADRID = ZoneInfo("Europe/Madrid")
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -174,30 +177,88 @@ def last_synced() -> str | None:
 # Presupuestos (wholesale estimates / delivery notes)
 # =============================================================================
 
+_contact_cache: dict[str, str] = {}   # id → name, lives for the process lifetime
+
+
+def _resolve_contact(contact_id: str) -> str:
+    """Look up a Holded contact name by ID, with in-process caching."""
+    if contact_id in _contact_cache:
+        return _contact_cache[contact_id]
+    try:
+        r = requests.get(
+            f"https://api.holded.com/api/contacts/v2/contacts/{contact_id}",
+            headers=_headers(),
+            timeout=10,
+        )
+        r.raise_for_status()
+        name = r.json().get("name") or contact_id
+    except Exception:
+        name = contact_id
+    _contact_cache[contact_id] = name
+    return name
+
+
+def _parse_holded_date(value: str) -> "date | None":
+    """Try common Holded date string formats → date, or None."""
+    from datetime import date as _date
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except Exception:
+            pass
+    return None
+
+
 def _normalise_estimate(doc: dict) -> dict:
     """Convert a Holded estimate document to the common order dict format."""
     order_ts    = doc.get("date", 0)
     due_ts      = doc.get("dueDate") or doc.get("due_date") or order_ts
-    order_date  = datetime.fromtimestamp(order_ts, tz=timezone.utc).date() if order_ts else None
-    due_date    = datetime.fromtimestamp(due_ts,   tz=timezone.utc).date() if due_ts   else order_date
+    # Holded timestamps are midnight in Madrid time — parse in local tz to avoid off-by-one.
+    order_date  = datetime.fromtimestamp(order_ts, tz=_MADRID).date() if order_ts else None
+    due_date    = datetime.fromtimestamp(due_ts,   tz=_MADRID).date() if due_ts   else order_date
+
+    # Override due_date with custom field "Fecha de entrega" if set in Holded.
+    # Holded returns customFields as a list of {field, value} or a dict.
+    custom_fields = doc.get("customFields") or []
+    if isinstance(custom_fields, list):
+        for cf in custom_fields:
+            key = (cf.get("field") or cf.get("name") or "").lower()
+            if "entrega" in key or "delivery" in key:
+                parsed = _parse_holded_date(str(cf.get("value") or ""))
+                if parsed:
+                    due_date = parsed
+                break
+    elif isinstance(custom_fields, dict):
+        for key, val in custom_fields.items():
+            if ("entrega" in key.lower() or "delivery" in key.lower()) and val:
+                parsed = _parse_holded_date(str(val))
+                if parsed:
+                    due_date = parsed
+                break
 
     contact = doc.get("contact") or {}
-    if isinstance(contact, str):
-        client = contact or "Unknown"
-    else:
+    if isinstance(contact, dict):
+        client = contact.get("name") or doc.get("contactName") or "Unknown"
+    elif isinstance(contact, str) and contact:
+        # contact field is a raw ID — resolve it to a name
         client = (
-            contact.get("name")
-            or doc.get("contactName")
+            doc.get("contactName")
             or doc.get("contact_name")
-            or "Unknown"
+            or _resolve_contact(contact)
         )
+    else:
+        client = "Unknown"
 
     lines = []
     for item in (doc.get("products") or []):
+        name = (item.get("name") or "").strip()
+        # Skip delivery charge lines (e.g. "Entrega a domicilio")
+        if "entrega" in name.lower():
+            continue
         raw_sku = item.get("sku")
         sku_ok  = raw_sku and raw_sku != 0 and str(raw_sku) != "0"
         lines.append({
-            "name":     (item.get("name") or "").strip(),
+            "name":     name,
             "variant":  "",
             "sku":      str(raw_sku) if sku_ok else "",
             "quantity": float(item.get("units") or 0),
