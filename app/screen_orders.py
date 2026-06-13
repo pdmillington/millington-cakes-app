@@ -154,8 +154,11 @@ def screen_orders():
             batch_sz  = s.ws_batch_large
 
         labour = calc_labour_cost(batch_sz, ref_batch, prep_h, 0, s)
+        # bocado qty from orders is in boxes (e.g. 1 box = rt_batch_bocado units).
+        # prep_per_unit is per individual bocado, so scale up accordingly.
+        units_per_order_qty = s.rt_batch_bocado if fmt == "bocado" else 1
         for d, qty in day_qtys.items():
-            prep_by_day[d] += labour.prep_per_unit * qty
+            prep_by_day[d] += labour.prep_per_unit * qty * units_per_order_qty
 
     # ── Production matrix ─────────────────────────────────────────────────────
     st.markdown("### Resumen de producción")
