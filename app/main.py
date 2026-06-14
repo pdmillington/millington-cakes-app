@@ -76,7 +76,7 @@ def sidebar() -> str:
         st.markdown("**Uso diario**")
         if st.button("📋 Tareas", use_container_width=True):
             st.session_state.screen = "todos"
-        if st.button("📦 Pedidos", use_container_width=True):
+        if st.button("📦 Pedidos y compras", use_container_width=True):
             st.session_state.screen = "orders"
         if st.button("KPIs del negocio", use_container_width=True):
             st.session_state.screen = "kpis"

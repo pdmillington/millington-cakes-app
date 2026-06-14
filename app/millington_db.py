@@ -90,6 +90,16 @@ _UNIT_WEIGHTS_G = {
     "naranja":   80.0,   # medium orange, juice + zest combined yield
 }
 
+# How unit-count recipe amounts should be converted for purchasing display.
+# Tuple of (purchase_unit, factor): recipe_count × factor = purchase_amount.
+_UNIT_PURCHASE = {
+    "huevos":   ("docenas", 1 / 12),   # eggs → dozens
+    "manzanas": ("kg",      0.150),    # apples → kg
+    "limones":  ("kg",      0.065),    # lemons → kg
+    "limas":    ("kg",      0.045),    # limes → kg
+    "naranja":  ("kg",      0.080),    # oranges → kg
+}
+
 # Unit ingredients to silently ignore (only part used, weight negligible,
 # or weight not meaningful for costing)
 _UNIT_IGNORE = {
@@ -200,6 +210,93 @@ def get_client() -> Client:
         st.stop()
 
     return create_client(url, key)
+
+
+# -----------------------------------------------------------------------------
+# Ingredient stock
+# -----------------------------------------------------------------------------
+
+def get_ingredient_stock() -> dict[str, float]:
+    """Return current stock as {ingredient_id: amount}."""
+    sb = get_client()
+    result = sb.table("ingredient_stock").select("ingredient_id, amount").execute()
+    return {row["ingredient_id"]: float(row["amount"]) for row in (result.data or [])}
+
+
+def upsert_ingredient_stock(ingredient_id: str, amount: float) -> None:
+    """Set current stock level for one ingredient."""
+    sb = get_client()
+    sb.table("ingredient_stock").upsert({
+        "ingredient_id": ingredient_id,
+        "amount":        amount,
+        "updated_at":    "now()",
+    }).execute()
+
+
+def get_recipe_ingredients_for_shopping() -> list[dict]:
+    """
+    Return all recipe ingredient lines with ingredient name/pack_unit
+    and the recipe's ref_batch_size. Used by the shopping list screen.
+
+    Returns list of dicts:
+      recipe_id, ref_batch_size, ingredient_id, ingredient_name, pack_unit, amount
+    """
+    sb = get_client()
+
+    # Fetch ingredient lines with ingredient details
+    lines_result = (
+        sb.table("recipe_ingredient_lines")
+        .select("recipe_id, amount, ingredients(id, name, pack_unit)")
+        .execute()
+    )
+
+    # Fetch recipe ref_batch_size separately (reverse join not always available)
+    recipes_result = (
+        sb.table("recipes")
+        .select("id, ref_batch_size")
+        .execute()
+    )
+    batch_by_recipe = {
+        r["id"]: float(r.get("ref_batch_size") or 1)
+        for r in (recipes_result.data or [])
+    }
+
+    rows = []
+    for row in lines_result.data or []:
+        ing = row.pop("ingredients", None) or {}
+        recipe_id = row.get("recipe_id", "")
+        # Recipe amounts are always in base units (g, ml, or units).
+        # pack_unit describes the purchase pack (e.g. "kg" bag) — normalise
+        # it back to the base unit so display is consistent.
+        raw_unit  = (ing.get("pack_unit") or "g").lower().strip()
+        base_unit = {"kg": "g", "l": "ml", "litre": "ml", "litro": "ml"}.get(raw_unit, raw_unit)
+
+        # Known unit-count ingredients (lemons, eggs etc.): convert recipe
+        # count to a practical purchase unit (kg for fruit, dozens for eggs).
+        ing_name_lower = (ing.get("name") or "").lower()
+        purchase_key   = next(
+            (k for k in _UNIT_PURCHASE if k in ing_name_lower), None
+        )
+        is_unit_ignore = any(key in ing_name_lower for key in _UNIT_IGNORE)
+        raw_amount     = float(row.get("amount") or 0)
+
+        if purchase_key:
+            p_unit, p_factor = _UNIT_PURCHASE[purchase_key]
+            base_unit  = p_unit
+            raw_amount = raw_amount * p_factor
+        elif is_unit_ignore:
+            base_unit = "units"
+
+        rows.append({
+            "recipe_id":       recipe_id,
+            "ref_batch_size":  batch_by_recipe.get(recipe_id, 1.0),
+            "ingredient_id":   ing.get("id",       ""),
+            "ingredient_name": ing.get("name",      ""),
+            "pack_unit":       base_unit,
+            "unit_weight_g":   None,   # no longer needed — conversion already applied
+            "amount":          raw_amount,
+        })
+    return rows
 
 
 # -----------------------------------------------------------------------------

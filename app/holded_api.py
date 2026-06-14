@@ -198,17 +198,6 @@ def _resolve_contact(contact_id: str) -> str:
     return name
 
 
-def _parse_holded_date(value: str) -> "date | None":
-    """Try common Holded date string formats → date, or None."""
-    from datetime import date as _date
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(value, fmt).date()
-        except Exception:
-            pass
-    return None
-
-
 def _normalise_estimate(doc: dict) -> dict:
     """Convert a Holded estimate document to the common order dict format."""
     order_ts    = doc.get("date", 0)
@@ -216,25 +205,6 @@ def _normalise_estimate(doc: dict) -> dict:
     # Holded timestamps are midnight in Madrid time — parse in local tz to avoid off-by-one.
     order_date  = datetime.fromtimestamp(order_ts, tz=_MADRID).date() if order_ts else None
     due_date    = datetime.fromtimestamp(due_ts,   tz=_MADRID).date() if due_ts   else order_date
-
-    # Override due_date with custom field "Fecha de entrega" if set in Holded.
-    # Holded returns customFields as a list of {field, value} or a dict.
-    custom_fields = doc.get("customFields") or []
-    if isinstance(custom_fields, list):
-        for cf in custom_fields:
-            key = (cf.get("field") or cf.get("name") or "").lower()
-            if "entrega" in key or "delivery" in key:
-                parsed = _parse_holded_date(str(cf.get("value") or ""))
-                if parsed:
-                    due_date = parsed
-                break
-    elif isinstance(custom_fields, dict):
-        for key, val in custom_fields.items():
-            if ("entrega" in key.lower() or "delivery" in key.lower()) and val:
-                parsed = _parse_holded_date(str(val))
-                if parsed:
-                    due_date = parsed
-                break
 
     contact = doc.get("contact") or {}
     if isinstance(contact, dict):
