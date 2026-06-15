@@ -27,3 +27,6 @@ altair>=5.0.0
 
 # Excel parsing
 openpyxl>=3.1.0
+
+# Persistent login cookie
+streamlit>=1.37.0

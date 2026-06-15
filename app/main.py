@@ -44,10 +44,37 @@ st.set_page_config(
 # Password protection
 # =============================================================================
 
+def _has_auth_cookie() -> bool:
+    """Read the auth cookie directly from the HTTP request headers — no JS needed."""
+    try:
+        return "mc_auth=ok" in st.context.headers.get("Cookie", "")
+    except AttributeError:
+        return False
+
+
+def _set_auth_cookie() -> None:
+    """Write the auth cookie via st.html (30-day expiry)."""
+    max_ms = 30 * 24 * 60 * 60 * 1000
+    st.html(
+        f"""<script>
+        var d = new Date();
+        d.setTime(d.getTime() + {max_ms});
+        document.cookie = "mc_auth=ok; expires=" + d.toUTCString() + "; path=/; SameSite=Lax";
+        </script>"""
+    )
+
+
 def check_password() -> bool:
+    # Already authenticated this session.
     if st.session_state.get("authenticated"):
         return True
 
+    # Cookie present from a previous login — let them straight in.
+    if _has_auth_cookie():
+        st.session_state.authenticated = True
+        return True
+
+    # Show login form.
     st.markdown("### 🎂 Millington Cakes")
     st.markdown("Pricing Manager — please log in")
     st.divider()
@@ -57,6 +84,7 @@ def check_password() -> bool:
     if st.button("Log in", type="primary"):
         if password == st.secrets.get("APP_PASSWORD", ""):
             st.session_state.authenticated = True
+            _set_auth_cookie()
             st.rerun()
         else:
             st.error("Incorrect password.")
