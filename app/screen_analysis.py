@@ -129,6 +129,8 @@ def screen_analysis(recipe_id: str | None = None):
     cake_code_id = recipe.get("cake_code_id")
     code_str     = code_by_id.get(cake_code_id, "")
     live_prices  = db.get_current_prices(code_str) if code_str else []
+    if err := st.session_state.pop("_current_prices_error", None):
+        st.warning(f"⚠️ No se pudieron cargar precios actuales: `{err}`")
 
     def find_ws_price():
         matches = [

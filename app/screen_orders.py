@@ -54,7 +54,7 @@ def _match_recipe(product: str, recipe_map: dict) -> tuple | None:
     )
     if not recipe:
         return None
-    if "bocado" in name_lower or "bite" in name_lower:
+    if "bocado" in name_lower:
         fmt = "bocado"
     elif "individual" in name_lower or "tartaleta" in name_lower:
         fmt = "individual"
@@ -300,7 +300,7 @@ def _tab_compras(
             ref_batch_size = float(recipe.get("ref_batch_size") or 1)
             name_lower     = name.lower()
             fmt            = (
-                "bocado" if ("bocado" in name_lower or "bite" in name_lower)
+                "bocado" if ("bocado" in name_lower)
                 else "individual" if ("individual" in name_lower or "tartaleta" in name_lower)
                 else "standard"
             )

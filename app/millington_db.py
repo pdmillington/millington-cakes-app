@@ -66,16 +66,22 @@ def get_current_prices(cake_code: str) -> list[dict]:
     """
     Return all current_prices rows for a given cake code prefix.
     e.g. cake_code='LP' returns all LP-* SKUs across all channels.
+    Returns [] gracefully if the table doesn't exist yet.
     """
     sb = get_client()
-    result = (
-        sb.table("current_prices")
-        .select("*")
-        .ilike("sku_code", f"{cake_code}-%")
-        .order("sku_code")
-        .execute()
-    )
-    return result.data or []
+    try:
+        result = (
+            sb.table("current_prices")
+            .select("*")
+            .ilike("sku_code", f"{cake_code}-%")
+            .order("sku_code")
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        import streamlit as _st
+        _st.session_state["_current_prices_error"] = str(e)
+        return []
 
 # =============================================================================
 # Recipe weight estimation
