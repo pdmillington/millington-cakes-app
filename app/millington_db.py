@@ -2118,6 +2118,72 @@ def get_production_runs_for_recipe(recipe_id: str, limit: int = 1) -> list[dict]
             row["ingredient_refs"] = refs_by_run.get(row["id"], [])
     return rows
  
+def update_production_run(run_id: str, updates: dict) -> None:
+    """Update editable fields on an existing production run."""
+    import json as _json
+    if "pcc_log" in updates and not isinstance(updates["pcc_log"], str):
+        updates["pcc_log"] = _json.dumps(updates["pcc_log"])
+    get_client().table("production_runs").update(updates).eq("id", run_id).execute()
+
+
+def replace_production_ingredient_refs(run_id: str, refs: list[dict]) -> None:
+    """Delete and re-insert ingredient refs for a production run."""
+    sb = get_client()
+    sb.table("production_ingredient_refs").delete().eq("production_run_id", run_id).execute()
+    for ref in refs:
+        if ref.get("ingredient_name"):
+            sb.table("production_ingredient_refs").insert({
+                "production_run_id": run_id,
+                "ingredient_name":   ref["ingredient_name"],
+                "albaran_ref":       ref.get("albaran_ref"),
+            }).execute()
+
+
+def delete_production_run(run_id: str) -> None:
+    """Delete a single production run and its ingredient refs."""
+    sb = get_client()
+    sb.table("production_ingredient_refs").delete().eq("production_run_id", run_id).execute()
+    sb.table("production_runs").delete().eq("id", run_id).execute()
+
+
+def update_goods_receipt(receipt_id: str, header: dict, items: list[dict]) -> None:
+    """Update a goods receipt header and replace its items."""
+    sb = get_client()
+    sb.table("goods_receipts").update(header).eq("id", receipt_id).execute()
+    sb.table("goods_receipt_items").delete().eq("receipt_id", receipt_id).execute()
+    for item in items:
+        row = {k: v for k, v in item.items() if k not in ("id", "receipt_id")}
+        row["receipt_id"] = receipt_id
+        sb.table("goods_receipt_items").insert(row).execute()
+
+
+def delete_goods_receipt(receipt_id: str) -> None:
+    """Delete a single goods receipt and its items."""
+    sb = get_client()
+    sb.table("goods_receipt_items").delete().eq("receipt_id", receipt_id).execute()
+    sb.table("goods_receipts").delete().eq("id", receipt_id).execute()
+
+
+def delete_production_runs_before(cutoff_date) -> int:
+    """
+    Delete all production runs (and their ingredient refs) with
+    production_date strictly before cutoff_date. Returns the count deleted.
+    """
+    sb = get_client()
+    iso = cutoff_date.isoformat() if hasattr(cutoff_date, "isoformat") else str(cutoff_date)
+    # Fetch IDs first so we can cascade-delete refs
+    run_ids = [
+        r["id"] for r in (
+            sb.table("production_runs").select("id").lt("production_date", iso).execute().data or []
+        )
+    ]
+    if not run_ids:
+        return 0
+    sb.table("production_ingredient_refs").delete().in_("production_run_id", run_ids).execute()
+    sb.table("production_runs").delete().lt("production_date", iso).execute()
+    return len(run_ids)
+
+
 # PCC STEPS
 
 def get_pcc_steps(recipe_id: str) -> list[dict]:

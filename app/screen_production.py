@@ -385,10 +385,88 @@ def _tab_log():
     _show_recent_runs()
 
 
+@st.dialog("✏️ Editar registro de producción")
+def _dialog_edit_run(run: dict):
+    fmt_opts   = ["standard", "individual", "bocado"]
+    fmt_labels = [FORMAT_DISPLAY[f] for f in fmt_opts]
+    cur_fmt    = run.get("format", "standard")
+    cur_idx    = fmt_opts.index(cur_fmt) if cur_fmt in fmt_opts else 0
+
+    st.markdown(f"Lote: `{run['lote_number']}`")
+    ec1, ec2, ec3 = st.columns(3)
+    with ec1:
+        raw      = str(run.get("production_date", ""))[:10]
+        new_date = st.date_input("Fecha", value=date.fromisoformat(raw) if raw else date.today())
+    with ec2:
+        new_qty  = st.number_input("Unidades", min_value=1, value=int(run.get("quantity") or 1), step=1)
+    with ec3:
+        new_fmt  = fmt_opts[fmt_labels.index(
+            st.selectbox("Formato", fmt_labels, index=cur_idx)
+        )]
+
+    new_notes = st.text_area("Notas / incidencias", value=run.get("notes") or "", height=70)
+
+    st.markdown("**Referencias de ingredientes**")
+    existing = run.get("ingredient_refs", [])
+    n_rows   = max(3, len(existing))
+    new_refs = []
+    for i in range(n_rows):
+        r = existing[i] if i < len(existing) else {}
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            ing = st.text_input(
+                "Ingrediente" if i == 0 else "​",
+                value=r.get("ingredient_name", ""),
+                key=f"dedit_ing_{run['id']}_{i}",
+                label_visibility="visible" if i == 0 else "collapsed",
+            )
+        with rc2:
+            alb = st.text_input(
+                "Ref. albarán" if i == 0 else "​",
+                value=r.get("albaran_ref", "") or "",
+                key=f"dedit_alb_{run['id']}_{i}",
+                label_visibility="visible" if i == 0 else "collapsed",
+            )
+        if ing.strip():
+            new_refs.append({"ingredient_name": ing.strip(), "albaran_ref": alb.strip() or None})
+
+    st.divider()
+    sb1, sb2 = st.columns(2)
+    with sb1:
+        if st.button("💾 Guardar cambios", type="primary", use_container_width=True):
+            db.update_production_run(run["id"], {
+                "production_date": new_date.isoformat(),
+                "quantity":        new_qty,
+                "format":          new_fmt,
+                "notes":           new_notes.strip() or None,
+            })
+            db.replace_production_ingredient_refs(run["id"], new_refs)
+            st.rerun()
+    with sb2:
+        if st.button("Cancelar", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("🗑️ Confirmar eliminación")
+def _dialog_delete_run(run: dict):
+    st.write(f"¿Eliminar el registro **{run['lote_number']}** ({run['recipe_name']})?")
+    st.caption("Esta acción no se puede deshacer.")
+    d1, d2 = st.columns(2)
+    with d1:
+        if st.button("✅ Eliminar", type="primary", use_container_width=True):
+            db.delete_production_run(run["id"])
+            st.rerun()
+    with d2:
+        if st.button("Cancelar", use_container_width=True):
+            st.rerun()
+
+
 def _show_recent_runs():
     st.markdown("### Registros recientes")
+
+    show_all = st.checkbox("Mostrar todos los registros", value=False, key="prod_show_all")
     try:
-        runs = db.get_production_runs(limit=15)
+        runs = db.get_production_runs(limit=500 if show_all else 30)
     except Exception:
         st.caption("Sin registros todavía.")
         return
@@ -397,34 +475,35 @@ def _show_recent_runs():
         st.caption("Sin registros todavía.")
         return
 
-    h1, h2, h3, h4, h5, h6 = st.columns([2, 1.5, 1, 0.7, 1, 1])
-    h1.markdown("**Lote**")
-    h2.markdown("**Producto**")
-    h3.markdown("**Formato**")
-    h4.markdown("**Uds**")
-    h5.markdown("**Fecha**")
-    h6.markdown("**PDF**")
+    h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([2, 1.5, 1, 0.7, 1, 1, 0.5, 0.5])
+    h1.markdown("**Lote**"); h2.markdown("**Producto**"); h3.markdown("**Formato**")
+    h4.markdown("**Uds**");  h5.markdown("**Fecha**");   h6.markdown("**PDF**")
 
     for run in runs:
-        c1, c2, c3, c4, c5, c6 = st.columns([2, 1.5, 1, 0.7, 1, 1])
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2, 1.5, 1, 0.7, 1, 1, 0.5, 0.5])
         c1.code(run["lote_number"], language=None)
         c2.write(run["recipe_name"])
-        c3.write(FORMAT_DISPLAY.get(run.get("format", ""), run.get("format", "—")))
+        c3.write(FORMAT_DISPLAY.get(run.get("format", ""), "—"))
         c4.write(str(run["quantity"]))
         c5.write(str(run["production_date"])[:10])
         with c6:
             try:
                 pdf_bytes = _generate_log_pdf(run)
                 st.download_button(
-                    "📄",
-                    data=pdf_bytes,
+                    "📄", data=pdf_bytes,
                     file_name=f"registro_{run['lote_number']}.pdf",
                     mime="application/pdf",
                     key=f"dl_{run['id']}",
-                    help=f"Descargar registro {run['lote_number']}",
                 )
             except Exception:
                 st.write("—")
+        with c7:
+            if st.button("✏️", key=f"edit_{run['id']}", help="Editar"):
+                _dialog_edit_run(run)
+        with c8:
+            if st.button("🗑️", key=f"del_{run['id']}", help="Eliminar"):
+                _dialog_delete_run(run)
+
 
 
 # =============================================================================
@@ -1569,10 +1648,92 @@ def _tab_reception():
     _show_recent_receipts()
 
 
+@st.dialog("✏️ Editar recepción de mercancía")
+def _dialog_edit_receipt(r: dict):
+    st.markdown(f"Proveedor: **{r['supplier']}** · {str(r['receipt_date'])[:10]}")
+
+    _SIGNERS = ["Christine Millington", "Blanca Sánchez"]
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        raw = str(r.get("receipt_date", ""))[:10]
+        new_date = st.date_input("Fecha", value=date.fromisoformat(raw) if raw else date.today())
+        new_supplier = st.text_input("Proveedor", value=r.get("supplier", ""))
+    with rc2:
+        new_albaran  = st.text_input("Nº albarán", value=r.get("albaran_ref") or "")
+        cur_rb       = r.get("received_by") or _SIGNERS[0]
+        rb_idx       = _SIGNERS.index(cur_rb) if cur_rb in _SIGNERS else 0
+        new_rb       = st.selectbox("Recibido por", _SIGNERS, index=rb_idx)
+    new_notes = st.text_area("Observaciones", value=r.get("notes") or "", height=60)
+
+    st.markdown("**Productos recibidos**")
+    items      = r.get("items", [])
+    new_items  = []
+    for i, it in enumerate(items):
+        with st.expander(it.get("product_name") or f"Producto {i+1}", expanded=False):
+            ic1, ic2, ic3 = st.columns(3)
+            with ic1:
+                name = st.text_input("Producto", value=it.get("product_name", ""), key=f"re_name_{r['id']}_{i}")
+                lot  = st.text_input("Lote prov.", value=it.get("supplier_lot") or "", key=f"re_lot_{r['id']}_{i}")
+            with ic2:
+                qty  = st.number_input("Cantidad", value=float(it.get("quantity") or 0),
+                                       step=0.1, format="%.2f", key=f"re_qty_{r['id']}_{i}")
+                unit = st.selectbox("Unidad", ["kg","l","ud","g","ml","caja"],
+                                    index=["kg","l","ud","g","ml","caja"].index(it.get("quantity_unit","kg"))
+                                          if it.get("quantity_unit") in ["kg","l","ud","g","ml","caja"] else 0,
+                                    key=f"re_unit_{r['id']}_{i}")
+            with ic3:
+                temp = it.get("temp_measured_c")
+                new_temp = st.number_input("Temperatura (°C)", value=float(temp) if temp is not None else 0.0,
+                                           step=0.1, format="%.1f", key=f"re_temp_{r['id']}_{i}")
+                acc  = st.checkbox("Aceptado", value=it.get("accepted", True), key=f"re_acc_{r['id']}_{i}")
+            rej = st.text_input("Motivo rechazo", value=it.get("rejection_reason") or "",
+                                key=f"re_rej_{r['id']}_{i}", disabled=acc)
+            new_items.append({
+                **{k: v for k, v in it.items() if k not in ("id","receipt_id")},
+                "product_name":     name.strip(),
+                "supplier_lot":     lot.strip() or None,
+                "quantity":         qty,
+                "quantity_unit":    unit,
+                "temp_measured_c":  new_temp if it.get("temp_type") != "ambient" else None,
+                "accepted":         acc,
+                "rejection_reason": rej.strip() or None,
+            })
+
+    st.divider()
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("💾 Guardar cambios", type="primary", use_container_width=True):
+            db.update_goods_receipt(r["id"], {
+                "receipt_date": new_date.isoformat(),
+                "supplier":     new_supplier.strip(),
+                "albaran_ref":  new_albaran.strip() or None,
+                "received_by":  new_rb,
+                "notes":        new_notes.strip() or None,
+            }, new_items)
+            st.rerun()
+    with b2:
+        if st.button("Cancelar", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("🗑️ Confirmar eliminación")
+def _dialog_delete_receipt(r: dict):
+    st.write(f"¿Eliminar la recepción de **{r['supplier']}** del {str(r['receipt_date'])[:10]}?")
+    st.caption("Esta acción no se puede deshacer.")
+    d1, d2 = st.columns(2)
+    with d1:
+        if st.button("✅ Eliminar", type="primary", use_container_width=True):
+            db.delete_goods_receipt(r["id"])
+            st.rerun()
+    with d2:
+        if st.button("Cancelar", use_container_width=True):
+            st.rerun()
+
+
 def _show_recent_receipts():
     st.markdown("### Recepciones recientes")
     try:
-        receipts = db.get_goods_receipts(limit=20)
+        receipts = db.get_goods_receipts(limit=100)
     except Exception:
         st.caption("Sin registros todavía.")
         return
@@ -1581,41 +1742,39 @@ def _show_recent_receipts():
         st.caption("Sin registros todavía.")
         return
 
-    h1, h2, h3, h4, h5, h6 = st.columns([1.3, 2, 1.5, 0.8, 0.8, 0.8])
-    h1.markdown("**Fecha**")
-    h2.markdown("**Proveedor**")
-    h3.markdown("**Albarán**")
-    h4.markdown("**Productos**")
-    h5.markdown("**Estado**")
-    h6.markdown("**PDF**")
+    h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([1.2, 2, 1.5, 0.7, 0.7, 0.8, 0.5, 0.5])
+    h1.markdown("**Fecha**"); h2.markdown("**Proveedor**"); h3.markdown("**Albarán**")
+    h4.markdown("**Prods**"); h5.markdown("**Estado**");   h6.markdown("**PDF**")
 
     for r in receipts:
         n_items    = len(r.get("items", []))
         n_rejected = sum(1 for it in r.get("items", []) if not it.get("accepted", True))
-        c1, c2, c3, c4, c5, c6 = st.columns([1.3, 2, 1.5, 0.8, 0.8, 0.8])
+        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.2, 2, 1.5, 0.7, 0.7, 0.8, 0.5, 0.5])
         c1.write(str(r["receipt_date"])[:10])
         c2.write(r["supplier"])
         c3.write(r.get("albaran_ref") or "—")
         c4.write(str(n_items))
         if n_rejected:
-            c5.markdown(f"❌ {n_rejected} rechaz.")
+            c5.markdown(f"❌ {n_rejected}")
         else:
-            c5.markdown("✅ OK")
+            c5.markdown("✅")
         with c6:
             try:
                 pdf_bytes = _generate_receipt_pdf(r)
-                fname = (
-                    f"recepcion_{r['receipt_date']}_{r['supplier'][:10].replace(' ','_')}.pdf"
-                )
                 st.download_button(
-                    "📄",
-                    data=pdf_bytes,
-                    file_name=fname,
+                    "📄", data=pdf_bytes,
+                    file_name=f"recepcion_{r['receipt_date']}_{r['supplier'][:10].replace(' ','_')}.pdf",
                     mime="application/pdf",
                     key=f"rec_dl_{r['id']}",
                 )
             except Exception:
                 st.write("—")
+        with c7:
+            if st.button("✏️", key=f"rec_edit_{r['id']}", help="Editar"):
+                _dialog_edit_receipt(r)
+        with c8:
+            if st.button("🗑️", key=f"rec_del_{r['id']}", help="Eliminar"):
+                _dialog_delete_receipt(r)
 
 
 # =============================================================================
