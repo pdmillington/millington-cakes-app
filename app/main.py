@@ -12,6 +12,9 @@
 
 import streamlit as st
 import millington_db as db
+from pathlib import Path
+
+_LOGO = str(Path(__file__).parent.parent / "data" / "Logo.png")
 
 from screen_recipes     import screen_recipes
 from screen_ingredients import screen_ingredients
@@ -34,7 +37,7 @@ from screen_orders      import screen_orders
 
 st.set_page_config(
     page_title="Millington Cakes",
-    page_icon="🎂",
+    page_icon=_LOGO,
     layout="wide",
     initial_sidebar_state="expanded",
 )
