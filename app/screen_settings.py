@@ -289,6 +289,95 @@ def screen_settings():
 
     st.divider()
 
+    # ── Size code definitions ─────────────────────────────────────────────────
+    st.markdown("### Códigos de tamaño")
+    st.caption(
+        "Códigos que aparecen en los SKUs y en el selector de variantes. "
+        "El tier determina la base de coste de mano de obra para el cálculo."
+    )
+
+    defs = db.get_size_code_definitions()
+    tiers = ["standard", "individual", "bocado"]
+    tier_labels = {"standard": "Tarta / Caja", "individual": "Individual", "bocado": "Bocado"}
+
+    for tier in tiers:
+        tier_defs = [d for d in defs if d["tier"] == tier]
+        st.markdown(f"**{tier_labels[tier]}**")
+
+        if tier_defs:
+            h0, h1, h2, h3 = st.columns([1, 3, 2, 0.5])
+            h0.caption("Código"); h1.caption("Etiqueta"); h2.caption("Peso aprox. (g)"); h3.caption("")
+            for d in tier_defs:
+                c0, c1, c2, c3 = st.columns([1, 3, 2, 0.5])
+                c0.code(d["code"])
+                new_label = c1.text_input(
+                    "label", value=d["label_es"], label_visibility="collapsed",
+                    key=f"scd_label_{d['code']}"
+                )
+                new_weight = c2.number_input(
+                    "weight", value=float(d["default_weight_g"] or 0),
+                    min_value=0.0, label_visibility="collapsed",
+                    key=f"scd_weight_{d['code']}"
+                )
+                with c3:
+                    if st.button("💾", key=f"scd_save_{d['code']}", help="Guardar"):
+                        try:
+                            db.save_size_code_definition({
+                                "code":              d["code"],
+                                "label_es":          new_label,
+                                "tier":              d["tier"],
+                                "default_weight_g":  new_weight or None,
+                                "sort_order":        d.get("sort_order", 100),
+                            })
+                            st.success(f"{d['code']} guardado", icon="✅")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(str(e))
+        else:
+            st.caption(f"Sin códigos definidos para {tier_labels[tier]}.")
+
+    st.divider()
+    with st.expander("➕ Añadir nuevo código de tamaño"):
+        na, nb, nc, nd = st.columns([1, 3, 2, 2])
+        with na:
+            new_code = st.text_input("Código", placeholder="ej. CA", key="scd_new_code").upper().strip()
+        with nb:
+            new_label_es = st.text_input("Etiqueta", placeholder="ej. Capricho", key="scd_new_label")
+        with nc:
+            new_tier = st.selectbox(
+                "Tier", options=tiers,
+                format_func=lambda x: tier_labels[x],
+                key="scd_new_tier"
+            )
+        with nd:
+            new_def_weight = st.number_input(
+                "Peso aprox. (g)", min_value=0.0, value=0.0, key="scd_new_weight"
+            )
+        if st.button("Añadir código", type="primary", key="scd_add"):
+            if not new_code:
+                st.error("El código es obligatorio.")
+            elif not new_label_es:
+                st.error("La etiqueta es obligatoria.")
+            else:
+                existing = {d["code"] for d in defs}
+                if new_code in existing:
+                    st.error(f"El código `{new_code}` ya existe.")
+                else:
+                    try:
+                        db.save_size_code_definition({
+                            "code":             new_code,
+                            "label_es":         new_label_es,
+                            "tier":             new_tier,
+                            "default_weight_g": new_def_weight or None,
+                            "sort_order":       100,
+                        })
+                        st.success(f"Código {new_code} añadido", icon="✅")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(str(e))
+
+    st.divider()
+
     # ── Data ──────────────────────────────────────────────────────────────────
     st.markdown("### Data")
     st.caption("Connected to Supabase")

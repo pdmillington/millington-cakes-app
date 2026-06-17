@@ -78,7 +78,10 @@ def check_password() -> bool:
         return True
 
     # Show login form.
-    st.markdown("### 🎂 Millington Cakes")
+    col_l, col_c, col_r = st.columns([1, 2, 1])
+    with col_c:
+        st.image(_LOGO, width="stretch")
+    st.markdown("### Millington Cakes")
     st.markdown("Pricing Manager — please log in")
     st.divider()
 
@@ -101,7 +104,8 @@ def check_password() -> bool:
 
 def sidebar() -> str:
     with st.sidebar:
-        st.markdown("### 🎂 Millington Cakes")
+        st.image(_LOGO, width="stretch")
+        st.markdown("### Millington Cakes")
         st.divider()
 
         st.markdown("**Uso diario**")

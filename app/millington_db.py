@@ -566,7 +566,63 @@ def save_variant(record: dict) -> dict:
 def delete_variant(variant_id: str) -> None:
     sb = get_client()
     sb.table("product_variants").delete().eq("id", variant_id).execute()
-    
+
+
+def get_size_code_definitions() -> list[dict]:
+    """All size code definitions ordered by tier then sort_order."""
+    return (
+        get_client()
+        .table("size_code_definitions")
+        .select("*")
+        .order("sort_order")
+        .execute()
+        .data or []
+    )
+
+
+def save_size_code_definition(record: dict) -> None:
+    sb  = get_client()
+    exists = (
+        sb.table("size_code_definitions")
+        .select("code")
+        .eq("code", record["code"])
+        .execute()
+        .data
+    )
+    if exists:
+        sb.table("size_code_definitions").update(record).eq("code", record["code"]).execute()
+    else:
+        sb.table("size_code_definitions").insert(record).execute()
+
+
+def delete_size_code_definition(code: str) -> None:
+    get_client().table("size_code_definitions").delete().eq("code", code).execute()
+
+
+def get_sku_weight_map() -> dict[str, float]:
+    """
+    Returns {full_sku_code: ref_weight_g} for all variants that have both.
+    Used by screen_kpis._scale_factor to interpolate costs for non-standard
+    size codes (CA, LI, etc.) using the weight stored in the variant record.
+    """
+    sb = get_client()
+    result = (
+        sb.table("product_variants")
+        .select("sku_ws, sku_gw, ref_weight_g")
+        .execute()
+    )
+    out: dict[str, float] = {}
+    for row in (result.data or []):
+        w = row.get("ref_weight_g")
+        if not w:
+            continue
+        for field in ("sku_ws", "sku_gw"):
+            code = row.get(field)
+            if code:
+                out[code] = float(w)
+    return out
+
+
 def get_all_variants_full() -> list[dict]:
     """Fetch all variants with working, approved price fields and size info."""
     sb = get_client()

@@ -614,7 +614,9 @@ def _tab_ingredients():
         recipe_total_g[rid] = total
 
     # ── Recipe individual/bocado weights from recipes table ───────────────────
-    recipe_by_id = {r["id"]: r for r in recipes}
+    recipe_by_id   = {r["id"]: r for r in recipes}
+    # Weight lookup for new size codes (CA, LI, etc.) stored per-variant
+    sku_weight_map = db.get_sku_weight_map()
 
     # ── Scale factor by SKU size code ─────────────────────────────────────────
     def _scale_factor(recipe_id: str, sku: str) -> float:
@@ -630,12 +632,21 @@ def _tab_ingredients():
         boc_g  = float(recipe.get("bocado_weight_g")     or 30)
         # pack_size already handles ×4 for IN and ×25 for BO
         # so scale just needs the per-item fraction
-        return {
+        known = {
             "TI": ind_g / total_g,
             "IN": ind_g / total_g,
             "MI": boc_g / total_g,
             "BO": boc_g / total_g,
-        }.get(size, 1.0)
+        }
+        if size in known:
+            return known[size]
+        # New size codes (CA = capricho, LI = large individual, etc.):
+        # use ref_weight_g stored in the variant record for interpolation.
+        var_weight = sku_weight_map.get(sku)
+        if var_weight and var_weight > 0:
+            return var_weight / total_g
+        # Fallback: treat as individual weight
+        return ind_g / total_g
 
     # Accumulators
     cost_acc:  dict[str, float] = defaultdict(float)

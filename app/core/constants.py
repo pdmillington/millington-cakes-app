@@ -54,6 +54,6 @@ FORMAT_DISPLAY: dict[str, str] = {
 
 FORMAT_TIER_CODES: dict[str, list[str]] = {
     "Standard":   ["LA", "XL", "XX", "DC"],
-    "Individual": ["TI", "IN"],
+    "Individual": ["TI", "IN", "CA", "LI"],
     "Bocado":     ["MI", "BO"],
 }
