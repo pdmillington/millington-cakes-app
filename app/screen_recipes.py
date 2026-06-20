@@ -66,10 +66,11 @@ multiples — no numeric size codes needed.
 
     col_list, col_detail = st.columns([1, 2.5])
 
-    recipes     = db.get_recipes(include_sub_recipes=True)
-    cake_codes  = db.get_cake_codes()
-    ingredients = db.get_ingredients()
-    settings    = db.get_settings()
+    recipes           = db.get_recipes(include_sub_recipes=True, include_deprecated=True)
+    cake_codes        = db.get_cake_codes()
+    ingredients       = db.get_ingredients()
+    component_recipes = db.get_component_recipes()
+    settings          = db.get_settings()
 
     code_options = {f"{cc['code']} — {cc['name']}": cc['id'] for cc in cake_codes}
     code_by_id   = {cc['id']: cc['code'] for cc in cake_codes}
@@ -106,7 +107,8 @@ multiples — no numeric size codes needed.
             st.caption("Assigned")
             for r in assigned:
                 code  = code_by_id.get(r["cake_code_id"], "")
-                label = f"{code}-{r['version']}  {r['name']}"
+                dep   = r.get("deprecated", False)
+                label = f"{'🚫 ' if dep else ''}{code}-{r['version']}  {r['name']}"
                 if st.button(
                     label, key=f"btn_{r['id']}",
                     use_container_width=True,
@@ -117,8 +119,10 @@ multiples — no numeric size codes needed.
         if unassigned:
             st.caption("No cake code yet")
             for r in unassigned:
+                dep   = r.get("deprecated", False)
+                label = f"{'🚫 ' if dep else ''}{r['name']}"
                 if st.button(
-                    r["name"], key=f"btn_{r['id']}",
+                    label, key=f"btn_{r['id']}",
                     use_container_width=True,
                     type="primary" if selected_id == r["id"] else "secondary"
                 ):
@@ -234,9 +238,12 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
                    ws_batch_ind=100, ws_batch_boc=250):
     """All the recipe edit widgets — called from inside a tab."""
     from core.settings import load_settings
-    is_new      = selected_id == "new"
-    ingredients = db.get_ingredients()
-    s           = load_settings()
+    is_new            = selected_id == "new"
+    ingredients       = db.get_ingredients()
+    component_recipes = db.get_component_recipes()
+    s                 = load_settings()
+    comp_options      = {f"🔧 {c['name']}": c['id'] for c in component_recipes}
+    all_line_options  = {**ing_options, **comp_options}
     st.markdown("#### Recipe details")
     c1, c2 = st.columns(2)
     with c1:
@@ -270,11 +277,33 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
         )
 
     if is_sub_recipe:
+        deprecated = False  # component recipes are never deprecated independently
         st.info(
             "🔧 Component recipe — this will not appear in the pricing "
             "analysis, calculator or catalogue. It will only be accessible "
             "from the recipe list under Components."
         )
+        labour_per_kg = st.number_input(
+            "Labour time (hours/kg output)",
+            min_value=0.0, step=0.25,
+            key=f"field_labour_per_kg_{p}",
+            help="Labour hours per kg of component produced at typical batch size. "
+                 "Used to cost component contributions to final recipe labour."
+        )
+    else:
+        labour_per_kg = None  # only used for component recipes
+        deprecated = st.checkbox(
+            "🚫 Deprecated — replaced by new recipe",
+            key=f"field_deprecated_{p}",
+            help="Hides this recipe from active screens. Variants must be migrated "
+                 "first. Deprecated recipes remain visible in the pricing analysis "
+                 "tab for cost comparison."
+        )
+        if deprecated:
+            st.warning(
+                "This recipe is deprecated. Make sure variants have been migrated "
+                "to the new recipe before deprecating."
+            )
 
     st.markdown("**Reference dimensions**")
     if size_type == "diameter":
@@ -438,22 +467,38 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
 
     lines_key = f"lines_{selected_id}"
     if lines_key not in st.session_state:
-        st.session_state[lines_key] = [
-            {
-                "ingredient_id":   l.get("ingredient_id"),
-                "ingredient_name": l.get("ingredient_name", ""),
-                "amount":          float(l.get("amount") or 0),
-                "cost_per_unit":   l.get("ingredient_cost_per_unit"),
-            }
-            for l in lines
-        ]
+        init_lines = []
+        for l in lines:
+            if l.get("is_component_line"):
+                init_lines.append({
+                    "ingredient_id":       None,
+                    "component_recipe_id": l.get("component_recipe_id"),
+                    "ingredient_name":     f"🔧 {l.get('ingredient_name', '')}",
+                    "amount":              float(l.get("amount") or 0),
+                    "cost_per_unit":       None,
+                    "is_component_line":   True,
+                })
+            else:
+                init_lines.append({
+                    "ingredient_id":       l.get("ingredient_id"),
+                    "component_recipe_id": None,
+                    "ingredient_name":     l.get("ingredient_name", ""),
+                    "amount":              float(l.get("amount") or 0),
+                    "cost_per_unit":       l.get("ingredient_cost_per_unit"),
+                    "is_component_line":   False,
+                })
+        st.session_state[lines_key] = init_lines
         st.session_state[lines_key].append(_empty_line())
 
     working_lines = st.session_state[lines_key]
 
+    # For sub-recipes, only raw ingredients; for final recipes, both
+    picker_options = ing_options if is_sub_recipe else all_line_options
+    picker_labels  = ["— select ingredient —"] + list(picker_options.keys())
+
     h1, h2, h3, h4 = st.columns([3, 1.5, 1.5, 0.5])
     h1.markdown("**Ingredient**")
-    h2.markdown("**Amount**")
+    h2.markdown("**Amount (g)**")
     h3.markdown("**Line cost**")
     h4.markdown("")
 
@@ -464,12 +509,11 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
         c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 0.5])
 
         with c1:
-            ing_labels  = ["— select ingredient —"] + list(ing_options.keys())
             current_ing = line.get("ingredient_name", "")
-            ing_idx     = ing_labels.index(current_ing) \
-                if current_ing in ing_labels else 0
+            ing_idx     = picker_labels.index(current_ing) \
+                if current_ing in picker_labels else 0
             selected_ing = st.selectbox(
-                "Ingredient", ing_labels, index=ing_idx,
+                "Ingredient", picker_labels, index=ing_idx,
                 key=f"line_ing_{selected_id}_{idx}",
                 label_visibility="collapsed"
             )
@@ -484,33 +528,53 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
             )
 
         with c3:
-            ing_id        = ing_options.get(selected_ing)
+            is_comp      = selected_ing.startswith("🔧 ")
             cost_per_unit = None
-            if ing_id:
-                ing_data      = next(
-                    (i for i in ingredients if i["id"] == ing_id), {}
-                )
-                cost_per_unit = ing_data.get("cost_per_unit")
-            if cost_per_unit and amount:
-                line_cost   = cost_per_unit * amount
-                total_cost += line_cost
-                st.markdown(f"`€ {line_cost:.4f}`")
+            line_cost_val = None
+
+            if is_comp:
+                comp_id = comp_options.get(selected_ing)
+                if comp_id and amount:
+                    st.markdown("*(component)*")
             else:
-                st.markdown("—")
+                ing_id = ing_options.get(selected_ing)
+                if ing_id:
+                    ing_data      = next((i for i in ingredients if i["id"] == ing_id), {})
+                    cost_per_unit = ing_data.get("cost_per_unit")
+                if cost_per_unit and amount:
+                    line_cost_val = cost_per_unit * amount
+                    total_cost   += line_cost_val
+                    st.markdown(f"`€ {line_cost_val:.4f}`")
+                else:
+                    st.markdown("—")
 
         with c4:
             if selected_ing != "— select ingredient —":
                 if st.button("✕", key=f"line_del_{selected_id}_{idx}",
-                             help="Remove this ingredient"):
+                             help="Remove this line"):
                     remove_idx = idx
 
-        st.session_state[lines_key][idx] = {
-            "ingredient_id":   ing_options.get(selected_ing),
-            "ingredient_name": selected_ing
-                if selected_ing != "— select ingredient —" else "",
-            "amount":          amount,
-            "cost_per_unit":   cost_per_unit,
-        }
+        # Persist line state
+        if is_comp:
+            comp_id = comp_options.get(selected_ing)
+            st.session_state[lines_key][idx] = {
+                "ingredient_id":       None,
+                "component_recipe_id": comp_id,
+                "ingredient_name":     selected_ing,
+                "amount":              amount,
+                "cost_per_unit":       None,
+                "is_component_line":   True,
+            }
+        else:
+            st.session_state[lines_key][idx] = {
+                "ingredient_id":       ing_options.get(selected_ing),
+                "component_recipe_id": None,
+                "ingredient_name":     selected_ing
+                    if selected_ing != "— select ingredient —" else "",
+                "amount":              amount,
+                "cost_per_unit":       cost_per_unit,
+                "is_component_line":   False,
+            }
 
     if remove_idx is not None:
         del st.session_state[lines_key][remove_idx]
@@ -624,7 +688,7 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
 
     # ── Save / Cancel ─────────────────────────────────────────────────────────
     st.divider()
-    col_save, col_cancel = st.columns([1, 3])
+    col_save, col_cancel, col_dup = st.columns([1, 1.5, 1.5])
 
     with col_save:
         if st.button("💾 Save recipe", type="primary",
@@ -651,6 +715,8 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
                     "ref_prep_hours":         ref_prep_hours or None,
                     "ref_oven_hours":         ref_oven_hours or None,
                     "is_sub_recipe":          is_sub_recipe,
+                    "labour_per_kg":          labour_per_kg or None,
+                    "deprecated":             deprecated,
                     "catalogue_section":      catalogue_section if not is_sub_recipe else "tartas",
                     "has_individual":         has_individual if not is_sub_recipe else False,
                     "has_bocado":             has_bocado if not is_sub_recipe else False,
@@ -661,12 +727,20 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
                     "bocado_batch_prep_hours": bocado_prep_hours or None if not is_sub_recipe else None,
                     "bocado_batch_oven_hours": bocado_oven_hours or None if not is_sub_recipe else None,
                 })
-                clean_lines = [
-                    {"ingredient_id": l["ingredient_id"],
-                     "amount": l["amount"]}
-                    for l in st.session_state[lines_key]
-                    if l.get("ingredient_id") and l.get("amount", 0) > 0
-                ]
+                clean_lines = []
+                for l in st.session_state[lines_key]:
+                    if l.get("is_component_line") and l.get("component_recipe_id") and l.get("amount", 0) > 0:
+                        clean_lines.append({
+                            "component_recipe_id": l["component_recipe_id"],
+                            "ingredient_id":       None,
+                            "amount":              l["amount"],
+                        })
+                    elif l.get("ingredient_id") and l.get("amount", 0) > 0:
+                        clean_lines.append({
+                            "ingredient_id":       l["ingredient_id"],
+                            "component_recipe_id": None,
+                            "amount":              l["amount"],
+                        })
                 db.replace_recipe_lines(saved["id"], clean_lines)
 
                 # Save PCC steps
@@ -691,6 +765,19 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
         if not is_new and st.button("Cancel changes",
                                     use_container_width=True):
             _load_recipe(selected_id, code_options)
+
+    with col_dup:
+        if not is_new and st.button("📋 Duplicate recipe",
+                                    use_container_width=True,
+                                    help="Creates a copy with no cake code assigned. "
+                                         "Useful for creating a legacy baseline before "
+                                         "refactoring to components."):
+            try:
+                copy = db.duplicate_recipe(selected_id)
+                st.toast(f"✓ Duplicated as '{copy['name']}'")
+                _load_recipe(copy["id"], code_options)
+            except Exception as e:
+                st.error(f"Error duplicating: {e}")
 
 # =============================================================================
 # Helpers
@@ -739,7 +826,9 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_bocado_prep_{p}"]        = 0.0
         st.session_state[f"field_bocado_oven_{p}"]        = 0.0
         st.session_state[f"field_is_sub_recipe_{p}"]      = False
-        st.session_state[f"field_catalogue_section_{p}"]  = "tartas"
+        st.session_state[f"field_labour_per_kg_{p}"]     = 0.0
+        st.session_state[f"field_deprecated_{p}"]        = False
+        st.session_state[f"field_catalogue_section_{p}"] = "tartas"
     else:
         recipe = db.get_recipe(recipe_id)
 
@@ -772,6 +861,8 @@ def _load_recipe(recipe_id: str, code_options: dict):
         st.session_state[f"field_bocado_prep_{p}"]       = float(recipe.get("bocado_batch_prep_hours") or 0.0)
         st.session_state[f"field_bocado_oven_{p}"]       = float(recipe.get("bocado_batch_oven_hours") or 0.0)
         st.session_state[f"field_is_sub_recipe_{p}"]     = bool(recipe.get("is_sub_recipe"))
+        st.session_state[f"field_labour_per_kg_{p}"]    = float(recipe.get("labour_per_kg") or 0.0)
+        st.session_state[f"field_deprecated_{p}"]       = bool(recipe.get("deprecated"))
         st.session_state[f"field_catalogue_section_{p}"] = recipe.get("catalogue_section") or "tartas"
 
     st.rerun()
@@ -779,10 +870,12 @@ def _load_recipe(recipe_id: str, code_options: dict):
 
 def _empty_line() -> dict:
     return {
-        "ingredient_id":   None,
-        "ingredient_name": "",
-        "amount":          0.0,
-        "cost_per_unit":   None,
+        "ingredient_id":       None,
+        "component_recipe_id": None,
+        "ingredient_name":     "",
+        "amount":              0.0,
+        "cost_per_unit":       None,
+        "is_component_line":   False,
     }
 
 

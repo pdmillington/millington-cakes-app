@@ -50,9 +50,10 @@ def screen_production():
         "para etiquetar cada producto antes de la entrega."
     )
 
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📦 Recepción de materias primas",
-        "📋 Registro de producción",
+        "🔧 Elaboración de componentes",
+        "📋 Registro de producción final",
         "🏷️ Imprimir etiquetas",
     ])
 
@@ -60,14 +61,223 @@ def screen_production():
         _tab_reception()
 
     with tab2:
-        _tab_log()
+        _tab_component_log()
 
     with tab3:
+        _tab_log()
+
+    with tab4:
         _tab_labels()
 
 
 # =============================================================================
-# Tab 1 — Production log
+# Tab 2 — Component production log
+# =============================================================================
+
+def _tab_component_log():
+    st.markdown("### Registro de elaboración de componentes")
+    st.caption(
+        "Registra la elaboración de componentes (cremas, bases, salsas…). "
+        "El número de lote generado sirve para vincularlo al registro de producción final."
+    )
+
+    # ── Component recipe selector ─────────────────────────────────────────────
+    components = db.get_component_recipes()
+    if not components:
+        st.info("No hay recetas de componentes definidas. Crea una receta marcada como '🔧 Component recipe'.")
+        return
+
+    comp_by_name = {c["name"]: c for c in components}
+    comp_name    = st.selectbox(
+        "Componente", ["— selecciona —"] + sorted(comp_by_name.keys()),
+        key="comp_log_recipe"
+    )
+    if comp_name == "— selecciona —":
+        st.info("Selecciona un componente para continuar.")
+        return
+
+    component = comp_by_name[comp_name]
+
+    col_d, col_w = st.columns(2)
+    with col_d:
+        prod_date = st.date_input("Fecha", value=date.today(), key="comp_log_date")
+    with col_w:
+        amount_kg = st.number_input(
+            "Cantidad elaborada (kg)", min_value=0.0, step=0.1,
+            key="comp_log_amount_kg",
+            help="Peso real de la elaboración terminada, no de las materias primas."
+        )
+    amount_g = amount_kg * 1000
+
+    if component.get("labour_per_kg"):
+        st.caption(
+            f"Tiempo de mano de obra estimado: "
+            f"**{component['labour_per_kg'] * amount_kg:.2f} h** "
+            f"({component['labour_per_kg']:.2f} h/kg × {amount_kg:.2f} kg)"
+        )
+
+    # ── PCC steps ─────────────────────────────────────────────────────────────
+    st.markdown("#### Control de Puntos Críticos (PCC)")
+    comp_pcc_key = f"comp_pcc_{component['id']}"
+    if comp_pcc_key not in st.session_state:
+        try:
+            template_steps = db.get_pcc_steps(component["id"])
+        except Exception:
+            template_steps = []
+        st.session_state[comp_pcc_key] = [
+            {
+                "step_name":             s["step_name"],
+                "target_temp_c":         s.get("target_temp_c") or 0,
+                "target_time_min":       s.get("target_time_min") or 0,
+                "critical_limit_temp_c": s.get("critical_limit_temp_c") or 70.0,
+                "temp_achieved_c":       s.get("target_temp_c") or 0,
+                "time_achieved_min":     s.get("target_time_min") or 0,
+            }
+            for s in template_steps
+        ]
+
+    comp_pcc_steps = st.session_state[comp_pcc_key]
+    if not comp_pcc_steps:
+        st.info("ℹ️ Sin pasos PCC definidos para este componente.")
+        pcc_log = []
+    else:
+        ph1, ph2, ph3, ph4, ph5 = st.columns([2.5, 1.2, 1, 1, 1.2])
+        ph1.markdown("**Elaboración**")
+        ph2.markdown("**Temp. alcanzada (°C)**")
+        ph3.markdown("**Tiempo (min)**")
+        ph4.markdown("**Límite crítico**")
+        ph5.markdown("**¿OK?**")
+
+        for idx, step in enumerate(comp_pcc_steps):
+            pc1, pc2, pc3, pc4, pc5 = st.columns([2.5, 1.2, 1, 1, 1.2])
+            pc1.markdown(f"**{step['step_name']}**")
+            with pc2:
+                temp = st.number_input(
+                    "temp", min_value=0, max_value=300,
+                    value=int(step.get("temp_achieved_c") or 0),
+                    key=f"comp_pcc_temp_{component['id']}_{idx}",
+                    label_visibility="collapsed"
+                )
+            with pc3:
+                mins = st.number_input(
+                    "mins", min_value=0, max_value=300,
+                    value=int(step.get("time_achieved_min") or 0),
+                    key=f"comp_pcc_mins_{component['id']}_{idx}",
+                    label_visibility="collapsed"
+                )
+            limit = step.get("critical_limit_temp_c") or 70.0
+            pc4.markdown(f"{limit:.0f}°C")
+            ok = temp >= limit
+            pc5.markdown("✅" if ok else "⚠️ Revisar")
+            comp_pcc_steps[idx]["temp_achieved_c"]   = temp
+            comp_pcc_steps[idx]["time_achieved_min"] = mins
+
+        pcc_log = [
+            {
+                "step_name":             s["step_name"],
+                "temp_achieved_c":       s["temp_achieved_c"],
+                "time_achieved_min":     s["time_achieved_min"],
+                "critical_limit_temp_c": s.get("critical_limit_temp_c") or 70.0,
+                "ok":                    s["temp_achieved_c"] >= (s.get("critical_limit_temp_c") or 70.0),
+            }
+            for s in comp_pcc_steps
+        ]
+
+    # ── Ingredient refs ───────────────────────────────────────────────────────
+    st.markdown("#### Materias primas utilizadas")
+    st.caption("Ingrediente y referencia del albarán del proveedor.")
+
+    n_comp_refs = st.session_state.get("comp_log_n_refs", 3)
+    comp_ing_refs = []
+    for i in range(n_comp_refs):
+        ci1, ci2, ci3 = st.columns([2, 2, 0.5])
+        with ci1:
+            ing_name = st.text_input(
+                "Ingrediente", key=f"comp_ing_{i}",
+                placeholder="e.g. Mantequilla",
+                label_visibility="visible" if i == 0 else "collapsed"
+            )
+        with ci2:
+            alb_ref = st.text_input(
+                "Ref. albarán", key=f"comp_alb_{i}",
+                placeholder="e.g. ALB-2025-0451",
+                label_visibility="visible" if i == 0 else "collapsed"
+            )
+        with ci3:
+            if i == n_comp_refs - 1:
+                st.write("")
+                if i == 0:
+                    st.write("")
+                if st.button("＋", key=f"comp_add_{i}"):
+                    st.session_state["comp_log_n_refs"] = n_comp_refs + 1
+                    st.rerun()
+        if ing_name.strip():
+            comp_ing_refs.append({
+                "ingredient_name": ing_name.strip(),
+                "albaran_ref":     alb_ref.strip() or None,
+            })
+
+    notes = st.text_area(
+        "Notas / incidencias", key="comp_log_notes", height=60,
+        label_visibility="collapsed",
+        placeholder="Ninguna incidencia — o describe cualquier desviación."
+    )
+
+    st.divider()
+
+    if st.button("💾 Guardar elaboración de componente", type="primary",
+                 disabled=(amount_g <= 0)):
+        try:
+            run = db.save_component_production_run(
+                recipe_id         = component["id"],
+                recipe_name       = component["name"],
+                prod_date         = prod_date,
+                amount_produced_g = amount_g,
+                notes             = notes.strip() or None,
+                ing_refs          = comp_ing_refs,
+                pcc_log           = pcc_log,
+            )
+            st.session_state["last_comp_run"] = run
+            st.session_state["comp_log_n_refs"] = 3
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al guardar: {e}")
+
+    last = st.session_state.get("last_comp_run")
+    if last:
+        lote = last["lote_number"]
+        st.success("✅ Elaboración de componente guardada")
+        st.markdown(
+            f"<div style='background:#F2EEE8;border-radius:8px;padding:16px 20px;"
+            f"margin:8px 0;'>"
+            f"<span style='font-size:13px;color:#6b7280;'>Número de lote</span><br>"
+            f"<span style='font-size:26px;font-weight:700;letter-spacing:2px;"
+            f"color:#1a1a1a;'>{lote}</span><br>"
+            f"<span style='font-size:12px;color:#9ca3af;'>Vincula este lote al registro "
+            f"de producción final</span></div>",
+            unsafe_allow_html=True
+        )
+        if st.button("Nueva elaboración", key="comp_clear"):
+            st.session_state.pop("last_comp_run", None)
+            st.rerun()
+
+    # ── Recent component runs ─────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### Elaboraciones recientes")
+    recent = db.get_component_production_runs(limit=20)
+    if not recent:
+        st.caption("Sin elaboraciones registradas.")
+    else:
+        for run in recent:
+            kg = (run.get("amount_produced_g") or 0) / 1000
+            st.markdown(
+                f"`{run['lote_number']}` — **{run['recipe_name']}** — "
+                f"{run['production_date']} — {kg:.2f} kg"
+            )
+
+
+# =============================================================================
+# Tab 3 — Final recipe production log
 # =============================================================================
 
 def _tab_log():
@@ -325,6 +535,35 @@ def _tab_log():
         label_visibility="collapsed"
     )
 
+    # ── Component runs used ────────────────────────────────────────────────────
+    recipe_lines = []
+    try:
+        recipe_lines = db.get_recipe_lines(recipe["id"])
+    except Exception:
+        pass
+
+    has_components = any(l.get("is_component_line") for l in recipe_lines)
+    if has_components:
+        st.markdown("#### Componentes utilizados")
+        st.caption(
+            "Selecciona las elaboraciones de componentes usadas en esta producción. "
+            "Puedes vincular varias si usaste lotes distintos."
+        )
+        recent_comp_runs = db.get_component_production_runs(limit=50)
+        comp_run_labels  = {
+            f"{r['lote_number']} — {r['recipe_name']} ({r['production_date']})": r["id"]
+            for r in recent_comp_runs
+        }
+        selected_comp_labels = st.multiselect(
+            "Lotes de componentes",
+            options=list(comp_run_labels.keys()),
+            key="prod_comp_runs",
+            label_visibility="collapsed"
+        )
+        selected_comp_run_ids = [comp_run_labels[lbl] for lbl in selected_comp_labels]
+    else:
+        selected_comp_run_ids = []
+
     st.divider()
 
     # ── Save ──────────────────────────────────────────────────────────────────
@@ -342,6 +581,8 @@ def _tab_log():
                 ing_refs     = ing_refs,
                 pcc_log      = pcc_log,
             )
+            if selected_comp_run_ids:
+                db.link_component_runs(run["id"], selected_comp_run_ids)
             st.session_state["last_saved_run"] = run
             st.session_state["prod_n_refs"]    = 3   # reset rows
             st.rerun()

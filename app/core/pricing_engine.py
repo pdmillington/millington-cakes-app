@@ -55,8 +55,9 @@ class LabourCostResult:
 # =============================================================================
 
 def calc_ingredient_cost(
-    lines:   list[dict],
-    ing_map: dict,
+    lines:         list[dict],
+    ing_map:       dict,
+    component_map: dict | None = None,
 ) -> IngredientCostResult:
     """
     Calculate raw ingredient cost at reference scale (scale = 1.0).
@@ -66,8 +67,11 @@ def calc_ingredient_cost(
     lines:
         Recipe ingredient lines as returned by db.get_recipe_lines().
     ing_map:
-        Dict mapping ingredient name → ingredient record, e.g.:
-        {i["name"]: i for i in db.get_ingredients()}
+        Dict mapping ingredient name → ingredient record.
+    component_map:
+        Optional dict mapping component_recipe_id → cost_per_g (float).
+        Build via db.calc_component_cost_per_g() for each component.
+        If None or a component is missing, it appears in missing_prices.
 
     Returns
     -------
@@ -75,13 +79,36 @@ def calc_ingredient_cost(
     The caller is responsible for multiplying total by the appropriate
     size/format scale factor before adding to the unit cost.
     """
+    if component_map is None:
+        component_map = {}
+
     total:          float      = 0.0
     breakdown:      list[dict] = []
     missing_prices: list[str]  = []
 
     for line in lines:
-        ing_name  = line.get("ingredient_name", "")
-        amount    = float(line.get("amount") or 0)
+        ing_name = line.get("ingredient_name", "")
+        amount   = float(line.get("amount") or 0)
+
+        if line.get("is_component_line"):
+            # Component recipe line — cost comes from pre-computed component_map
+            comp_id    = line.get("component_recipe_id")
+            cost_per_g = component_map.get(comp_id) if comp_id else None
+            if cost_per_g is not None:
+                line_cost = cost_per_g * amount
+                total    += line_cost
+                breakdown.append({
+                    "name":         ing_name,
+                    "amount":       amount,
+                    "unit":         "g",
+                    "cpu":          cost_per_g,
+                    "line_cost":    line_cost,
+                    "is_component": True,
+                })
+            else:
+                missing_prices.append(ing_name)
+            continue
+
         ing       = ing_map.get(ing_name, {})
         cpu       = ing.get("cost_per_unit")
         pack_unit = (ing.get("pack_unit") or "g").lower()

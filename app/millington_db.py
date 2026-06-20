@@ -70,10 +70,14 @@ def get_current_prices(cake_code: str) -> list[dict]:
     """
     sb = get_client()
     try:
+        # Use range filter instead of ilike to avoid Cloudflare edge issues
+        # with % wildcards.  "LP-" … "LP." captures all LP-* SKU codes because
+        # "." (ASCII 46) is the character immediately above "-" (ASCII 45).
         result = (
             sb.table("current_prices")
             .select("*")
-            .ilike("sku_code", f"{cake_code}-%")
+            .gte("sku_code", f"{cake_code}-")
+            .lt("sku_code",  f"{cake_code}.")
             .order("sku_code")
             .execute()
         )
@@ -429,7 +433,10 @@ def _compute_consumable_cost(record: dict) -> dict:
 # Recipes
 # -----------------------------------------------------------------------------
 
-def get_recipes(include_sub_recipes: bool = False) -> list[dict]:
+def get_recipes(
+    include_sub_recipes:  bool = False,
+    include_deprecated:   bool = False,
+) -> list[dict]:
     """Return recipes joined with cake_codes so screens can read the
     cake code string without a second DB call."""
     sb = get_client()
@@ -438,7 +445,23 @@ def get_recipes(include_sub_recipes: bool = False) -> list[dict]:
             .order("name"))
     if not include_sub_recipes:
         q = q.eq("is_sub_recipe", False)
+    if not include_deprecated:
+        q = q.eq("deprecated", False)
     return q.execute().data or []
+
+
+def get_component_recipes() -> list[dict]:
+    """Return all component (sub) recipes — for ingredient pickers and production log."""
+    sb = get_client()
+    return (
+        sb.table("recipes")
+          .select("id, name, labour_per_kg, ref_weight_kg")
+          .eq("is_sub_recipe", True)
+          .eq("deprecated", False)
+          .order("name")
+          .execute()
+          .data or []
+    )
 
 
 def get_recipe(recipe_id: str) -> dict:
@@ -464,6 +487,59 @@ def delete_recipe(recipe_id: str) -> None:
     sb.table("recipes").delete().eq("id", recipe_id).execute()
 
 
+def duplicate_recipe(recipe_id: str, new_name: str | None = None) -> dict:
+    """
+    Copy a recipe (fields + ingredient lines + PCC steps) to a new record.
+    The copy has no cake_code_id, deprecated=False, and a name suffixed
+    with ' [copia]' unless new_name is provided.
+    Variants are NOT copied — they remain on the original.
+    Returns the new recipe dict.
+    """
+    sb     = get_client()
+    source = get_recipe(recipe_id)
+    if not source:
+        raise ValueError(f"Recipe {recipe_id} not found")
+
+    EXCLUDE = {"id", "created_at", "updated_at"}
+    new_rec = {k: v for k, v in source.items() if k not in EXCLUDE}
+    new_rec["name"]          = new_name or f"{source['name']} [copia]"
+    new_rec["cake_code_id"]  = None   # unassigned — keeps it out of active screens
+    new_rec["deprecated"]    = False
+
+    saved = sb.table("recipes").insert(new_rec).execute().data[0]
+    new_id = saved["id"]
+
+    # Copy ingredient lines
+    lines = (
+        sb.table("recipe_ingredient_lines")
+          .select("ingredient_id, component_recipe_id, amount, sort_order")
+          .eq("recipe_id", recipe_id)
+          .order("sort_order")
+          .execute()
+          .data or []
+    )
+    if lines:
+        for line in lines:
+            line["recipe_id"] = new_id
+        sb.table("recipe_ingredient_lines").insert(lines).execute()
+
+    # Copy PCC steps
+    steps = (
+        sb.table("recipe_pcc_steps")
+          .select("step_name, target_temp_c, target_time_min, critical_limit_temp_c, sort_order")
+          .eq("recipe_id", recipe_id)
+          .order("sort_order")
+          .execute()
+          .data or []
+    )
+    if steps:
+        for step in steps:
+            step["recipe_id"] = new_id
+        sb.table("recipe_pcc_steps").insert(steps).execute()
+
+    return saved
+
+
 # -----------------------------------------------------------------------------
 # Recipe ingredient lines
 # -----------------------------------------------------------------------------
@@ -472,6 +548,7 @@ def get_recipe_lines(recipe_id: str) -> list[dict]:
     """
     Return ingredient lines for a recipe, joined with ingredient names
     and costs so the UI does not need to do extra lookups.
+    Handles both raw ingredient lines and component recipe lines.
     """
     sb = get_client()
     result = (
@@ -481,13 +558,40 @@ def get_recipe_lines(recipe_id: str) -> list[dict]:
         .order("sort_order")
         .execute()
     )
-    # Flatten the joined ingredient data for easier use in the UI
+    # Batch-fetch component recipe details for component lines
+    comp_ids = [
+        row["component_recipe_id"]
+        for row in (result.data or [])
+        if row.get("component_recipe_id")
+    ]
+    comp_map: dict = {}
+    if comp_ids:
+        comp_rows = (
+            sb.table("recipes")
+              .select("id, name, labour_per_kg, ref_weight_kg")
+              .in_("id", comp_ids)
+              .execute()
+              .data or []
+        )
+        comp_map = {r["id"]: r for r in comp_rows}
+
     lines = []
     for row in result.data or []:
-        ing = row.pop("ingredients", None) or {}
-        row["ingredient_name"]     = ing.get("name", "")
-        row["ingredient_cost_per_unit"] = ing.get("cost_per_unit")
-        row["ingredient_unit"]     = ing.get("pack_unit", "g")
+        ing     = row.pop("ingredients", None) or {}
+        comp_id = row.get("component_recipe_id")
+        if comp_id:
+            comp = comp_map.get(comp_id, {})
+            row["ingredient_name"]          = comp.get("name", "")
+            row["ingredient_cost_per_unit"] = None
+            row["ingredient_unit"]          = "g"
+            row["is_component_line"]        = True
+            row["component_labour_per_kg"]  = comp.get("labour_per_kg")
+            row["component_ref_weight_kg"]  = comp.get("ref_weight_kg")
+        else:
+            row["ingredient_name"]          = ing.get("name", "")
+            row["ingredient_cost_per_unit"] = ing.get("cost_per_unit")
+            row["ingredient_unit"]          = ing.get("pack_unit", "g")
+            row["is_component_line"]        = False
         lines.append(row)
     return lines
 
@@ -510,15 +614,27 @@ def delete_recipe_line(line_id: str) -> None:
 def replace_recipe_lines(recipe_id: str, lines: list[dict]) -> None:
     """
     Replace all ingredient lines for a recipe in a single operation.
-    Used when saving an edited recipe to avoid partial updates.
+    Handles both raw ingredient lines (ingredient_id) and component
+    recipe lines (component_recipe_id).
     """
     sb = get_client()
     sb.table("recipe_ingredient_lines").delete().eq("recipe_id", recipe_id).execute()
     if lines:
+        rows = []
         for i, line in enumerate(lines):
-            line["recipe_id"]  = recipe_id
-            line["sort_order"] = i
-        sb.table("recipe_ingredient_lines").insert(lines).execute()
+            row: dict = {
+                "recipe_id":  recipe_id,
+                "sort_order": i,
+                "amount":     line.get("amount"),
+            }
+            if line.get("component_recipe_id"):
+                row["component_recipe_id"] = line["component_recipe_id"]
+                row["ingredient_id"]       = None
+            else:
+                row["ingredient_id"]       = line.get("ingredient_id")
+                row["component_recipe_id"] = None
+            rows.append(row)
+        sb.table("recipe_ingredient_lines").insert(rows).execute()
         
 def get_all_variants() -> list[dict]:
     """Fetch all product variants in one query — used for sidebar counts."""
@@ -733,22 +849,15 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
     """
     Fetch ingredient lines for a recipe with full ingredient data:
     allergen fields, category allergen fields, is_sub_recipe, label_name_es.
+    Also handles component recipe lines (component_recipe_id set, ingredient_id null).
     """
     sb = get_client()
-
-    # Build allergen field selectors for both ingredient and category
-    ing_allergen_fields = ", ".join(
-        f"ingredients.{f}" for f in ALLERGEN_FIELDS
-    )
-    cat_allergen_fields = ", ".join(
-        f"ingredient_categories.{f}" for f in ALLERGEN_FIELDS
-    )
 
     result = (
         sb.table("recipe_ingredient_lines")
         .select(
-            "amount, sort_order, "
-            "ingredients!inner("
+            "amount, sort_order, component_recipe_id, "
+            "ingredients("
             "  id, name, label_name_es, label_name_es_2, label_name_es_2_pct, "
             "  label_name_es_3, label_name_es_3_pct, "
             "  is_sub_recipe, allergen_override, allergen_notes, "
@@ -762,34 +871,76 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
         .execute()
     )
 
+    # Batch-fetch component recipe names
+    comp_ids = [
+        row["component_recipe_id"]
+        for row in (result.data or [])
+        if row.get("component_recipe_id")
+    ]
+    comp_name_map: dict = {}
+    if comp_ids:
+        comp_rows = (
+            sb.table("recipes")
+              .select("id, name")
+              .in_("id", comp_ids)
+              .execute()
+              .data or []
+        )
+        comp_name_map = {r["id"]: r["name"] for r in comp_rows}
+
     lines = []
     for row in result.data or []:
-        ing = row.pop("ingredients", None) or {}
-        cat = ing.pop("ingredient_categories", None) or {}
+        ing     = row.pop("ingredients", None) or {}
+        cat     = ing.pop("ingredient_categories", None) or {}
+        comp_id = row.get("component_recipe_id")
 
-        ing_label = (
-            ing.get("label_name_es")
-            or cat.get("label_name_es")
-            or ing.get("name", "")
-        )
-
-        entry = {
-            "amount":               float(row.get("amount") or 0),
-            "sort_order":           row.get("sort_order", 0),
-            "ingredient_id":        ing.get("id"),
-            "ingredient_name":      ing.get("name", ""),
-            "label_name_es":        ing_label,
-            "label_name_es_2":      ing.get("label_name_es_2"),
-            "label_name_es_2_pct":  ing.get("label_name_es_2_pct"),
-            "label_name_es_3":      ing.get("label_name_es_3"),
-            "label_name_es_3_pct":  ing.get("label_name_es_3_pct"),
-            "is_sub_recipe":        bool(ing.get("is_sub_recipe")),
-            "allergen_override":    bool(ing.get("allergen_override")),
-            "allergen_notes":       ing.get("allergen_notes"),
-            "category_label":       cat.get("label_name_es", ""),
-            "category":             cat,
-            "ingredient":           ing,
-        }
+        if comp_id:
+            # Component recipe line — allergens resolved by direct recursion
+            comp_name = comp_name_map.get(comp_id, "")
+            entry = {
+                "amount":               float(row.get("amount") or 0),
+                "sort_order":           row.get("sort_order", 0),
+                "ingredient_id":        None,
+                "ingredient_name":      comp_name,
+                "label_name_es":        comp_name,
+                "label_name_es_2":      None,
+                "label_name_es_2_pct":  None,
+                "label_name_es_3":      None,
+                "label_name_es_3_pct":  None,
+                "is_sub_recipe":        True,
+                "is_component_line":    True,
+                "component_recipe_id":  comp_id,
+                "allergen_override":    False,
+                "allergen_notes":       None,
+                "category_label":       "",
+                "category":             {},
+                "ingredient":           {},
+            }
+        else:
+            ing_label = (
+                ing.get("label_name_es")
+                or cat.get("label_name_es")
+                or ing.get("name", "")
+            )
+            entry = {
+                "amount":               float(row.get("amount") or 0),
+                "sort_order":           row.get("sort_order", 0),
+                "ingredient_id":        ing.get("id"),
+                "ingredient_name":      ing.get("name", ""),
+                "label_name_es":        ing_label,
+                "label_name_es_2":      ing.get("label_name_es_2"),
+                "label_name_es_2_pct":  ing.get("label_name_es_2_pct"),
+                "label_name_es_3":      ing.get("label_name_es_3"),
+                "label_name_es_3_pct":  ing.get("label_name_es_3_pct"),
+                "is_sub_recipe":        bool(ing.get("is_sub_recipe")),
+                "is_component_line":    False,
+                "component_recipe_id":  None,
+                "allergen_override":    bool(ing.get("allergen_override")),
+                "allergen_notes":       ing.get("allergen_notes"),
+                "category_label":       cat.get("label_name_es", ""),
+                "category":             cat,
+                "ingredient":           ing,
+            }
         lines.append(entry)
 
     return lines
@@ -917,8 +1068,9 @@ def get_allergen_declaration(
         amount = line["amount"]
 
         if line["is_sub_recipe"]:
-            # Find the matching recipe and recurse
-            sub_recipe = _find_recipe_by_ingredient_name(name)
+            # Resolve component recipe: use direct FK if available, else fuzzy match
+            comp_id    = line.get("component_recipe_id")
+            sub_recipe = get_recipe(comp_id) if comp_id else _find_recipe_by_ingredient_name(name)
             if sub_recipe:
                 sub_result = get_allergen_declaration(
                     sub_recipe["id"],
@@ -1927,32 +2079,42 @@ def _next_lote_number(sb, prod_date: "date") -> str:
     """
     Generate the next sequential lote number for a given date.
     Format: MC-YYMMDD-XXX  (XXX = 001, 002, …)
+    Uses a date-range filter instead of LIKE to avoid Cloudflare edge issues
+    with % wildcards in query parameters.
     """
-    date_str = prod_date.strftime("%y%m%d")
-    prefix   = f"MC-{date_str}-"
-    existing = (
+    import datetime as _dt
+    date_str  = prod_date.strftime("%y%m%d")
+    prefix    = f"MC-{date_str}-"
+    day_start = _dt.datetime.combine(prod_date, _dt.time.min).isoformat()
+    day_end   = _dt.datetime.combine(prod_date, _dt.time.max).isoformat()
+    existing  = (
         sb.table("production_runs")
           .select("lote_number")
-          .like("lote_number", f"{prefix}%")
+          .gte("production_date", day_start)
+          .lte("production_date", day_end)
           .execute()
           .data or []
     )
-    seq = len(existing) + 1
-    return f"{prefix}{seq:03d}"
+    # Count only rows that actually have the expected prefix (guard against
+    # multiple runs on the same date from different sources)
+    count = sum(1 for r in existing if (r.get("lote_number") or "").startswith(prefix))
+    return f"{prefix}{count + 1:03d}"
  
  
 def save_production_run(
-    recipe_id:     str,
-    recipe_name:   str,
-    fmt:           str,
-    prod_date:     "date",
-    quantity:      float,
-    quantity_unit: str = "units",
-    oven_temp_c:   float | None = None,
-    bake_time_min: int | None = None,
-    notes:         str | None = None,
-    ing_refs:      list[dict] | None = None,
-    pcc_log:       list[dict] | None = None,
+    recipe_id:         str,
+    recipe_name:       str,
+    fmt:               str,
+    prod_date:         "date",
+    quantity:          float,
+    quantity_unit:     str = "units",
+    oven_temp_c:       float | None = None,
+    bake_time_min:     int | None = None,
+    notes:             str | None = None,
+    ing_refs:          list[dict] | None = None,
+    pcc_log:           list[dict] | None = None,
+    is_component_run:  bool = False,
+    amount_produced_g: float | None = None,
 ) -> dict:
     """
     Insert a production run + ingredient refs.
@@ -1965,17 +2127,19 @@ def save_production_run(
     lote = _next_lote_number(sb, prod_date)
 
     run_row = {
-        "lote_number":    lote,
-        "recipe_id":      recipe_id,
-        "recipe_name":    recipe_name,
-        "format":         fmt,
+        "lote_number":     lote,
+        "recipe_id":       recipe_id,
+        "recipe_name":     recipe_name,
+        "format":          fmt,
         "production_date": prod_date.isoformat(),
-        "quantity":       quantity,
-        "quantity_unit":  quantity_unit,
-        "oven_temp_c":    oven_temp_c,
-        "bake_time_min":  bake_time_min,
-        "notes":          notes,
-        "pcc_log":        _json.dumps(pcc_log) if pcc_log else None,
+        "quantity":        quantity,
+        "quantity_unit":   quantity_unit,
+        "oven_temp_c":     oven_temp_c,
+        "bake_time_min":   bake_time_min,
+        "notes":           notes,
+        "pcc_log":         _json.dumps(pcc_log) if pcc_log else None,
+        "is_component_run":  is_component_run,
+        "amount_produced_g": amount_produced_g,
     }
     result = (
         sb.table("production_runs")
@@ -2086,7 +2250,8 @@ def get_key_ingredients_for_recipe(recipe_id: str) -> list[dict]:
             amount     = _to_label_grams(name, raw_amount)
 
             if line["is_sub_recipe"]:
-                sub = _find_recipe_by_ingredient_name(name)
+                comp_id = line.get("component_recipe_id")
+                sub     = get_recipe(comp_id) if comp_id else _find_recipe_by_ingredient_name(name)
                 if not sub:
                     continue
                 sub_lines   = _get_recipe_lines_with_allergens(sub["id"])
@@ -2238,6 +2403,130 @@ def delete_production_runs_before(cutoff_date) -> int:
     sb.table("production_ingredient_refs").delete().in_("production_run_id", run_ids).execute()
     sb.table("production_runs").delete().lt("production_date", iso).execute()
     return len(run_ids)
+
+
+# -----------------------------------------------------------------------------
+# Component production runs
+# -----------------------------------------------------------------------------
+
+def save_component_production_run(
+    recipe_id:         str,
+    recipe_name:       str,
+    prod_date:         "date",
+    amount_produced_g: float,
+    notes:             str | None = None,
+    ing_refs:          list[dict] | None = None,
+    pcc_log:           list[dict] | None = None,
+) -> dict:
+    """Save a component recipe production run."""
+    return save_production_run(
+        recipe_id         = recipe_id,
+        recipe_name       = recipe_name,
+        fmt               = "component",
+        prod_date         = prod_date,
+        quantity          = amount_produced_g,
+        quantity_unit     = "g",
+        notes             = notes,
+        ing_refs          = ing_refs or [],
+        pcc_log           = pcc_log,
+        is_component_run  = True,
+        amount_produced_g = amount_produced_g,
+    )
+
+
+def get_component_production_runs(limit: int = 50) -> list[dict]:
+    """Return recent component production runs for use in pickers."""
+    sb = get_client()
+    return (
+        sb.table("production_runs")
+          .select("id, lote_number, recipe_id, recipe_name, production_date, amount_produced_g")
+          .eq("is_component_run", True)
+          .order("production_date", desc=True)
+          .order("created_at",     desc=True)
+          .limit(limit)
+          .execute()
+          .data or []
+    )
+
+
+def link_component_runs(final_run_id: str, component_run_ids: list[str]) -> None:
+    """Replace the set of component production runs linked to a final recipe run."""
+    sb = get_client()
+    sb.table("production_run_component_refs").delete().eq("production_run_id", final_run_id).execute()
+    for comp_run_id in component_run_ids:
+        sb.table("production_run_component_refs").insert({
+            "production_run_id": final_run_id,
+            "component_run_id":  comp_run_id,
+        }).execute()
+
+
+def get_component_refs_for_run(run_id: str) -> list[dict]:
+    """Return component production runs linked to a final recipe run."""
+    sb = get_client()
+    refs = (
+        sb.table("production_run_component_refs")
+          .select(
+              "id, component_run_id, "
+              "component_run:component_run_id(lote_number, recipe_name, production_date, amount_produced_g)"
+          )
+          .eq("production_run_id", run_id)
+          .execute()
+          .data or []
+    )
+    return refs
+
+
+def calc_component_cost_per_g(recipe_id: str, labour_rate_per_hour: float) -> float:
+    """
+    Compute live cost per gram for a component recipe.
+    Returns (ingredient_cost / ref_weight_g) + (labour_per_kg * rate / 1000).
+    Pass labour_rate_per_hour from AppSettings.default_labour_rate.
+    """
+    recipe       = get_recipe(recipe_id)
+    ref_weight_g = float(recipe.get("ref_weight_kg") or 1) * 1000
+    labour_per_kg = float(recipe.get("labour_per_kg") or 0)
+
+    lines            = get_recipe_lines(recipe_id)
+    ingredient_cost  = 0.0
+    for line in lines:
+        if line.get("is_component_line"):
+            continue  # nested components not supported (two-level rule)
+        cpu    = line.get("ingredient_cost_per_unit")
+        amount = float(line.get("amount") or 0)
+        if cpu:
+            ingredient_cost += float(cpu) * amount
+
+    ingredient_cost_per_g = ingredient_cost / ref_weight_g if ref_weight_g > 0 else 0.0
+    labour_cost_per_g     = (labour_per_kg * labour_rate_per_hour) / 1000.0
+    return ingredient_cost_per_g + labour_cost_per_g
+
+
+# -----------------------------------------------------------------------------
+# Variant migration
+# -----------------------------------------------------------------------------
+
+def reassign_variants(from_recipe_id: str, to_recipe_id: str) -> int:
+    """
+    Move all variants from from_recipe_id to to_recipe_id.
+    Resets label_approved=False on all moved variants (allergen re-review required).
+    Returns count of variants reassigned.
+    """
+    sb       = get_client()
+    variants = (
+        sb.table("product_variants")
+          .select("id")
+          .eq("recipe_id", from_recipe_id)
+          .execute()
+          .data or []
+    )
+    if not variants:
+        return 0
+    ids = [v["id"] for v in variants]
+    (sb.table("product_variants")
+       .update({"recipe_id": to_recipe_id, "label_approved": False, "updated_at": "now()"})
+       .in_("id", ids)
+       .execute())
+    return len(ids)
 
 
 # PCC STEPS

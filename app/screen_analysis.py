@@ -31,7 +31,8 @@ def screen_analysis(recipe_id: str | None = None):
     )
 
     # ── Load data ─────────────────────────────────────────────────────────────
-    recipes     = db.get_recipes()
+    # include_deprecated=True so old recipes remain available for calibration
+    recipes     = db.get_recipes(include_deprecated=True)
     ingredients = db.get_ingredients()
     presets     = db.get_packaging_presets()
     cake_codes  = db.get_cake_codes()
@@ -55,17 +56,24 @@ def screen_analysis(recipe_id: str | None = None):
     else:
         col_sel1, col_sel2 = st.columns(2)
         with col_sel1:
-            recipe_names  = sorted([r["name"] for r in recipes])
+            recipe_names  = sorted([
+                f"🚫 {r['name']}" if r.get("deprecated") else r["name"]
+                for r in recipes
+            ])
             selected_name = st.selectbox("Recipe", recipe_names, key="ana_recipe")
         with col_sel2:
             preset_names    = ["— none —"] + [p["name"] for p in presets]
             selected_preset = st.selectbox(
                 "Packaging preset", preset_names, key="ana_preset"
             )
-        recipe = recipe_map.get(selected_name, {})
+        # Strip deprecation prefix before lookup
+        lookup_name = selected_name.removeprefix("🚫 ")
+        recipe = recipe_map.get(lookup_name, {})
         if not recipe:
             st.info("Select a recipe to continue.")
             return
+        if recipe.get("deprecated"):
+            st.warning("🚫 Esta receta está deprecada — disponible solo para comparación de costes.")
 
     st.divider()
 
@@ -92,8 +100,19 @@ def screen_analysis(recipe_id: str | None = None):
                f"{ref_prep_hours:.1f}h prep · {ref_oven_hours:.1f}h oven")
 
     # ── Ingredient cost at reference size ─────────────────────────────────────
-    lines           = db.get_recipe_lines(recipe["id"])
-    result          = calc_ingredient_cost(lines, ing_map)
+    lines = db.get_recipe_lines(recipe["id"])
+
+    # Build component cost map for any component recipe lines
+    component_map: dict = {}
+    for line in lines:
+        if line.get("is_component_line"):
+            comp_id = line.get("component_recipe_id")
+            if comp_id and comp_id not in component_map:
+                component_map[comp_id] = db.calc_component_cost_per_g(
+                    comp_id, s.default_labour_rate
+                )
+
+    result          = calc_ingredient_cost(lines, ing_map, component_map=component_map)
     ingredient_cost = result.total          # scale is 1.0 — analysis always uses reference size
     ing_breakdown   = result.breakdown
     missing_prices  = result.missing_prices

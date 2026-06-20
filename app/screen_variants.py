@@ -159,6 +159,41 @@ def screen_variants():
         st.markdown(f"### {recipe.get('name', '')}")
         st.caption(_ref_size_desc(recipe))
 
+        # ── Migrate variants ───────────────────────────────────────────────────
+        n_variants = sum(len(v) for v in by_fmt.values())
+        if n_variants > 0:
+            with st.expander("🔀 Migrar variantes a otra receta"):
+                st.caption(
+                    "Reasigna todos los SKUs de esta receta a una nueva receta. "
+                    "Se resetea el campo 'aprobado' en todos los variantes migrados."
+                )
+                # All non-deprecated, non-sub-recipe options excluding current
+                all_recipes = db.get_recipes(include_deprecated=False)
+                migrate_options = {
+                    r["name"]: r["id"]
+                    for r in all_recipes
+                    if r["id"] != rid
+                }
+                target_name = st.selectbox(
+                    "Receta destino",
+                    ["— selecciona —"] + sorted(migrate_options.keys()),
+                    key=f"migrate_target_{rid}",
+                )
+                if target_name != "— selecciona —":
+                    st.warning(
+                        f"Se moverán **{n_variants}** variantes a '{target_name}'. "
+                        "El campo 'lista de ingredientes aprobada' se reseteará en todos. "
+                        "Esta acción no se puede deshacer."
+                    )
+                    if st.button("Confirmar migración", type="primary",
+                                 key=f"migrate_confirm_{rid}"):
+                        try:
+                            moved = db.reassign_variants(rid, migrate_options[target_name])
+                            st.success(f"✅ {moved} variante(s) migrada(s) a '{target_name}'.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
         # Determine tiers
         is_dc = _is_dc_recipe(recipe)
         tiers = ["standard"] if is_dc else ["standard", "individual", "bocado"]
