@@ -340,6 +340,16 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
         placeholder="Optional — storage instructions, allergen notes, etc."
     )
 
+    # Defaults for variables only assigned inside the is_sub_recipe=False blocks
+    catalogue_section  = None
+    has_individual     = False
+    individual_weight  = None
+    has_bocado         = False
+    bocado_weight      = None
+    ref_batch_size     = None
+    ref_prep_hours     = None
+    ref_oven_hours     = None
+
     if not is_sub_recipe:
         catalogue_section = st.selectbox(
             "Catalogue section",
