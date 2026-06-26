@@ -277,6 +277,7 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
         )
 
     if is_sub_recipe:
+        size_type = "weight"  # components are always measured by weight
         deprecated = False  # component recipes are never deprecated independently
         st.info(
             "🔧 Component recipe — this will not appear in the pricing "
