@@ -130,6 +130,9 @@ def _to_label_grams(name: str, amount: float) -> float:
     name_lower = (name or "").lower()
     for key, weight in _UNIT_WEIGHTS_G.items():
         if key in name_lower:
+            # If amount > 50 it is almost certainly already in grams, not units
+            if amount > 50:
+                return float(amount)
             return amount * weight
     if any(key in name_lower for key in _UNIT_IGNORE):
         return 0.0
