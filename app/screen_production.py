@@ -344,9 +344,22 @@ def _tab_log():
     recipe = recipe_by_name[recipe_name]
 
     # ── Fetch recipe ingredients to pre-populate the reference table ───────────
+    # For component-based recipes, show component names (one level only) so the
+    # operator can record which batch of each component was used.
+    # For direct-ingredient recipes, recurse to key leaf ingredients as before.
+    # Note: label/allergen resolution always recurses to leaf level — unchanged.
     recipe_ings = []
     try:
-        recipe_ings = db.get_key_ingredients_for_recipe(recipe["id"])
+        lines = db.get_recipe_lines(recipe["id"])
+        component_lines = [l for l in lines if l.get("is_component_line")]
+        if component_lines:
+            # Use component names directly — one level, no recursion
+            recipe_ings = [
+                {"name": l["ingredient_name"], "pct": None, "is_allergen_bearing": False}
+                for l in component_lines
+            ]
+        else:
+            recipe_ings = db.get_key_ingredients_for_recipe(recipe["id"])
     except Exception:
         pass
 
