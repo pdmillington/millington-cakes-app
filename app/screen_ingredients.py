@@ -137,18 +137,26 @@ def _pricing_tab(filtered: list):
     h7.markdown("**Coste/ud.**")
     h8.markdown("")
 
+    all_ings    = db.get_ingredients()
+    base_ing_map = {i["id"]: i for i in all_ings}
+
     for ing in filtered:
         if ing.get("is_sub_recipe"):
             continue
-        _pricing_row(ing)
+        _pricing_row(ing, base_ing_map)
 
     st.divider()
     with st.expander("➕ Añadir nuevo ingrediente"):
-        _add_ingredient_form()
+        _add_ingredient_form(all_ings)
 
 
-def _pricing_row(ing: dict):
+def _pricing_row(ing: dict, base_ing_map: dict | None = None):
+    """Render one ingredient row. Derived ingredients show base link instead of pack fields."""
     col_id = f"ing_{ing['id']}"
+
+    if ing.get("base_ingredient_id"):
+        _derived_pricing_row(ing, col_id, base_ing_map or {})
+        return
 
     c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(
         [3, 2, 1.2, 1, 1.2, 1, 1.5, 0.5]
@@ -584,49 +592,118 @@ def _filter_match(ing: dict, filter_val: str) -> bool:
 # Add new ingredient form
 # =============================================================================
 
-def _add_ingredient_form():
+def _derived_pricing_row(ing: dict, col_id: str, base_ing_map: dict):
+    """Compact display row for derived ingredients (clara, yema, zumo, etc.)"""
+    base   = base_ing_map.get(ing.get("base_ingredient_id") or "")
+    base_n = base["name"] if base else "—"
+    cost   = ing.get("cost_per_unit")
+    yield_g   = ing.get("yield_g_per_base_unit") or 0
+    fraction  = ing.get("cost_fraction") or 1.0
+
+    d1, d2, d3, d4, d5 = st.columns([3, 2, 1.5, 1.5, 0.5])
+    with d1:
+        name = st.text_input(
+            "Nombre", value=ing.get("name", ""),
+            key=f"{col_id}_name", label_visibility="collapsed"
+        )
+    with d2:
+        st.caption(f"🔗 base: **{base_n}**")
+    with d3:
+        new_yield = st.number_input(
+            "g por unidad base", value=float(yield_g), min_value=0.0, step=1.0,
+            key=f"{col_id}_yield", label_visibility="collapsed",
+            help="Gramos de este ingrediente por 1 unidad del ingrediente base"
+        )
+    with d4:
+        new_fraction = st.number_input(
+            "Fracción coste", value=float(fraction), min_value=0.0, max_value=1.0, step=0.05,
+            key=f"{col_id}_frac", label_visibility="collapsed",
+            help="Proporción del coste base asignado a este ingrediente (0.30 = 30%)"
+        )
+        if cost:
+            st.caption(f"→ € {cost:.5f}/g")
+    with d5:
+        if st.button("💾", key=f"{col_id}_save", help="Guardar cambios"):
+            db.save_ingredient({
+                "id":                   ing["id"],
+                "name":                 name,
+                "base_ingredient_id":   ing["base_ingredient_id"],
+                "yield_g_per_base_unit": new_yield or None,
+                "cost_fraction":        new_fraction,
+            })
+            st.success(f"Guardado: {name}", icon="✅")
+            st.rerun()
+
+
+def _add_ingredient_form(all_ings: list | None = None):
     st.caption(
         "Añade los datos de compra aquí. Asigna la categoría en la pestaña "
         "Fichas para heredar nombre de etiqueta y alérgenos."
     )
 
-    c1, c2, c3, c4, c5, c6 = st.columns([3, 2, 1.2, 1, 1.2, 1])
+    is_derived = st.checkbox(
+        "🔗 Ingrediente derivado (clara, yema, zumo…)",
+        key="new_ing_is_derived",
+        help="Para ingredientes cuyo coste se calcula a partir de otro ingrediente base."
+    )
 
-    with c1:
-        name = st.text_input(
-            "Nombre", key="new_ing_name",
-            placeholder="e.g. Chocolate Negro 72% Valrhona"
-        )
-    with c2:
-        supplier = st.text_input(
-            "Proveedor", key="new_ing_supplier",
-            placeholder="e.g. Valrhona"
-        )
-    with c3:
-        pack_size = st.number_input(
-            "Envase", min_value=0.0, key="new_ing_size"
-        )
-    with c4:
-        unit = st.selectbox(
-            "Ud.", ["g", "kg", "ml", "l", "units"],
-            key="new_ing_unit"
-        )
-    with c5:
-        price = st.number_input(
-            "Precio s/IVA (€)", min_value=0.0,
-            format="%.4f", key="new_ing_price"
-        )
-    with c6:
-        vat = st.selectbox(
-            "IVA", [0.0, 0.04, 0.10, 0.21],
-            index=2,
-            format_func=lambda x: f"{int(x*100)}%",
-            key="new_ing_vat"
-        )
+    name = st.text_input(
+        "Nombre", key="new_ing_name",
+        placeholder="e.g. Clara fresca" if is_derived else "e.g. Chocolate Negro 72% Valrhona"
+    )
+
+    # Initialise save-record placeholders
+    supplier = pack_size = price = vat = None
+    unit = "g"
+    base_ingredient_id = yield_g = cost_fraction = None
+
+    if is_derived:
+        base_ings = [i for i in (all_ings or []) if not i.get("base_ingredient_id")]
+        base_opts = {i["name"]: i["id"] for i in base_ings}
+        d1, d2, d3 = st.columns([2, 1.5, 1.5])
+        with d1:
+            base_name = st.selectbox(
+                "Ingrediente base", ["— selecciona —"] + list(base_opts.keys()),
+                key="new_ing_base"
+            )
+            base_ingredient_id = base_opts.get(base_name)
+        with d2:
+            yield_g = st.number_input(
+                "g por unidad base", min_value=0.0, step=1.0,
+                key="new_ing_yield",
+                help="Gramos de este ingrediente por 1 unidad del base (e.g. 36 para clara por huevo)"
+            )
+        with d3:
+            cost_fraction = st.number_input(
+                "Fracción de coste", min_value=0.0, max_value=1.0,
+                value=1.0, step=0.05,
+                key="new_ing_fraction",
+                help="Proporción del coste base asignado aquí (e.g. 0.30 para claras, 0.70 para yemas)"
+            )
+        if base_ingredient_id and yield_g:
+            base_obj = next((i for i in base_ings if i["id"] == base_ingredient_id), {})
+            base_cpu = base_obj.get("cost_per_unit") or 0
+            derived_cpu = (base_cpu * cost_fraction) / yield_g if yield_g else 0
+            st.caption(f"Coste calculado: € {derived_cpu:.5f}/g")
+    else:
+        c2, c3, c4, c5, c6 = st.columns([2, 1.2, 1, 1.2, 1])
+        with c2:
+            supplier = st.text_input("Proveedor", key="new_ing_supplier", placeholder="e.g. Valrhona")
+        with c3:
+            pack_size = st.number_input("Envase", min_value=0.0, key="new_ing_size")
+        with c4:
+            unit = st.selectbox("Ud.", ["g", "kg", "ml", "l", "units"], key="new_ing_unit")
+        with c5:
+            price = st.number_input("Precio s/IVA (€)", min_value=0.0, format="%.4f", key="new_ing_price")
+        with c6:
+            vat = st.selectbox(
+                "IVA", [0.0, 0.04, 0.10, 0.21], index=2,
+                format_func=lambda x: f"{int(x*100)}%", key="new_ing_vat"
+            )
 
     confirmed = True
     if name:
-        existing_names = [i["name"] for i in db.get_ingredients()]
+        existing_names = [i["name"] for i in (all_ings or db.get_ingredients())]
         similar = db.find_similar_names(name, existing_names)
         if similar:
             st.warning("⚠️ Nombres similares ya existen:")
@@ -642,21 +719,31 @@ def _add_ingredient_form():
     if st.button("Añadir ingrediente", type="primary"):
         if not name:
             st.error("El nombre es obligatorio.")
+        elif is_derived and not base_ingredient_id:
+            st.error("Selecciona el ingrediente base.")
+        elif is_derived and not yield_g:
+            st.error("Indica los gramos por unidad base.")
         elif not confirmed:
-            st.error(
-                "Confirma que es diferente de los ingredientes similares."
-            )
+            st.error("Confirma que es diferente de los ingredientes similares.")
         else:
-            db.save_ingredient({
+            if is_derived:
+                db.save_ingredient({
+                    "name":                  name,
+                    "base_ingredient_id":    base_ingredient_id,
+                    "yield_g_per_base_unit": yield_g,
+                    "cost_fraction":         cost_fraction,
+                })
+            else:
+                db.save_ingredient({
                 "name":              name,
                 "supplier":          supplier or None,
                 "pack_size":         pack_size or None,
                 "pack_unit":         unit,
                 "pack_price_ex_vat": price or None,
                 "vat_rate":          vat,
-            })
-            st.success(
-                f"Añadido: {name} — asigna la categoría en Fichas",
-                icon="✅"
-            )
+                })
+            msg = f"Añadido: {name}"
+            if not is_derived:
+                msg += " — asigna la categoría en Fichas"
+            st.success(msg, icon="✅")
             st.rerun()

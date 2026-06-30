@@ -316,7 +316,27 @@ def get_recipe_ingredients_for_shopping() -> list[dict]:
 def get_ingredients() -> list[dict]:
     sb = get_client()
     result = sb.table("ingredients").select("*").order("name").execute()
-    return result.data or []
+    ingredients = result.data or []
+
+    # Compute derived costs for ingredients that reference a base ingredient.
+    # Formula: cost_per_unit = (base.cost_per_unit × cost_fraction) / yield_g_per_base_unit
+    id_map = {i["id"]: i for i in ingredients}
+    for ing in ingredients:
+        base_id = ing.get("base_ingredient_id")
+        if not base_id:
+            continue
+        base = id_map.get(base_id)
+        if not base:
+            continue
+        base_cost = base.get("cost_per_unit") or 0.0
+        yield_g   = ing.get("yield_g_per_base_unit") or 1.0
+        fraction  = ing.get("cost_fraction") or 1.0
+        ing["cost_per_unit"] = round((base_cost * fraction) / yield_g, 6) if yield_g else None
+        # Inherit allergen category from base if not explicitly set
+        if not ing.get("category_id"):
+            ing["category_id"] = base.get("category_id")
+
+    return ingredients
 
 def get_ingredient_categories() -> list[dict]:
     sb = get_client()
@@ -325,11 +345,29 @@ def get_ingredient_categories() -> list[dict]:
 
 
 def save_ingredient(record: dict) -> dict:
-    """Insert or update an ingredient. Computes cost_per_unit before saving."""
+    """Insert or update an ingredient. Computes cost_per_unit before saving.
+    For derived ingredients (base_ingredient_id set), cost_per_unit is computed
+    at query time from the base; pack price fields are not required.
+    Category is inherited from the base ingredient for allergen resolution.
+    """
     sb = get_client()
-    record["name"] = _normalise_name(record.get("name", ""))
-    record["updated_at"] = "now()"          
-    record = _compute_ingredient_cost(record)
+    record["name"]       = _normalise_name(record.get("name", ""))
+    record["updated_at"] = "now()"
+    if record.get("base_ingredient_id"):
+        # Derived ingredient — inherit category from base, don't overwrite cost
+        base_rows = (
+            sb.table("ingredients")
+              .select("category_id")
+              .eq("id", record["base_ingredient_id"])
+              .execute()
+              .data or []
+        )
+        if base_rows and not record.get("category_id"):
+            record["category_id"] = base_rows[0].get("category_id")
+        # cost_per_unit is computed at read time; store None to avoid stale values
+        record["cost_per_unit"] = None
+    else:
+        record = _compute_ingredient_cost(record)
     if record.get("id"):
         sb.table("ingredients").update(record).eq("id", record["id"]).execute()
         result = sb.table("ingredients").select("*").eq("id", record["id"]).execute()
