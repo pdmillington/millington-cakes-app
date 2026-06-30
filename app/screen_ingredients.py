@@ -52,9 +52,10 @@ def screen_ingredients():
     cat_map     = {c["id"]: c for c in categories}
 
     # ── Summary metrics ───────────────────────────────────────────────────────
+    non_derived = [i for i in ingredients if not i.get("base_ingredient_id")]
     total       = len(ingredients)
-    no_price    = sum(1 for i in ingredients if not i.get("pack_price_ex_vat"))
-    no_size     = sum(1 for i in ingredients if not i.get("pack_size"))
+    no_price    = sum(1 for i in non_derived if not i.get("pack_price_ex_vat"))
+    no_size     = sum(1 for i in non_derived if not i.get("pack_size"))
     no_category = sum(1 for i in ingredients
                       if not i.get("category_id")
                       and not i.get("is_sub_recipe"))

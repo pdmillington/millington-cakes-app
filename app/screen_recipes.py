@@ -853,7 +853,7 @@ def _load_recipe(recipe_id: str, code_options: dict):
         )
         st.session_state[f"field_code_{p}"] = current_code_label
 
-        size_type = recipe.get("size_type", "diameter")
+        size_type = "weight" if recipe.get("is_sub_recipe") else recipe.get("size_type", "diameter")
         st.session_state[f"field_size_type_{p}"] = size_type
         st.session_state[f"field_diameter_{p}"]  = float(recipe.get("ref_diameter_cm") or 0)
         st.session_state[f"field_height_{p}"]    = float(recipe.get("ref_height_cm") or 0)

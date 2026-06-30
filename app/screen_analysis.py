@@ -368,6 +368,42 @@ def screen_analysis(recipe_id: str | None = None):
     else:
         st.caption("No ingredient costs available — add prices in the Ingredients screen.")
 
+    # ── Labour cost breakdown ─────────────────────────────────────────────────
+    st.markdown("### Labour cost breakdown")
+    st.caption(f"Wholesale batch of {s.ws_batch_large} · rate € {s.default_labour_rate:.2f}/hr · oven € {s.default_oven_rate:.2f}/hr")
+
+    lh1, lh2, lh3 = st.columns([4, 1, 1])
+    lh1.markdown("**Source**")
+    lh2.markdown("**hr/kg**")
+    lh3.markdown("**Cost**")
+
+    if ws_labour > 0:
+        lc1, lc2, lc3 = st.columns([4, 1, 1])
+        lc1.write(f"Recipe prep ({ref_prep_hours:.2f}h ref × batch factor {ws.qty_factor:.4f})")
+        lc2.write("—")
+        lc3.write(f"€ {ws_labour:.4f}")
+
+    if ws_oven > 0:
+        lc1, lc2, lc3 = st.columns([4, 1, 1])
+        lc1.write(f"Recipe oven ({ref_oven_hours:.2f}h ref × batch factor {ws.qty_factor:.4f})")
+        lc2.write("—")
+        lc3.write(f"€ {ws_oven:.4f}")
+
+    for line in lines:
+        if line.get("is_component_line"):
+            lpkg   = float(line.get("component_labour_per_kg") or 0)
+            amount = float(line.get("amount") or 0)
+            name   = line.get("ingredient_name", "")
+            comp_cost = (lpkg * s.default_labour_rate / 1000.0) * amount
+            lc1, lc2, lc3 = st.columns([4, 1, 1])
+            lc1.write(f"{name} ({amount:.0f}g component)")
+            lc2.write(f"{lpkg:.3f}" if lpkg else "—")
+            lc3.write(f"€ {comp_cost:.4f}" if lpkg else "—")
+
+    st.divider()
+    total_labour_ws = ws_labour + ws_oven + component_labour_cost
+    st.markdown(f"**Total labour: € {total_labour_ws:.4f}**")
+
     # ── Allergen declaration preview ──────────────────────────────────────────
     st.markdown("### Declaración de alérgenos")
     st.caption("Calculado automáticamente a partir de los ingredientes de la receta.")
