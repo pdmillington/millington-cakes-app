@@ -2514,29 +2514,39 @@ def get_component_refs_for_run(run_id: str) -> list[dict]:
     return refs
 
 
-def calc_component_cost_per_g(recipe_id: str, labour_rate_per_hour: float) -> float:
+def calc_component_cost_per_g(recipe_id: str, labour_rate_per_hour: float = 0.0) -> float:
     """
-    Compute live cost per gram for a component recipe.
-    Returns (ingredient_cost / ref_weight_g) + (labour_per_kg * rate / 1000).
-    Pass labour_rate_per_hour from AppSettings.default_labour_rate.
+    Compute ingredient-only cost per gram for a component recipe.
+
+    Returns ingredient_cost / ref_weight_g.  Labour (labour_per_kg) is
+    intentionally excluded here so that the calling analysis screen can
+    account for it separately in the labour bucket rather than the
+    ingredients bucket.  The labour_rate_per_hour parameter is accepted
+    for backward compatibility but is no longer used.
+
+    Uses get_ingredients() for cost lookup so derived ingredient costs
+    (clara, yema, zumo) are resolved correctly rather than reading the raw
+    null cost_per_unit from the DB.
     """
     recipe       = get_recipe(recipe_id)
     ref_weight_g = float(recipe.get("ref_weight_kg") or 1) * 1000
-    labour_per_kg = float(recipe.get("labour_per_kg") or 0)
 
-    lines            = get_recipe_lines(recipe_id)
-    ingredient_cost  = 0.0
+    # Use get_ingredients() so derived-ingredient costs are computed
+    all_ings = get_ingredients()
+    ing_map  = {i["name"]: i for i in all_ings}
+
+    lines           = get_recipe_lines(recipe_id)
+    ingredient_cost = 0.0
     for line in lines:
         if line.get("is_component_line"):
             continue  # nested components not supported (two-level rule)
-        cpu    = line.get("ingredient_cost_per_unit")
+        name   = line.get("ingredient_name", "")
+        cpu    = (ing_map.get(name) or {}).get("cost_per_unit")
         amount = float(line.get("amount") or 0)
         if cpu:
             ingredient_cost += float(cpu) * amount
 
-    ingredient_cost_per_g = ingredient_cost / ref_weight_g if ref_weight_g > 0 else 0.0
-    labour_cost_per_g     = (labour_per_kg * labour_rate_per_hour) / 1000.0
-    return ingredient_cost_per_g + labour_cost_per_g
+    return ingredient_cost / ref_weight_g if ref_weight_g > 0 else 0.0
 
 
 # -----------------------------------------------------------------------------

@@ -120,6 +120,17 @@ def screen_analysis(recipe_id: str | None = None):
     if missing_prices:
         missing_prices_warning(missing_prices)
 
+    # ── Component labour cost (tracked as labour, not ingredients) ────────────
+    # Component recipes may carry their own labour_per_kg (e.g. crema de limón).
+    # That cost is added to the labour bucket here so it appears as labour in
+    # charts rather than being folded into the ingredient cost.
+    component_labour_cost = 0.0
+    for line in lines:
+        if line.get("is_component_line"):
+            lpkg   = float(line.get("component_labour_per_kg") or 0)
+            amount = float(line.get("amount") or 0)
+            component_labour_cost += (lpkg * s.default_labour_rate / 1000.0) * amount
+
     # ── Packaging cost ────────────────────────────────────────────────────────
     packaging_cost = 0.0
     units_per_pack = 1
@@ -141,8 +152,8 @@ def screen_analysis(recipe_id: str | None = None):
     ws_labour, ws_oven = ws.labour_cost, ws.oven_cost
     rt_labour, rt_oven = rt.labour_cost, rt.oven_cost
 
-    ws_total = ingredient_cost + ws_labour + ws_oven + packaging_cost
-    rt_total = ingredient_cost + rt_labour + rt_oven + packaging_cost
+    ws_total = ingredient_cost + ws_labour + ws_oven + component_labour_cost + packaging_cost
+    rt_total = ingredient_cost + rt_labour + rt_oven + component_labour_cost + packaging_cost
 
     # ── Current price lookup ──────────────────────────────────────────────────
     cake_code_id = recipe.get("cake_code_id")
@@ -224,12 +235,11 @@ def screen_analysis(recipe_id: str | None = None):
 
     with col1:
         labels  = ["Ingredients", "Labour", "Oven", "Packaging"]
-        values  = [ingredient_cost, ws_labour, ws_oven, packaging_cost]
+        values  = [ingredient_cost, ws_labour + component_labour_cost, ws_oven, packaging_cost]
         colours = [COLOURS[l] for l in labels]
+        raw_vals = values[:]
         values  = [v for v in values if v > 0]
-        labels  = [l for l, v in zip(labels,
-                   [ingredient_cost, ws_labour, ws_oven, packaging_cost])
-                   if v > 0]
+        labels  = [l for l, v in zip(labels, raw_vals) if v > 0]
         colours = [COLOURS[l] for l in labels]
 
         if has_plotly:
@@ -240,15 +250,17 @@ def screen_analysis(recipe_id: str | None = None):
             )
             st.plotly_chart(fig, width='stretch')
 
+        comp_lab_note = f" + € {component_labour_cost:.4f} component" if component_labour_cost else ""
         st.caption(
             f"Labour: batch of {s.ws_batch_large} · "
-            f"€ {ws_labour:.4f} labour + € {ws_oven:.4f} oven"
+            f"€ {ws_labour:.4f} labour + € {ws_oven:.4f} oven{comp_lab_note}"
         )
 
     with col2:
         rt_labels  = ["Ingredients", "Labour", "Oven", "Packaging"]
-        rt_vals    = [ingredient_cost, rt_labour, rt_oven, packaging_cost]
-        rt_labels  = [l for l, v in zip(rt_labels, rt_vals) if v > 0]
+        rt_vals    = [ingredient_cost, rt_labour + component_labour_cost, rt_oven, packaging_cost]
+        rt_raw     = rt_vals[:]
+        rt_labels  = [l for l, v in zip(rt_labels, rt_raw) if v > 0]
         rt_colours = [COLOURS[l] for l in rt_labels]
         rt_vals    = [v for v in rt_vals if v > 0]
 
@@ -262,7 +274,7 @@ def screen_analysis(recipe_id: str | None = None):
 
         st.caption(
             f"Labour: batch of {s.rt_batch_large} · "
-            f"€ {rt_labour:.4f} labour + € {rt_oven:.4f} oven"
+            f"€ {rt_labour:.4f} labour + € {rt_oven:.4f} oven{comp_lab_note}"
         )
 
     # ── Row 2: Current price breakdown ───────────────────────────────────────
@@ -277,7 +289,7 @@ def screen_analysis(recipe_id: str | None = None):
             profit = current_price_ex - cost_total
             labels = ["Ingredients", "Labour", "Oven", "Packaging"]
             costs  = [ingredient_cost,
-                      ws_labour if "holesale" in channel_label else rt_labour,
+                      (ws_labour if "holesale" in channel_label else rt_labour) + component_labour_cost,
                       ws_oven   if "holesale" in channel_label else rt_oven,
                       packaging_cost]
             labels = [l for l, v in zip(labels, costs) if v > 0]
