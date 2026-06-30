@@ -187,6 +187,35 @@ def _tab_component_log():
     st.markdown("#### Materias primas utilizadas")
     st.caption("Ingrediente y referencia del albarán del proveedor.")
 
+    # Pre-populate ingredient names from the component recipe's key ingredients
+    _comp_ings = []
+    try:
+        _comp_ings = db.get_key_ingredients_for_recipe(component["id"])
+    except Exception:
+        pass
+
+    import hashlib as _hashlib, json as _json
+    _comp_sig = _hashlib.md5(
+        _json.dumps([(i["name"], i.get("pct")) for i in _comp_ings]).encode()
+    ).hexdigest()
+    _last_comp   = st.session_state.get("comp_log_last_recipe")
+    _last_comp_sig = st.session_state.get("comp_log_last_sig")
+    if _last_comp != component["id"] or _last_comp_sig != _comp_sig:
+        st.session_state["comp_log_last_recipe"] = component["id"]
+        st.session_state["comp_log_last_sig"]    = _comp_sig
+        st.session_state["comp_log_n_refs"]      = max(3, len(_comp_ings))
+        for i in range(10):
+            st.session_state.pop(f"comp_ing_{i}", None)
+            st.session_state.pop(f"comp_alb_{i}", None)
+
+    # Pre-populate names if not already set
+    for i, ing in enumerate(_comp_ings[:st.session_state.get("comp_log_n_refs", 3)]):
+        key = f"comp_ing_{i}"
+        if key not in st.session_state:
+            pct_tag     = f" ({ing['pct']}%)" if ing.get("pct") else ""
+            allergen_tag = " ⚠️" if ing.get("is_allergen_bearing") else ""
+            st.session_state[key] = ing["name"] + pct_tag + allergen_tag
+
     n_comp_refs = st.session_state.get("comp_log_n_refs", 3)
     comp_ing_refs = []
     for i in range(n_comp_refs):
@@ -323,11 +352,18 @@ def _tab_log():
 
     # Number of rows = max(3, number of key ingredients in recipe)
     n_rows_default = max(3, len(recipe_ings))
-    # Reset row count when recipe changes
+    # Reset row count when recipe changes OR when its ingredient list changes
+    # (catches edits to an existing recipe without an ID change)
+    import hashlib as _hashlib, json as _json
+    _ings_sig = _hashlib.md5(
+        _json.dumps([(i["name"], i.get("pct")) for i in recipe_ings]).encode()
+    ).hexdigest()
     last_recipe = st.session_state.get("prod_last_recipe")
-    if last_recipe != recipe["id"]:
-        st.session_state["prod_n_refs"]    = n_rows_default
-        st.session_state["prod_last_recipe"] = recipe["id"]
+    last_sig    = st.session_state.get("prod_last_ings_sig")
+    if last_recipe != recipe["id"] or last_sig != _ings_sig:
+        st.session_state["prod_n_refs"]       = n_rows_default
+        st.session_state["prod_last_recipe"]  = recipe["id"]
+        st.session_state["prod_last_ings_sig"] = _ings_sig
         # clear any previous ingredient inputs
         for i in range(10):
             st.session_state.pop(f"prod_ing_{i}", None)
