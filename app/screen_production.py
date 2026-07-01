@@ -355,7 +355,12 @@ def _tab_log():
         if component_lines:
             # Use component names directly — one level, no recursion
             recipe_ings = [
-                {"name": l["ingredient_name"], "pct": None, "is_allergen_bearing": False}
+                {
+                    "name":                l["ingredient_name"],
+                    "pct":                 None,
+                    "is_allergen_bearing": False,
+                    "component_recipe_id": l.get("component_recipe_id"),
+                }
                 for l in component_lines
             ]
         else:
@@ -381,6 +386,8 @@ def _tab_log():
         for i in range(10):
             st.session_state.pop(f"prod_ing_{i}", None)
             st.session_state.pop(f"prod_alb_{i}", None)
+            st.session_state.pop(f"prod_alb_sel_{i}", None)
+            st.session_state.pop(f"prod_alb_txt_{i}", None)
 
     # ── Basic details ─────────────────────────────────────────────────────────
     col_d, col_q = st.columns(2)
@@ -495,9 +502,31 @@ def _tab_log():
         for s in st.session_state.get(pcc_steps_key, [])
     ]
 
+    # ── Per-component recent runs (for albaran dropdowns) ─────────────────────
+    # Build {component_recipe_id: [run, ...]} and {lote_number: run_id} maps
+    comp_runs_by_recipe: dict = {}
+    comp_run_id_by_lote: dict = {}
+    for _ing in recipe_ings:
+        _crid = _ing.get("component_recipe_id")
+        if _crid and _crid not in comp_runs_by_recipe:
+            try:
+                _runs = db.get_production_runs_for_recipe(_crid, limit=10)
+                comp_runs_by_recipe[_crid] = _runs
+                for _r in _runs:
+                    comp_run_id_by_lote[_r["lote_number"]] = _r["id"]
+            except Exception:
+                comp_runs_by_recipe[_crid] = []
+
+    has_component_ings = any(i.get("component_recipe_id") for i in recipe_ings)
+
     # ── Ingredient references ─────────────────────────────────────────────────
     st.markdown("#### Referencias de ingredientes principales")
-    if recipe_ings:
+    if has_component_ings:
+        st.caption(
+            "Selecciona el lote elaborado de cada componente, o introduce la "
+            "referencia manualmente si no aparece en la lista."
+        )
+    elif recipe_ings:
         allergen_names = [i["name"] for i in recipe_ings if i.get("is_allergen_bearing")]
         criteria_parts = ["≥5% del peso total"]
         if allergen_names:
@@ -545,7 +574,15 @@ def _tab_log():
                     st.session_state[alb_key] = last_ref
 
     ing_refs = []
+    selected_comp_run_ids = []
+    _MANUAL = "— entrada manual —"
+    _NONE   = "— selecciona —"
+
     for i in range(n_refs):
+        ing_meta = recipe_ings[i] if i < len(recipe_ings) else {}
+        comp_rid = ing_meta.get("component_recipe_id")
+        comp_runs = comp_runs_by_recipe.get(comp_rid, []) if comp_rid else []
+
         c1, c2, c3 = st.columns([2, 2, 0.5])
         with c1:
             ing_name = st.text_input(
@@ -554,11 +591,39 @@ def _tab_log():
                 label_visibility="visible" if i == 0 else "collapsed"
             )
         with c2:
-            alb_ref = st.text_input(
-                "Ref. albarán proveedor", key=f"prod_alb_{i}",
-                placeholder="e.g. ALB-2025-0451",
-                label_visibility="visible" if i == 0 else "collapsed"
-            )
+            if comp_rid and comp_runs:
+                # Component with logged runs — show dropdown
+                run_options = (
+                    [_NONE]
+                    + [f"{r['lote_number']}  ({r['production_date']})" for r in comp_runs]
+                    + [_MANUAL]
+                )
+                sel = st.selectbox(
+                    "Lote componente", run_options,
+                    key=f"prod_alb_sel_{i}",
+                    label_visibility="visible" if i == 0 else "collapsed"
+                )
+                if sel == _MANUAL:
+                    alb_ref = st.text_input(
+                        "Ref. manual", key=f"prod_alb_txt_{i}",
+                        placeholder="Introduce lote o ref.",
+                        label_visibility="collapsed"
+                    )
+                elif sel == _NONE:
+                    alb_ref = ""
+                else:
+                    alb_ref = sel.split("  ")[0].strip()
+                    # Track the run ID for linking
+                    run_id = comp_run_id_by_lote.get(alb_ref)
+                    if run_id:
+                        selected_comp_run_ids.append(run_id)
+            else:
+                # No logged runs yet (or direct ingredient) — plain text input
+                alb_ref = st.text_input(
+                    "Ref. albarán / lote", key=f"prod_alb_{i}",
+                    placeholder="e.g. ALB-2025-0451" if not comp_rid else "MC-XXXXXX",
+                    label_visibility="visible" if i == 0 else "collapsed"
+                )
         with c3:
             if i == n_refs - 1:
                 st.write("")
@@ -583,35 +648,6 @@ def _tab_log():
         height=80,
         label_visibility="collapsed"
     )
-
-    # ── Component runs used ────────────────────────────────────────────────────
-    recipe_lines = []
-    try:
-        recipe_lines = db.get_recipe_lines(recipe["id"])
-    except Exception:
-        pass
-
-    has_components = any(l.get("is_component_line") for l in recipe_lines)
-    if has_components:
-        st.markdown("#### Componentes utilizados")
-        st.caption(
-            "Selecciona las elaboraciones de componentes usadas en esta producción. "
-            "Puedes vincular varias si usaste lotes distintos."
-        )
-        recent_comp_runs = db.get_component_production_runs(limit=50)
-        comp_run_labels  = {
-            f"{r['lote_number']} — {r['recipe_name']} ({r['production_date']})": r["id"]
-            for r in recent_comp_runs
-        }
-        selected_comp_labels = st.multiselect(
-            "Lotes de componentes",
-            options=list(comp_run_labels.keys()),
-            key="prod_comp_runs",
-            label_visibility="collapsed"
-        )
-        selected_comp_run_ids = [comp_run_labels[lbl] for lbl in selected_comp_labels]
-    else:
-        selected_comp_run_ids = []
 
     st.divider()
 
