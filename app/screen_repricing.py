@@ -68,6 +68,7 @@ def screen_repricing(embedded: bool = False):
     rows        = []
     lines_cache: dict[str, list]  = {}
     weight_cache: dict[str, float] = {}
+    component_cache: dict[str, tuple] = {}
     recipe_by_id = {r["id"]: r for r in recipes}
 
     # Sort variants by recipe name then format then diameter
@@ -100,7 +101,14 @@ def screen_repricing(embedded: bool = False):
             weight_cache[rid] = float(weight_result.get("weight_g") or 0)
         ref_weight_g = weight_cache[rid]
 
-        ing_result     = calc_ingredient_cost(lines, ing_map)
+        # Component (sub-recipe) cost — same helper used by the analysis
+        # screen. Without this, recipes built from a component (e.g. a
+        # sponge or cream base) silently dropped that portion of the cost.
+        if rid not in component_cache:
+            component_cache[rid] = db.build_component_context(lines, s.default_labour_rate)
+        component_map, component_labour_cost = component_cache[rid]
+
+        ing_result     = calc_ingredient_cost(lines, ing_map, component_map=component_map)
         full_ing_cost  = ing_result.total
         missing        = ing_result.missing_prices
         has_missing = len(missing) > 0
@@ -150,9 +158,14 @@ def screen_repricing(embedded: bool = False):
         rt = calc_labour_cost(s.rt_batch(fmt), ref_b, prep_hrs, oven_hrs, s)
         ws_labour, ws_oven = ws.labour_cost, ws.oven_cost
         rt_labour, rt_oven = rt.labour_cost, rt.oven_cost
-                
-        ws_cost = ing_cost + ws_labour + ws_oven
-        rt_cost = ing_cost + rt_labour + rt_oven
+
+        # Component labour (e.g. a sponge/cream base's own labour_per_kg)
+        # scales the same way ingredient cost does — same underlying line
+        # amount — and is tracked as labour, matching the analysis screen.
+        component_labour_scaled = component_labour_cost * scale
+
+        ws_cost = ing_cost + ws_labour + ws_oven + component_labour_scaled
+        rt_cost = ing_cost + rt_labour + rt_oven + component_labour_scaled
 
         target_ws = s.ws_margin
         target_rt = (

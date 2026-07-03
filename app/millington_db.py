@@ -2552,6 +2552,44 @@ def calc_component_cost_per_g(recipe_id: str, labour_rate_per_hour: float = 0.0)
     return ingredient_cost / ref_weight_g if ref_weight_g > 0 else 0.0
 
 
+def build_component_context(
+    lines: list[dict], labour_rate_per_hour: float = 0.0
+) -> tuple[dict, float]:
+    """
+    For recipe lines that reference component (sub-)recipes, build:
+      - component_map: {component_recipe_id: cost_per_g}, for
+        core.pricing_engine.calc_ingredient_cost(..., component_map=...)
+      - component_labour_cost: total labour cost in €, AT REFERENCE SCALE
+        (i.e. not multiplied by any size/format scale factor — the caller
+        must apply the same scale it applies to ingredient cost), contributed
+        by those components' own labour_per_kg.
+
+    This consolidates cost logic that used to be duplicated across
+    screen_analysis.py, screen_repricing.py and screen_calculator.py — the
+    duplicates had drifted out of sync, most notably screen_repricing.py and
+    screen_calculator.py never built component_map at all, so any recipe
+    using a sub-recipe component (e.g. a sponge or cream base) silently had
+    that portion of its cost dropped instead of costed.
+
+    Component ingredient cost belongs in the ingredient cost bucket (via
+    component_map, consumed by calc_ingredient_cost); component labour is
+    kept separate so callers can report it as labour rather than folding it
+    into ingredients.
+    """
+    component_map: dict = {}
+    component_labour_cost = 0.0
+    for line in lines:
+        if not line.get("is_component_line"):
+            continue
+        comp_id = line.get("component_recipe_id")
+        if comp_id and comp_id not in component_map:
+            component_map[comp_id] = calc_component_cost_per_g(comp_id, labour_rate_per_hour)
+        lpkg   = float(line.get("component_labour_per_kg") or 0)
+        amount = float(line.get("amount") or 0)
+        component_labour_cost += (lpkg * labour_rate_per_hour / 1000.0) * amount
+    return component_map, component_labour_cost
+
+
 # -----------------------------------------------------------------------------
 # Variant migration
 # -----------------------------------------------------------------------------

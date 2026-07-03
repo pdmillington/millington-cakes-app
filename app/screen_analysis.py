@@ -102,15 +102,11 @@ def screen_analysis(recipe_id: str | None = None):
     # ── Ingredient cost at reference size ─────────────────────────────────────
     lines = db.get_recipe_lines(recipe["id"])
 
-    # Build component cost map for any component recipe lines
-    component_map: dict = {}
-    for line in lines:
-        if line.get("is_component_line"):
-            comp_id = line.get("component_recipe_id")
-            if comp_id and comp_id not in component_map:
-                component_map[comp_id] = db.calc_component_cost_per_g(
-                    comp_id, s.default_labour_rate
-                )
+    # Build component cost map + component labour cost for any component
+    # recipe lines (shared helper — see db.build_component_context()).
+    component_map, component_labour_cost = db.build_component_context(
+        lines, s.default_labour_rate
+    )
 
     result          = calc_ingredient_cost(lines, ing_map, component_map=component_map)
     ingredient_cost = result.total          # scale is 1.0 — analysis always uses reference size
@@ -120,16 +116,10 @@ def screen_analysis(recipe_id: str | None = None):
     if missing_prices:
         missing_prices_warning(missing_prices)
 
-    # ── Component labour cost (tracked as labour, not ingredients) ────────────
-    # Component recipes may carry their own labour_per_kg (e.g. crema de limón).
-    # That cost is added to the labour bucket here so it appears as labour in
-    # charts rather than being folded into the ingredient cost.
-    component_labour_cost = 0.0
-    for line in lines:
-        if line.get("is_component_line"):
-            lpkg   = float(line.get("component_labour_per_kg") or 0)
-            amount = float(line.get("amount") or 0)
-            component_labour_cost += (lpkg * s.default_labour_rate / 1000.0) * amount
+    # component_labour_cost is tracked as labour, not ingredients, below —
+    # component recipes may carry their own labour_per_kg (e.g. crema de
+    # limón), and keeping it in the labour bucket means it shows correctly
+    # in the cost-breakdown charts rather than being folded into ingredients.
 
     # ── Packaging cost ────────────────────────────────────────────────────────
     packaging_cost = 0.0

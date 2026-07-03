@@ -59,8 +59,14 @@ def _price_matrix():
     rows = []
     for v in all_variants:
         rid    = v["recipe_id"]
-        recipe = recipe_by_id.get(rid, {})
-        fmt    = v.get("format", "standard")
+        recipe = recipe_by_id.get(rid)
+        if not recipe:
+            # Not a sellable recipe (e.g. a component/sub-recipe, or a
+            # deprecated recipe) — db.get_recipes() excludes these, and
+            # components aren't sold to customers so they shouldn't get a
+            # row in the price matrix at all.
+            continue
+        fmt = v.get("format", "standard")
 
         ws_working  = _f(v.get("ws_price_ex_vat"))
         ws_approved = _f(v.get("ws_price_approved"))
@@ -290,9 +296,13 @@ def _client_prices():
     var_options   = {}
     for v in all_variants:
         rid    = v["recipe_id"]
+        recipe = recipe_by_id.get(rid)
+        if not recipe:
+            # Component/sub-recipe or deprecated recipe — not sold directly,
+            # shouldn't be offered as a client-price target.
+            continue
         fmt    = FORMAT_DISPLAY.get(v["format"], v["format"])
-        name   = recipe_by_id.get(rid, {}).get("name", "")
-        label  = f"{name} — {fmt}"
+        label  = f"{recipe.get('name', '')} — {fmt}"
         var_options[label] = v["id"]
 
     # ── Existing client prices ────────────────────────────────────────────────

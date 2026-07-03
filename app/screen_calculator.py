@@ -307,8 +307,15 @@ def screen_calculator():
     # ── Calculate ─────────────────────────────────────────────────────────────
     if st.button("Calculate", type="primary", use_container_width=True):
 
-        lines      = db.get_recipe_lines(recipe["id"])
-        ing_result = calc_ingredient_cost(lines, ing_map)
+        lines = db.get_recipe_lines(recipe["id"])
+
+        # Component (sub-recipe) cost — shared with screen_analysis.py and
+        # screen_repricing.py. Without this, recipes built from a component
+        # (e.g. a sponge or cream base) silently dropped that cost.
+        component_map, component_labour_cost = db.build_component_context(
+            lines, s.default_labour_rate
+        )
+        ing_result = calc_ingredient_cost(lines, ing_map, component_map=component_map)
         missing_prices = ing_result.missing_prices
 
         # ── Packaging cost (shared by both paths) ─────────────────────────────
@@ -346,7 +353,11 @@ def screen_calculator():
                     "Set ref_weight_kg in the recipe editor."
                 )
                 return
-            ingredient_cost_per_g = ing_result.total / std_ref_weight_g
+            # Component labour scales linearly with weight (same as
+            # ingredients — it's driven by the same recipe-line amount), so
+            # for interpolation purposes it's folded into the per-gram rate
+            # rather than power-law scaled like prep/oven labour below.
+            ingredient_cost_per_g = (ing_result.total + component_labour_cost) / std_ref_weight_g
 
             all_variants    = db.get_all_variants_full()
             recipe_variants = [v for v in all_variants if v.get("recipe_id") == recipe["id"]]
@@ -394,7 +405,7 @@ def screen_calculator():
             anchors.append(AnchorPoint(
                 label="standard", weight_g=std_ref_weight_g,
                 labour_cost=r.labour_cost, oven_cost=r.oven_cost,
-                ingredient_cost=ing_result.total,
+                ingredient_cost=ing_result.total + component_labour_cost,
                 approved_price=_approved("standard"),
             ))
 
@@ -410,7 +421,10 @@ def screen_calculator():
                 size_labour_factor=size_labour_factor,
             )
             ingredient_cost = ing_result.total * scale
-            labour_cost     = labour.labour_cost
+            # Component labour scales the same way ingredient cost does (same
+            # underlying line amount) and is tracked as labour, matching the
+            # analysis and repricing screens.
+            labour_cost     = labour.labour_cost + component_labour_cost * scale
             oven_cost       = labour.oven_cost
             qty_factor      = labour.qty_factor
             prep_per_unit   = labour.prep_per_unit
