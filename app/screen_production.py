@@ -13,7 +13,11 @@
 #   label PDF meeting EU Reg 1169/2011 B2B requirements:
 #   denomination · ingredients · allergens · net weight · best-before ·
 #   storage · operator name/address · lot number.
-#   Labels are A6 (105×148 mm), printed 2-up on A4.
+#   One label per PDF page, sized for the Munbyn thermal label printer
+#   (default 10×15 cm / 4×6", other roll sizes selectable). All mandatory
+#   particulars are set at >=8pt — a safe margin above the EU FIC minimum
+#   x-height (Reg. 1169/2011 Art.13 / Annex IV: x-height >= 1.2mm, which
+#   for a serif font like EB Garamond corresponds to roughly 8pt).
 #
 # PDF uses EB Garamond (data/EBGaramond-Regular.ttf + Bold) and the
 # Millington logo (data/Logo.png) — same assets as screen_catalogue.py.
@@ -37,6 +41,29 @@ FORMAT_DISPLAY = {
 COMPANY_NAME    = "Millington Cakes, S.L."
 COMPANY_CIF     = "B13998596"
 COMPANY_ADDRESS = "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid"
+
+# Thermal label roll sizes (width_mm, height_mm) — Munbyn label stock.
+# 4×6" is the roll currently in use; the others are here so you can
+# experiment without touching code.
+LABEL_SIZE_PRESETS = {
+    "10 × 15 cm  (4 × 6\")": (101.6, 152.4),
+    "10 × 12,7 cm  (4 × 5\")": (101.6, 127.0),
+    "10 × 10 cm  (4 × 4\")": (101.6, 101.6),
+    "10 × 20 cm  (4 × 8\")": (101.6, 203.2),
+}
+DEFAULT_LABEL_SIZE = "10 × 15 cm  (4 × 6\")"
+
+
+def _label_size_picker(key: str):
+    """Render a label-size selectbox and return (width_mm, height_mm)."""
+    names = list(LABEL_SIZE_PRESETS.keys())
+    sel = st.selectbox(
+        "Tamaño de etiqueta", names,
+        index=names.index(DEFAULT_LABEL_SIZE),
+        key=key,
+        help="Tamaño del rollo de etiquetas térmicas cargado en la impresora Munbyn."
+    )
+    return LABEL_SIZE_PRESETS[sel]
 
 
 # =============================================================================
@@ -185,7 +212,12 @@ def _tab_component_log():
 
     # ── Ingredient refs ───────────────────────────────────────────────────────
     st.markdown("#### Materias primas utilizadas")
-    st.caption("Ingrediente y referencia del albarán del proveedor.")
+    st.caption("Ingrediente y número de lote del proveedor.")
+    _lote_to_albaran = {}
+    try:
+        _lote_to_albaran = db.get_albaran_by_lote()
+    except Exception:
+        pass
 
     # Pre-populate ingredient names from the component recipe's key ingredients
     _comp_ings = []
@@ -228,10 +260,13 @@ def _tab_component_log():
             )
         with ci2:
             alb_ref = st.text_input(
-                "Ref. albarán", key=f"comp_alb_{i}",
-                placeholder="e.g. ALB-2025-0451",
+                "Ref. Lote", key=f"comp_alb_{i}",
+                placeholder="e.g. L-2025-0451",
                 label_visibility="visible" if i == 0 else "collapsed"
             )
+            _match = _lote_to_albaran.get(alb_ref.strip().lower())
+            if _match:
+                st.caption(f"↳ Albarán: `{_match}`")
         with ci3:
             if i == n_comp_refs - 1:
                 st.write("")
@@ -533,17 +568,23 @@ def _tab_log():
             criteria_parts.append(f"alérgenos ({', '.join(allergen_names)})")
         st.caption(
             f"Ingredientes clave según criterio APPCC: {' + '.join(criteria_parts)}. "
-            f"Indica el número de albarán del proveedor para cada uno."
+            f"Indica el número de lote del proveedor para cada uno."
         )
     else:
         st.caption(
-            "Indica el número de albarán o lote del proveedor para los ingredientes "
+            "Indica el número de lote del proveedor para los ingredientes "
             "clave (≥5% del peso o alérgenos)."
         )
 
+    _lote_to_albaran = {}
+    try:
+        _lote_to_albaran = db.get_albaran_by_lote()
+    except Exception:
+        pass
+
     n_refs = st.session_state.get("prod_n_refs", n_rows_default)
 
-    # Last-used albarán refs per ingredient name (from most recent run with same recipe)
+    # Last-used lote refs per ingredient name (from most recent run with same recipe)
     last_alb_by_ing: dict[str, str] = {}
     try:
         prev_runs = db.get_production_runs_for_recipe(recipe["id"], limit=1)
@@ -620,10 +661,13 @@ def _tab_log():
             else:
                 # No logged runs yet (or direct ingredient) — plain text input
                 alb_ref = st.text_input(
-                    "Ref. albarán / lote", key=f"prod_alb_{i}",
-                    placeholder="e.g. ALB-2025-0451" if not comp_rid else "MC-XXXXXX",
+                    "Ref. Lote", key=f"prod_alb_{i}",
+                    placeholder="e.g. L-2025-0451" if not comp_rid else "MC-XXXXXX",
                     label_visibility="visible" if i == 0 else "collapsed"
                 )
+                _match = _lote_to_albaran.get(alb_ref.strip().lower())
+                if _match:
+                    st.caption(f"↳ Albarán: `{_match}`")
         with c3:
             if i == n_refs - 1:
                 st.write("")
@@ -748,7 +792,7 @@ def _dialog_edit_run(run: dict):
             )
         with rc2:
             alb = st.text_input(
-                "Ref. albarán" if i == 0 else "​",
+                "Ref. Lote" if i == 0 else "​",
                 value=r.get("albaran_ref", "") or "",
                 key=f"dedit_alb_{run['id']}_{i}",
                 label_visibility="visible" if i == 0 else "collapsed",
@@ -935,12 +979,12 @@ def _label_from_run():
             help="Número de piezas individuales que contiene cada caja"
         )
     import math as _math
-    _default_n = min(_math.ceil(run["quantity"] / max(1, int(units_per_box))), 9)
+    _default_n = _math.ceil(run["quantity"] / max(1, int(units_per_box)))
     with col_nlab:
         n_labels = st.number_input(
             "Nº etiquetas", min_value=1,
             value=_default_n, step=1, key="label_run_qty",
-            help="Por defecto: unidades ÷ uds por caja (máx. 9 = una página completa)"
+            help="Por defecto: unidades ÷ uds por caja. Cada etiqueta se imprime en su propia página."
         )
     with col_fdays:
         frozen_days = st.number_input(
@@ -949,6 +993,8 @@ def _label_from_run():
             disabled=not frozen,
             help="Días desde elaboración hasta fecha de consumo preferente"
         )
+
+    label_w_mm, label_h_mm = _label_size_picker("label_run_size")
 
     if frozen:
         best_before  = raw_date + timedelta(days=int(frozen_days))
@@ -984,6 +1030,8 @@ def _label_from_run():
                 n_labels         = int(n_labels),
                 units_per_box    = int(units_per_box),
                 last_label_units = int(run["quantity"]) % int(units_per_box),
+                label_width_mm   = label_w_mm,
+                label_height_mm  = label_h_mm,
             )
             st.download_button(
                 "⬇️ Descargar etiquetas",
@@ -1054,8 +1102,8 @@ def _label_manual():
         )
     with col_q:
         n_labels = st.number_input(
-            "Nº etiquetas", min_value=1, value=9, step=1, key="lm_qty",
-            help="9 = una página completa"
+            "Nº etiquetas", min_value=1, value=1, step=1, key="lm_qty",
+            help="Cada etiqueta se imprime en su propia página."
         )
     with col_upb:
         units_per_box = st.number_input(
@@ -1084,6 +1132,8 @@ def _label_manual():
         f"Conservación: {storage_text[:55]}{'…' if len(storage_text)>55 else ''}"
     )
 
+    label_w_mm, label_h_mm = _label_size_picker("lm_size")
+
     if st.button("🏷️ Generar etiquetas PDF", type="primary", key="lm_gen"):
         if not lote.strip():
             st.error("Introduce el número de lote.")
@@ -1100,6 +1150,8 @@ def _label_manual():
                 n_labels         = int(n_labels),
                 units_per_box    = int(units_per_box),
                 last_label_units = 0,  # no quantity known in manual mode
+                label_width_mm   = label_w_mm,
+                label_height_mm  = label_h_mm,
             )
             st.download_button(
                 "⬇️ Descargar etiquetas",
@@ -1224,7 +1276,7 @@ def _generate_log_pdf(run: dict) -> bytes:
     ing_refs = run.get("ingredient_refs", [])
     if ing_refs:
         story.append(Paragraph("Referencias de ingredientes", ps("IH", font=bold_font, size=11, sa=4)))
-        ing_data = [["Ingrediente", "Referencia albarán proveedor"]] + [
+        ing_data = [["Ingrediente", "Ref. Lote proveedor"]] + [
             [r.get("ingredient_name", ""), r.get("albaran_ref", "—")]
             for r in ing_refs
         ]
@@ -1267,7 +1319,7 @@ def _generate_log_pdf(run: dict) -> bytes:
 
 
 # =============================================================================
-# PDF — Product labels  (9-up, 3×3 grid on A4)
+# PDF — Product labels  (one label per page, sized for the thermal printer)
 # =============================================================================
 
 def _generate_labels_pdf(
@@ -1281,8 +1333,9 @@ def _generate_labels_pdf(
     units_per_box: int = 1,
     last_label_units: int = 0,
     storage_text: str | None = None,
+    label_width_mm: float = 101.6,
+    label_height_mm: float = 152.4,
 ) -> bytes:
-    from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.lib import colors
     from reportlab.pdfgen import canvas as pdfcanvas
@@ -1341,16 +1394,15 @@ def _generate_labels_pdf(
     prod_str = prod_date.strftime("%d/%m/%Y") if hasattr(prod_date, "strftime") else str(prod_date)
     bb_str   = best_before.strftime("%d/%m/%Y") if hasattr(best_before, "strftime") else str(best_before)
 
-    # ── Grid geometry ─────────────────────────────────────────────────────────
-    PAGE_W, PAGE_H = A4          # 595.28 × 841.89 pts
-    MARGIN  = 8  * mm
-    GAP     = 3  * mm
-    COLS    = 3
-    ROWS    = 3
+    # ── Page / label geometry ─────────────────────────────────────────────────
+    # One label = one PDF page, sized exactly to the thermal roll so it
+    # prints at 100% scale with no cropping.
+    LABEL_W = label_width_mm  * mm
+    LABEL_H = label_height_mm * mm
+    PAGE_W, PAGE_H = LABEL_W, LABEL_H
+    x0, y0  = 0, 0
 
-    LABEL_W = (PAGE_W - 2 * MARGIN - (COLS - 1) * GAP) / COLS   # ≈ 177 pts / 62.5 mm
-    LABEL_H = (PAGE_H - 2 * MARGIN - (ROWS - 1) * GAP) / ROWS   # ≈ 259 pts / 91.5 mm
-    PAD     = 2.5 * mm
+    PAD       = 4 * mm
     CONTENT_W = LABEL_W - 2 * PAD
 
     # ── Colours ───────────────────────────────────────────────────────────────
@@ -1365,48 +1417,52 @@ def _generate_labels_pdf(
     has_logo  = os.path.exists(logo_path)
 
     buffer = _io.BytesIO()
-    c = pdfcanvas.Canvas(buffer, pagesize=A4)
+    c = pdfcanvas.Canvas(buffer, pagesize=(PAGE_W, PAGE_H))
 
-    # ── Font sizes for small label ────────────────────────────────────────────
-    FS_NAME    = 7.0    # product name
-    FS_SUB     = 5.0    # format / subtitle
-    FS_SECTION = 5.5    # section headers (INGREDIENTES, CONSERVACIÓN…)
-    FS_BODY    = 5.0    # body text
-    FS_FOOTER  = 4.0    # company footer
+    # ── Font sizes ────────────────────────────────────────────────────────────
+    # EU FIC (Reg. 1169/2011, Art. 13 / Annex IV) requires an x-height of at
+    # least 1.2mm for mandatory particulars. For a serif font like EB Garamond
+    # (lower x-height ratio than a sans-serif) that works out to roughly 8pt,
+    # so every mandatory field below (name, ingredients, allergens, net weight,
+    # dates, storage, operator name/address, lot) is set at >=8pt.
+    FS_NAME    = 15.0   # product name
+    FS_SUB     = 9.0    # format / subtitle
+    FS_SECTION = 9.5    # section headers (INGREDIENTES, CONSERVACIÓN…)
+    FS_BODY    = 8.5    # body text
+    FS_FOOTER  = 8.0    # company footer (name, CIF, address)
 
-    # ── Line heights (pts) ────────────────────────────────────────────────────
-    LH_BODY    = 1.9 * mm
-    LH_SECTION = 2.0 * mm
+    # ── Line heights ──────────────────────────────────────────────────────────
+    LH_BODY    = 4.0 * mm
+    LH_SECTION = 4.5 * mm
+    LH_NAME    = 6.0 * mm
 
-    def draw_label(c, x0: float, y0: float, label_upb: int = units_per_box):
-        """Draw one small label with bottom-left at (x0, y0)."""
+    # Header band scales down on shorter labels so the mandatory sections
+    # below (ingredients, allergens, storage, footer) keep enough room.
+    header_h = max(12 * mm, min(20 * mm, LABEL_H * 0.13))
 
-        # Background + border
+    def _draw_bg_and_header():
+        """Draw the background, border and header band (logo) for one page."""
         c.setFillColor(bg)
-        c.roundRect(x0, y0, LABEL_W, LABEL_H, 1.5 * mm, fill=1, stroke=0)
+        c.roundRect(x0, y0, LABEL_W, LABEL_H, 2.5 * mm, fill=1, stroke=0)
         c.setStrokeColor(border)
-        c.setLineWidth(0.4)
-        c.roundRect(x0, y0, LABEL_W, LABEL_H, 1.5 * mm, fill=0, stroke=1)
+        c.setLineWidth(0.6)
+        c.roundRect(x0, y0, LABEL_W, LABEL_H, 2.5 * mm, fill=0, stroke=1)
 
-        # Header band
-        header_h = 11 * mm
         c.setFillColor(header_bg)
         c.roundRect(x0, y0 + LABEL_H - header_h, LABEL_W, header_h,
-                    1.5 * mm, fill=1, stroke=0)
+                    2.5 * mm, fill=1, stroke=0)
         c.rect(x0, y0 + LABEL_H - header_h, LABEL_W, header_h / 2,
                fill=1, stroke=0)
         c.setStrokeColor(border)
-        c.setLineWidth(0.5)
-        c.line(x0, y0 + LABEL_H - header_h,
-               x0 + LABEL_W, y0 + LABEL_H - header_h)
+        c.setLineWidth(0.7)
+        c.line(x0, y0 + LABEL_H - header_h, x0 + LABEL_W, y0 + LABEL_H - header_h)
 
-        # Logo or text in header
         if has_logo:
             try:
                 reader = ImageReader(logo_path)
                 iw, ih = reader.getSize()
                 aspect = iw / ih if ih else 2
-                logo_h = 7 * mm
+                logo_h = 12 * mm
                 logo_w = min(logo_h * aspect, LABEL_W - 2 * PAD)
                 logo_x = x0 + (LABEL_W - logo_w) / 2
                 logo_y = y0 + LABEL_H - header_h + (header_h - logo_h) / 2
@@ -1414,10 +1470,13 @@ def _generate_labels_pdf(
                             height=logo_h, preserveAspectRatio=True, mask="auto")
             except Exception:
                 _draw_centred(c, "Millington Cakes", x0,
-                              y0 + LABEL_H - 5 * mm, LABEL_W, bold_font, 6.5, dark)
+                              y0 + LABEL_H - 10 * mm, LABEL_W, bold_font, 13, dark)
         else:
             _draw_centred(c, "Millington Cakes", x0,
-                          y0 + LABEL_H - 5 * mm, LABEL_W, bold_font, 6.5, dark)
+                          y0 + LABEL_H - 10 * mm, LABEL_W, bold_font, 13, dark)
+
+    def draw_label(label_upb: int = units_per_box):
+        """Draw the label content (below the header, which is static)."""
 
         # Weight string — depends on this label's unit count
         if weight_g and label_upb > 1:
@@ -1428,52 +1487,118 @@ def _generate_labels_pdf(
             weight_str = None
 
         # ── Product name + subtitle ───────────────────────────────────────────
-        y = y0 + LABEL_H - header_h - 3.5 * mm
-        _draw_text(c, recipe_name, x0 + PAD, y, bold_font, FS_NAME, dark)
-        y -= LH_SECTION
+        y = y0 + LABEL_H - header_h - 5 * mm
+        for name_line in _simple_wrap(c, recipe_name, bold_font, FS_NAME, CONTENT_W)[:2]:
+            _draw_text(c, name_line, x0 + PAD, y, bold_font, FS_NAME, dark)
+            y -= LH_NAME
         sub = fmt_display
         if label_upb > 1:
             sub += f"  ·  {label_upb} uds/caja"
         _draw_text(c, sub, x0 + PAD, y, body_font, FS_SUB, mid)
-        y -= 3 * mm
+        y -= 4 * mm
 
         # Divider
         c.setStrokeColor(border)
-        c.setLineWidth(0.3)
+        c.setLineWidth(0.4)
         c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-        y -= 2.5 * mm
+        y -= 3.5 * mm
 
-        # ── Key info rows ─────────────────────────────────────────────────────
-        def _kv(label, value):
-            nonlocal y
+        # ── Key info rows — two per line (Lote/Elaborado, Consumir antes/
+        #    Peso neto) so this block only costs 2 lines instead of 4. ────────
+        col2_x = x0 + PAD + CONTENT_W / 2
+
+        def _kv(label, value, at_x):
             c.setFont(bold_font, FS_BODY)
             c.setFillColor(mid)
-            c.drawString(x0 + PAD, y, label)
-            lw = c.stringWidth(label, bold_font, FS_BODY) + 1.5 * mm
+            c.drawString(at_x, y, label)
+            lw = c.stringWidth(label, bold_font, FS_BODY) + 2 * mm
             c.setFont(body_font, FS_BODY)
             c.setFillColor(dark)
-            c.drawString(x0 + PAD + lw, y, value)
-            y -= LH_BODY
+            c.drawString(at_x + lw, y, value)
 
-        _kv("Lote:", lote)
-        _kv("Elaborado:", prod_str)
-        _kv("Consumir antes:", bb_str)
+        _kv("Lote:", lote, x0 + PAD)
+        _kv("Elaborado:", prod_str, col2_x)
+        y -= LH_BODY
+        _kv("Consumir antes:", bb_str, x0 + PAD)
         if weight_str:
-            _kv("Peso neto:", weight_str)
+            _kv("Peso neto:", weight_str, col2_x)
+        y -= LH_BODY
 
         y -= 1.5 * mm
         c.setStrokeColor(border)
-        c.setLineWidth(0.3)
+        c.setLineWidth(0.4)
         c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-        y -= 2.5 * mm
+        y -= 3.5 * mm
+
+        # ── Ingredients / allergens / storage share whatever vertical room
+        #    is left before the footer. Rather than guess at fixed budgets
+        #    (fragile — easy for the guess to drift from what's actually
+        #    drawn), we measure the real layout with a dry run and shrink
+        #    the least-important content first until it fits:
+        #      1. ingredients can always shrink to 1 line (never disappears)
+        #      2. "may contain traces" is advisory, not a legal requirement
+        #         — first to go if space is critically tight
+        #      3. storage instructions shrink toward 1 line
+        #      4. "CONTIENE" (mandatory allergens) shrinks toward 1 line
+        #         only as an absolute last resort
+        # ──────────────────────────────────────────────────────────────────
+        footer_top = (y0 + PAD) + 10 * mm + 2 * mm  # footer divider + safety buffer
+        allergens_present = bool(allergen_contiene_str or allergen_puede_str)
+
+        contiene_lines_full = (_simple_wrap(c, allergen_contiene_str, bold_font, FS_BODY, CONTENT_W)[:2]
+                                if allergen_contiene_str else [])
+        puede_lines_full    = (_simple_wrap(c, "Trazas: " + allergen_puede_str, body_font, FS_BODY, CONTENT_W)[:2]
+                                if allergen_puede_str else [])
+        storage_lines_full  = _simple_wrap(c, storage, body_font, FS_BODY, CONTENT_W)[:4]
+        ing_lines_full      = (_wrap_text(c, ing_display, body_font, bold_font, FS_BODY, CONTENT_W)
+                                if ing_display else [])
+
+        def _measure(y_top, n_ing, n_contiene, n_puede, n_storage):
+            """Replay the section layout arithmetic without drawing anything;
+            return the y position after the storage section."""
+            yy = y_top - LH_SECTION                        # "INGREDIENTES:" header
+            yy -= max(n_ing, 1) * LH_BODY if ing_lines_full else LH_BODY
+            yy -= 2 * mm
+            if allergens_present:
+                yy -= 4 * mm                                # divider gap
+                if n_contiene:
+                    yy -= LH_SECTION + n_contiene * LH_BODY
+                yy -= n_puede * LH_BODY
+                yy -= 2 * mm
+            yy -= 4 * mm                                    # divider gap before storage
+            yy -= LH_SECTION + max(n_storage, 1) * LH_BODY
+            return yy
+
+        n_ing      = len(ing_lines_full)
+        n_contiene = len(contiene_lines_full)
+        n_puede    = len(puede_lines_full)
+        n_storage  = len(storage_lines_full)
+
+        # Shrink ingredients down to 1 line first (cheapest to give up —
+        # the full list is always in the recipe's approved spec sheet too).
+        while n_ing > 1 and _measure(y, n_ing, n_contiene, n_puede, n_storage) < footer_top:
+            n_ing -= 1
+        # Then drop "may contain traces" (advisory, not a FIC requirement).
+        while n_puede > 0 and _measure(y, n_ing, n_contiene, n_puede, n_storage) < footer_top:
+            n_puede -= 1
+        # Then trim storage instructions toward 1 line.
+        while n_storage > 1 and _measure(y, n_ing, n_contiene, n_puede, n_storage) < footer_top:
+            n_storage -= 1
+        # Last resort: trim "CONTIENE" toward 1 line.
+        while n_contiene > 1 and _measure(y, n_ing, n_contiene, n_puede, n_storage) < footer_top:
+            n_contiene -= 1
+
+        max_ing_lines   = max(n_ing, 1)
+        contiene_lines  = contiene_lines_full[:n_contiene]
+        puede_lines     = puede_lines_full[:n_puede]
+        storage_lines   = storage_lines_full[:n_storage]
 
         # ── Ingredients ───────────────────────────────────────────────────────
         _draw_text(c, "INGREDIENTES:", x0 + PAD, y, bold_font, FS_SECTION, dark)
         y -= LH_SECTION
 
-        if ing_display:
-            lines = _wrap_text(c, ing_display, body_font, bold_font, FS_BODY, CONTENT_W)
-            for line_parts in lines[:4]:   # cap at 4 lines on a small label
+        if ing_lines_full:
+            for line_parts in ing_lines_full[:max_ing_lines]:
                 _draw_rich_line(c, x0 + PAD, y, line_parts,
                                 body_font, bold_font, FS_BODY, dark)
                 y -= LH_BODY
@@ -1481,69 +1606,57 @@ def _generate_labels_pdf(
             _draw_text(c, "Ver ficha técnica.", x0 + PAD, y, body_font, FS_BODY, mid)
             y -= LH_BODY
 
-        y -= 1.5 * mm
+        y -= 2 * mm
 
         # ── Allergens ─────────────────────────────────────────────────────────
-        if allergen_contiene_str or allergen_puede_str:
+        if allergens_present:
             c.setStrokeColor(border)
-            c.setLineWidth(0.3)
+            c.setLineWidth(0.4)
             c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-            y -= 2.5 * mm
-            if allergen_contiene_str:
+            y -= 4 * mm
+            if contiene_lines:
                 _draw_text(c, "CONTIENE:", x0 + PAD, y, bold_font, FS_SECTION, dark)
                 y -= LH_SECTION
-                for line in _simple_wrap(c, allergen_contiene_str,
-                                         bold_font, FS_BODY, CONTENT_W)[:2]:
+                for line in contiene_lines:
                     _draw_text(c, line, x0 + PAD, y, bold_font, FS_BODY, dark)
                     y -= LH_BODY
-            if allergen_puede_str:
-                txt = "Trazas: " + allergen_puede_str
-                for line in _simple_wrap(c, txt, body_font, FS_BODY, CONTENT_W)[:2]:
-                    _draw_text(c, line, x0 + PAD, y, body_font, FS_BODY, mid)
-                    y -= LH_BODY
-            y -= 1 * mm
+            for line in puede_lines:
+                _draw_text(c, line, x0 + PAD, y, body_font, FS_BODY, mid)
+                y -= LH_BODY
+            y -= 2 * mm
 
         # ── Storage ───────────────────────────────────────────────────────────
         c.setStrokeColor(border)
-        c.setLineWidth(0.3)
+        c.setLineWidth(0.4)
         c.line(x0 + PAD, y, x0 + LABEL_W - PAD, y)
-        y -= 2.5 * mm
+        y -= 4 * mm
         _draw_text(c, "CONSERVACIÓN:", x0 + PAD, y, bold_font, FS_SECTION, dark)
         y -= LH_SECTION
-        for line in _simple_wrap(c, storage, body_font, FS_BODY, CONTENT_W)[:3]:
+        for line in storage_lines:
             _draw_text(c, line, x0 + PAD, y, body_font, FS_BODY, dark)
             y -= LH_BODY
 
         # ── Footer (pinned to bottom of label) ────────────────────────────────
         footer_y = y0 + PAD
         c.setStrokeColor(border)
-        c.setLineWidth(0.3)
-        c.line(x0 + PAD, footer_y + 5 * mm, x0 + LABEL_W - PAD, footer_y + 5 * mm)
-        _draw_text(c, COMPANY_NAME, x0 + PAD, footer_y + 3.5 * mm,
+        c.setLineWidth(0.4)
+        c.line(x0 + PAD, footer_y + 10 * mm, x0 + LABEL_W - PAD, footer_y + 10 * mm)
+        _draw_text(c, COMPANY_NAME, x0 + PAD, footer_y + 7 * mm,
                    bold_font, FS_FOOTER, mid)
-        _draw_text(c, f"CIF: {COMPANY_CIF}", x0 + PAD, footer_y + 2 * mm,
+        _draw_text(c, f"CIF: {COMPANY_CIF}", x0 + PAD, footer_y + 4 * mm,
                    body_font, FS_FOOTER, light)
-        addr_lines = _simple_wrap(c, COMPANY_ADDRESS, body_font, FS_FOOTER - 0.5, CONTENT_W)
+        addr_lines = _simple_wrap(c, COMPANY_ADDRESS, body_font, FS_FOOTER, CONTENT_W)
         _draw_text(c, addr_lines[0] if addr_lines else COMPANY_ADDRESS,
-                   x0 + PAD, footer_y + 0.5 * mm, body_font, FS_FOOTER - 0.5, light)
+                   x0 + PAD, footer_y + 1 * mm, body_font, FS_FOOTER, light)
 
-    # ── Lay out 9 labels per page in a 3×3 grid ───────────────────────────────
-    labels_drawn = 0
-    while labels_drawn < n_labels:
-        for row in range(ROWS - 1, -1, -1):          # top row first (PDF y increases upward)
-            for col in range(COLS):
-                if labels_drawn >= n_labels:
-                    break
-                x0 = MARGIN + col * (LABEL_W + GAP)
-                y0 = MARGIN + row * (LABEL_H + GAP)
-                is_last = (labels_drawn == n_labels - 1)
-                upb_this = (last_label_units if (is_last and last_label_units > 0)
-                            else units_per_box)
-                draw_label(c, x0, y0, label_upb=upb_this)
-                labels_drawn += 1
-            if labels_drawn >= n_labels:
-                break
-        if labels_drawn < n_labels:
+    # ── One label per page ────────────────────────────────────────────────────
+    for i in range(n_labels):
+        is_last  = (i == n_labels - 1)
+        upb_this = (last_label_units if (is_last and last_label_units > 0)
+                    else units_per_box)
+        _draw_bg_and_header()
+        draw_label(label_upb=upb_this)
+        if not is_last:
             c.showPage()
 
     c.save()

@@ -2724,6 +2724,44 @@ def save_goods_receipt(
     return saved
  
  
+def get_albaran_by_lote(limit: int = 300) -> dict[str, str]:
+    """
+    Build a lookup of {supplier_lot (lowercased, stripped): albaran_ref}
+    from recent goods receipts, so production screens can show which
+    delivery note (albarán) a given supplier lot number came from.
+    """
+    sb = get_client()
+    receipts = (
+        sb.table("goods_receipts")
+          .select("id, albaran_ref")
+          .order("receipt_date", desc=True)
+          .limit(limit)
+          .execute()
+          .data or []
+    )
+    if not receipts:
+        return {}
+    albaran_by_receipt = {
+        r["id"]: r.get("albaran_ref") for r in receipts if r.get("albaran_ref")
+    }
+    if not albaran_by_receipt:
+        return {}
+    items = (
+        sb.table("goods_receipt_items")
+          .select("receipt_id, supplier_lot")
+          .in_("receipt_id", list(albaran_by_receipt.keys()))
+          .execute()
+          .data or []
+    )
+    lookup: dict[str, str] = {}
+    for it in items:
+        lot = (it.get("supplier_lot") or "").strip().lower()
+        albaran = albaran_by_receipt.get(it["receipt_id"])
+        if lot and albaran and lot not in lookup:
+            lookup[lot] = albaran
+    return lookup
+
+
 def get_goods_receipts(limit: int = 30) -> list[dict]:
     """Return recent goods receipts, newest first, with items attached."""
     sb   = get_client()

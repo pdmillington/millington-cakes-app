@@ -1,4 +1,5 @@
 # screen_recipes.py
+import uuid
 import streamlit as st
 import millington_db as db
 from screen_analysis import screen_analysis
@@ -625,6 +626,8 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
                 existing_pcc = db.get_pcc_steps(selected_id)
             except Exception:
                 pass
+        for s in existing_pcc:
+            s.setdefault("_uid", str(s.get("id")) if s.get("id") else uuid.uuid4().hex)
         st.session_state[pcc_key] = existing_pcc or []
         st.session_state[pcc_key].append(_empty_pcc_step())
 
@@ -640,31 +643,36 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
 
     pcc_remove_idx = None
     for idx, step in enumerate(working_pcc):
+        # Use a stable per-row id (not the list position) for widget keys.
+        # Positional keys break deletion: after removing a row, later rows
+        # shift into a key that Streamlit already has cached state for,
+        # so the "deleted" row's text reappears instead of disappearing.
+        uid = step.get("_uid") or uuid.uuid4().hex
         pc1, pc2, pc3, pc4, pc5 = st.columns([2.5, 1, 1, 1, 0.5])
         with pc1:
             step_name = st.text_input(
-                "Elaboración", key=f"pcc_name_{selected_id}_{idx}",
+                "Elaboración", key=f"pcc_name_{selected_id}_{uid}",
                 value=step.get("step_name", ""),
                 placeholder="e.g. Horneado bizcocho",
                 label_visibility="visible" if idx == 0 else "collapsed"
             )
         with pc2:
             target_temp = st.number_input(
-                "Temp. objetivo", key=f"pcc_temp_{selected_id}_{idx}",
+                "Temp. objetivo", key=f"pcc_temp_{selected_id}_{uid}",
                 value=float(step.get("target_temp_c") or 0),
                 min_value=0.0, max_value=300.0, step=5.0,
                 label_visibility="visible" if idx == 0 else "collapsed"
             )
         with pc3:
             target_time = st.number_input(
-                "Tiempo", key=f"pcc_time_{selected_id}_{idx}",
+                "Tiempo", key=f"pcc_time_{selected_id}_{uid}",
                 value=int(step.get("target_time_min") or 0),
                 min_value=0, max_value=300, step=5,
                 label_visibility="visible" if idx == 0 else "collapsed"
             )
         with pc4:
             critical_limit = st.number_input(
-                "Límite crítico", key=f"pcc_limit_{selected_id}_{idx}",
+                "Límite crítico", key=f"pcc_limit_{selected_id}_{uid}",
                 value=float(step.get("critical_limit_temp_c") or 70.0),
                 min_value=0.0, max_value=300.0, step=1.0,
                 label_visibility="visible" if idx == 0 else "collapsed",
@@ -673,13 +681,14 @@ def _recipe_editor(p, selected_id, recipe, lines, code_options,
             )
         with pc5:
             if step_name.strip() and st.button(
-                "✕", key=f"pcc_del_{selected_id}_{idx}",
+                "✕", key=f"pcc_del_{selected_id}_{uid}",
                 help="Eliminar este paso"
             ):
                 pcc_remove_idx = idx
 
         st.session_state[pcc_key][idx] = {
             "id":                  step.get("id"),
+            "_uid":                uid,
             "step_name":           step_name.strip(),
             "target_temp_c":       target_temp if target_temp > 0 else None,
             "target_time_min":     target_time if target_time > 0 else None,
@@ -893,6 +902,7 @@ def _empty_line() -> dict:
 def _empty_pcc_step() -> dict:
     return {
         "id":                    None,
+        "_uid":                  uuid.uuid4().hex,
         "step_name":             "",
         "target_temp_c":         None,
         "target_time_min":       None,
