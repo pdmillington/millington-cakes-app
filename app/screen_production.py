@@ -1406,12 +1406,17 @@ def _generate_labels_pdf(
     CONTENT_W = LABEL_W - 2 * PAD
 
     # ── Colours ───────────────────────────────────────────────────────────────
-    dark      = colors.HexColor("#1a1a1a")
-    mid       = colors.HexColor("#4b5563")
-    light     = colors.HexColor("#9ca3af")
-    bg        = colors.HexColor("#F2EEE8")
-    border    = colors.HexColor("#c4bdb4")
-    header_bg = colors.HexColor("#ebe6de")
+    # Pure black on white — the off-white/grey palette used elsewhere in the
+    # app doesn't reproduce well on the thermal printer (greys dither into
+    # faint, patchy dots instead of a clean solid), so this label uses solid
+    # black ink on a plain white background throughout, with bold/size for
+    # hierarchy instead of colour.
+    dark      = colors.HexColor("#000000")
+    mid       = colors.HexColor("#000000")
+    light     = colors.HexColor("#000000")
+    bg        = colors.HexColor("#FFFFFF")
+    border    = colors.HexColor("#000000")
+    header_bg = colors.HexColor("#FFFFFF")
 
     logo_path = os.path.join(DATA_DIR, "Logo.png")
     has_logo  = os.path.exists(logo_path)
@@ -1448,11 +1453,6 @@ def _generate_labels_pdf(
         c.setLineWidth(0.6)
         c.roundRect(x0, y0, LABEL_W, LABEL_H, 2.5 * mm, fill=0, stroke=1)
 
-        c.setFillColor(header_bg)
-        c.roundRect(x0, y0 + LABEL_H - header_h, LABEL_W, header_h,
-                    2.5 * mm, fill=1, stroke=0)
-        c.rect(x0, y0 + LABEL_H - header_h, LABEL_W, header_h / 2,
-               fill=1, stroke=0)
         c.setStrokeColor(border)
         c.setLineWidth(0.7)
         c.line(x0, y0 + LABEL_H - header_h, x0 + LABEL_W, y0 + LABEL_H - header_h)
