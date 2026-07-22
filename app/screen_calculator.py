@@ -11,6 +11,33 @@ from core.pricing_engine import (
 from ui.components import missing_prices_warning, cost_breakdown_metrics, weight_estimate_expander
 
 
+def _pick_variant_weight(variants: list, default_weight: float, widget_key: str) -> float:
+    """
+    Resolve the reference weight to cost against for an individual/bocado
+    format. If the recipe has just one (or zero) variant of that format,
+    behaviour is unchanged — the recipe-level default weight is used unless
+    that single variant carries its own ref_weight_g override. If there are
+    several (e.g. a standard individual plus a heavier client-specific one),
+    show a selector so the user picks which variant they're costing.
+    """
+    with_weight = [v for v in variants if v.get("ref_weight_g")]
+    if len(with_weight) <= 1:
+        only = with_weight[0] if with_weight else None
+        return float(only["ref_weight_g"]) if only else default_weight
+
+    def _label(v):
+        w    = float(v["ref_weight_g"])
+        code = v.get("sku_ws") or v.get("sku_gw") or "sin SKU"
+        return f"{w:.0f}g — {code}"
+
+    labels = [_label(v) for v in with_weight]
+    choice = st.selectbox(
+        "Variant (this recipe has more than one weight for this format)",
+        labels, key=widget_key
+    )
+    return float(with_weight[labels.index(choice)]["ref_weight_g"])
+
+
 def screen_calculator():
     st.title("Cost calculator")
     st.caption("Per-cake cost and suggested price for any recipe and format")
@@ -45,6 +72,17 @@ def screen_calculator():
     has_bocado     = bool(recipe.get("has_bocado"))
     ind_weight     = float(recipe.get("individual_weight_g") or s.individual_weight_g)
     boc_weight     = float(recipe.get("bocado_weight_g") or s.bocado_weight_g)
+
+    # A recipe can have more than one individual/bocado variant with its own
+    # weight (e.g. a standard individual plus a heavier client-specific one)
+    # — each variant's own ref_weight_g (set in Variantes) takes priority over
+    # the recipe-level default below when there's more than one to choose from.
+    try:
+        recipe_variants_by_fmt: dict[str, list] = {}
+        for v in db.get_variants_for_recipe(recipe["id"]):
+            recipe_variants_by_fmt.setdefault(v.get("format"), []).append(v)
+    except Exception:
+        recipe_variants_by_fmt = {}
 
     # Labour reference times
     ref_batch_size    = float(recipe.get("ref_batch_size") or 20)
@@ -202,6 +240,9 @@ def screen_calculator():
         labour_ref_prep  = small_prep_hours if small_prep_hours else ref_prep_hours
         labour_ref_oven  = small_oven_hours if small_oven_hours else ref_oven_hours
         labour_ref_batch = s.ws_batch_individual
+        ind_weight = _pick_variant_weight(
+            recipe_variants_by_fmt.get("individual", []), ind_weight, "calc_ind_variant"
+        )
         scale              = ind_weight / ref_weight_g if ref_weight_g else 0
         size_labour_factor = 1.0
 
@@ -228,6 +269,9 @@ def screen_calculator():
         labour_ref_prep  = bocado_prep_hours if bocado_prep_hours else ref_prep_hours
         labour_ref_oven  = bocado_oven_hours if bocado_oven_hours else ref_oven_hours
         labour_ref_batch = s.ws_batch_bocado
+        boc_weight = _pick_variant_weight(
+            recipe_variants_by_fmt.get("bocado", []), boc_weight, "calc_boc_variant"
+        )
         scale              = boc_weight / ref_weight_g if ref_weight_g else 0
         size_labour_factor = 1.0
 

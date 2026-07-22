@@ -117,12 +117,20 @@ def screen_repricing(embedded: bool = False):
             continue
 
         # ── Ingredient scale ──────────────────────────────────────────────────
+        # For individual/bocado, prefer the variant's own ref_weight_g (set in
+        # Variantes) over the recipe-level default, so two variants of the same
+        # format on the same recipe (e.g. a standard individual and a heavier
+        # client-specific individual) each cost against their own weight
+        # instead of silently sharing the recipe's single default weight.
+        used_weight_g = None
         if fmt == "individual":
-            iw    = float(recipe.get("individual_weight_g") or s.individual_weight_g)
-            scale = iw / ref_weight_g if ref_weight_g > 0 else 0
+            default_iw    = float(recipe.get("individual_weight_g") or s.individual_weight_g)
+            used_weight_g = _f(variant.get("ref_weight_g")) or default_iw
+            scale = used_weight_g / ref_weight_g if ref_weight_g > 0 else 0
         elif fmt == "bocado":
-            bw    = float(recipe.get("bocado_weight_g") or s.bocado_weight_g)
-            scale = bw / ref_weight_g if ref_weight_g > 0 else 0
+            default_bw    = float(recipe.get("bocado_weight_g") or s.bocado_weight_g)
+            used_weight_g = _f(variant.get("ref_weight_g")) or default_bw
+            scale = used_weight_g / ref_weight_g if ref_weight_g > 0 else 0
         else:
             # Standard — scale by volume if variant has its own diameter
             variant_d = _f(variant.get("ref_diameter_cm"))
@@ -202,15 +210,20 @@ def screen_repricing(embedded: bool = False):
         if status not in filter_status:
             continue
 
-        # ── Recipe label — include size for multi-size standard variants ───────
-        variant_d  = _f(variant.get("ref_diameter_cm"))
-        size_label = (
-            variant.get("size_description") or
-            (f"{variant_d:.0f}cm" if variant_d else "")
-        )
+        # ── Recipe label — include size/weight so multiple variants of the
+        #    same recipe+format (different diameters, or now different
+        #    individual/bocado weights) are distinguishable in the table ─────
+        if fmt in ("individual", "bocado"):
+            size_label = f"{used_weight_g:.0f}g" if used_weight_g else ""
+        else:
+            variant_d  = _f(variant.get("ref_diameter_cm"))
+            size_label = (
+                variant.get("size_description") or
+                (f"{variant_d:.0f}cm" if variant_d else "")
+            )
         recipe_label = (
             f"{recipe['name']} ({size_label})"
-            if size_label and fmt == "standard"
+            if size_label
             else recipe["name"]
         )
 
