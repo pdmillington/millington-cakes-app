@@ -68,20 +68,30 @@ def _find_ficha_photo(
     cake_code: str,
     version: str,
     fmt_key: str,
+    size_code: str | None = None,
 ) -> str | None:
     """
     For fichas — exact size-code match only, no recipe-level fallback.
-    Standard format fichas are skipped (size code LA/XL/XX not derivable
-    from the variant dict without a SKU lookup).
+
+    Prefers the variant's own size_code (e.g. 'li' for a new individual
+    size) when available — this is the only way a size code added after
+    this list was written (like the Eneldo Lemon Pie's 'LI') gets matched
+    correctly. Falls back to a guessed list of known codes per format for
+    older data that predates size_code being stored/selected.
     """
     code = cake_code.lower()
     ver  = version.lower()
     base = f"{code}-{ver}"
 
+    if size_code:
+        candidates = index.get(f"{base}-{size_code.strip().lower()}")
+        if candidates:
+            return random.choice(candidates)
+
     size_codes = {
         "standard":   ["la", "xl", "xx", "dc"],
         "bocado":     ["mi", "bo"],
-        "individual": ["ti", "in"],
+        "individual": ["ti", "in", "li", "ca"],
     }.get(fmt_key, [])
 
     for sc in size_codes:
@@ -160,58 +170,77 @@ def screen_catalogue():
 
     recipe_by_id = {r["id"]: r for r in recipes}
 
-    # Build variant lookup: {recipe_id: {format: variant}}
-    var_lookup: dict[str, dict[str, dict]] = {}
-    for v in all_variants:
-        var_lookup.setdefault(v["recipe_id"], {})[v["format"]] = v
+    # Flat lookup by variant id — used everywhere below (and passed into PDF
+    # generation) so each variant is addressed individually. A recipe can
+    # have more than one variant of the same format (e.g. a standard 100g
+    # individual and a heavier client-specific one), and a dict keyed only
+    # by {recipe_id: {format: variant}} would silently collapse those into
+    # a single entry — which is exactly what hid the Eneldo Lemon Pie.
+    variant_by_id: dict[str, dict] = {v["id"]: v for v in all_variants}
 
-    # Build product list using APPROVED prices
-    # Each row stores the variant_id so we can apply client overrides later.
+    fmt_label_by_key = {k: lbl for lbl, k in FORMAT_GROUPS}
+
+    # Build product list using APPROVED prices — one row per variant.
     catalogue_rows: dict[str, list[dict]] = {
         "Tarta": [], "Tarta Individual": [],
         "Bocados": [], "Otros": [],
     }
 
-    for recipe in sorted(recipes, key=lambda r: r["name"]):
-        rid      = recipe["id"]
-        name     = recipe["name"]
-        is_otros = recipe.get("catalogue_section") == "otros"
+    sorted_variants = sorted(
+        all_variants,
+        key=lambda v: (
+            recipe_by_id.get(v["recipe_id"], {}).get("name", ""),
+            v.get("format", ""),
+            float(v.get("ref_diameter_cm") or 0),
+            float(v.get("ref_weight_g") or 0),
+        )
+    )
 
-        for fmt_label, fmt_key in FORMAT_GROUPS:
-            if fmt_key == "standard":
-                active = True
-            elif fmt_key == "individual":
-                active = bool(recipe.get("has_individual"))
-            else:
-                active = bool(recipe.get("has_bocado"))
+    for variant in sorted_variants:
+        rid    = variant["recipe_id"]
+        recipe = recipe_by_id.get(rid)
+        if not recipe:
+            # Component/sub-recipe or deprecated recipe — not sold, skip.
+            continue
 
-            if not active:
-                continue
+        fmt_key = variant.get("format", "standard")
+        if fmt_key not in fmt_label_by_key:
+            continue
+        fmt_label  = fmt_label_by_key[fmt_key]
+        name       = recipe["name"]
+        is_otros   = recipe.get("catalogue_section") == "otros"
+        variant_id = variant.get("id")
 
-            variant    = var_lookup.get(rid, {}).get(fmt_key, {})
-            variant_id = variant.get("id")
+        # Use APPROVED price — not working price
+        approved_price = (
+            float(variant.get("ws_price_approved") or 0) or None
+        )
+        approved_date = (
+            str(variant.get("ws_price_approved_at") or "")[:10] or None
+        )
 
-            # Use APPROVED price — not working price
-            approved_price = (
-                float(variant.get("ws_price_approved") or 0) or None
-            )
-            approved_date = (
-                str(variant.get("ws_price_approved_at") or "")[:10] or None
-            )
-            size_desc  = variant.get("size_description") or ""
-            group      = "Otros" if is_otros and fmt_key == "standard" \
-                else fmt_label
+        # Size/weight suffix — needed to tell apart two variants of the
+        # same recipe+format (e.g. 100g vs 130g individual).
+        if fmt_key in ("individual", "bocado"):
+            w = variant.get("ref_weight_g")
+            size_desc = f"{float(w):.0f}g" if w else (variant.get("size_description") or "")
+        else:
+            size_desc = variant.get("size_description") or ""
+            if not size_desc and variant.get("ref_diameter_cm"):
+                size_desc = f"{float(variant['ref_diameter_cm']):.0f}cm"
 
-            catalogue_rows[group].append({
-                "variant_id":     variant_id,
-                "recipe_id":      rid,
-                "fmt_key":        fmt_key,
-                "name":           name,
-                "size":           size_desc,
-                "ws_price":       approved_price,   # approved price
-                "approved_date":  approved_date,
-                "group":          group,
-            })
+        group = "Otros" if is_otros and fmt_key == "standard" else fmt_label
+
+        catalogue_rows[group].append({
+            "variant_id":     variant_id,
+            "recipe_id":      rid,
+            "fmt_key":        fmt_key,
+            "name":           name,
+            "size":           size_desc,
+            "ws_price":       approved_price,   # approved price
+            "approved_date":  approved_date,
+            "group":          group,
+        })
 
     # ── Product selector ──────────────────────────────────────────────────────
     st.markdown("### Selección de productos")
@@ -234,10 +263,11 @@ def screen_catalogue():
                 else "⚠️ Sin precio aprobado"
             )
             label = f"{row['name']}  ·  {row['size']}  ·  {price_str}"
+            sel_key = row["variant_id"] or f"{row['recipe_id']}_{row['fmt_key']}"
             checked = cols[i % 2].checkbox(
                 label,
                 value=bool(row["ws_price"]),
-                key=f"cat_sel_{row['recipe_id']}_{row['fmt_key']}"
+                key=f"cat_sel_{sel_key}"
             )
             if checked:
                 selected_rows.append(row)
@@ -457,7 +487,7 @@ def screen_catalogue():
     for row in resolved_rows:
         vid = row.get("variant_id")
         if vid:
-            v = var_lookup.get(row["recipe_id"], {}).get(row["fmt_key"], {})
+            v = variant_by_id.get(vid, {})
             if not v.get("label_approved"):
                 unapproved.append(f"{row['name']} ({FORMAT_DISPLAY.get(row['fmt_key'], row['fmt_key'])})")
 
@@ -473,11 +503,12 @@ def screen_catalogue():
     if st.button(btn_label, type="primary"):
         with st.spinner("Generando catálogo y fichas…"):
             try:
-                # Fetch full variant data for ficha generation
+                # Fetch full variant data for ficha generation — keyed by
+                # variant id, not recipe+format, so two variants of the same
+                # recipe/format each get their own ficha instead of both
+                # resolving to whichever one happened to load last.
                 all_v = db.get_all_variants_full()
-                full_var_lookup: dict[str, dict[str, dict]] = {}
-                for v in all_v:
-                    full_var_lookup.setdefault(v["recipe_id"], {})[v["format"]] = v
+                full_variant_by_id = {v["id"]: v for v in all_v}
 
                 pdf_bytes = _generate_pdf(
                     rows            = resolved_rows,
@@ -490,7 +521,7 @@ def screen_catalogue():
                     cond_allergen   = custom_allergen,
                     cond_avail      = custom_availability,
                     cond_returns    = custom_returns,
-                    var_lookup      = full_var_lookup,
+                    var_lookup      = full_variant_by_id,
                     recipe_by_id    = recipe_by_id,
                     photo_overrides = photo_overrides,
                     intro_grid      = intro_grid_items,
@@ -574,7 +605,7 @@ def _generate_pdf(
     cond_avail: str,
     cond_returns: str,
     include_fichas: bool = True,
-    var_lookup: dict = None,
+    var_lookup: dict = None,  # flat {variant_id: variant} — see call site
     recipe_by_id: dict = None,
     photo_overrides: dict = None,
     intro_grid: list = None,
@@ -923,7 +954,12 @@ def _generate_pdf(
         for row in rows:
             rid     = row["recipe_id"]
             fmt_key = row["fmt_key"]
-            variant = (var_lookup.get(rid) or {}).get(fmt_key, {})
+            vid     = row.get("variant_id")
+            # var_lookup is flat {variant_id: variant} — looking this up by
+            # variant_id (not recipe_id+format) is what lets two variants
+            # of the same recipe+format (e.g. two individual sizes) each
+            # get their own, correctly-distinct ficha.
+            variant = var_lookup.get(vid) or {}
             if not variant:
                 continue
 
@@ -931,7 +967,11 @@ def _generate_pdf(
             fmt_label = {"standard": "Tarta estándar",
                          "individual": "Individual",
                          "bocado": "Bocado"}.get(fmt_key, "")
-            size_desc = variant.get("size_description") or ""
+            if fmt_key in ("individual", "bocado"):
+                w = variant.get("ref_weight_g")
+                size_desc = f"{float(w):.0f}g" if w else (variant.get("size_description") or "")
+            else:
+                size_desc = variant.get("size_description") or ""
             if fmt_key == "standard" and size_desc:
                 ficha_title = f"{row['name']} — {size_desc}"
             elif fmt_key != "standard":
@@ -948,7 +988,10 @@ def _generate_pdf(
             version = recipe.get("version") or "01"
             if cc_id and photo_index:
                 cc_code    = cake_code_by_id.get(cc_id, "")
-                photo_path = _find_ficha_photo(photo_index, cc_code, version, fmt_key)
+                photo_path = _find_ficha_photo(
+                    photo_index, cc_code, version, fmt_key,
+                    size_code=variant.get("size_code")
+                )
 
             story.append(PageBreak())
             _add_ficha_page(
