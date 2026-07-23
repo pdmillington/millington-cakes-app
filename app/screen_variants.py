@@ -500,8 +500,12 @@ def _dialog_add_size(fmt: str, recipe: dict, rid: str, existing_codes: set):
     weight = st.number_input("Peso aprox. (g)", value=default_w, min_value=0.0)
 
     # ── SKUs ──────────────────────────────────────────────────────────────────
-    auto_ws = f"{cake_code}-01-{size_code}-WS" if cake_code and size_code else ""
-    auto_gw = f"{cake_code}-01-{size_code}-GW" if cake_code and size_code else ""
+    # Version comes from the recipe itself (segment 2 identifies the actual
+    # formulation — LP-02 is a genuinely different recipe from LP-01, not
+    # just "a newer Lemon Pie"), so it must never be hardcoded here.
+    recipe_version = (recipe.get("version") or "01").strip().zfill(2)
+    auto_ws = f"{cake_code}-{recipe_version}-{size_code}-WS" if cake_code and size_code else ""
+    auto_gw = f"{cake_code}-{recipe_version}-{size_code}-GW" if cake_code and size_code else ""
 
     sk1, sk2 = st.columns(2)
     with sk1:
@@ -545,6 +549,14 @@ def _dialog_add_size(fmt: str, recipe: dict, rid: str, existing_codes: set):
                     f"El código `{size_code}` ya existe para esta receta y nivel. "
                     "Usa un código diferente."
                 )
+                # Show the raw DB error too — the generic message above is a
+                # guess at *which* uniqueness rule fired. If it isn't really
+                # about size_code (e.g. the real constraint is on something
+                # else, like the channel field, which every variant here sets
+                # to the same "both" value), the raw text below will name the
+                # actual constraint.
+                with st.expander("Detalle técnico del error"):
+                    st.code(err)
             else:
                 st.error(f"Error al añadir: {err}")
 
@@ -596,9 +608,12 @@ def _dialog_edit_size(variant: dict, recipe: dict):
         min_value=0.0,
     )
 
-    # Auto-generate SKUs from (possibly updated) size_code
-    auto_ws = f"{cake_code}-01-{size_code}-WS" if cake_code and size_code else ""
-    auto_gw = f"{cake_code}-01-{size_code}-GW" if cake_code and size_code else ""
+    # Auto-generate SKUs from (possibly updated) size_code.
+    # Version comes from the recipe itself (LP-02 is a different recipe from
+    # LP-01, not just "a newer Lemon Pie") — never hardcode it here.
+    recipe_version = (recipe.get("version") or "01").strip().zfill(2)
+    auto_ws = f"{cake_code}-{recipe_version}-{size_code}-WS" if cake_code and size_code else ""
+    auto_gw = f"{cake_code}-{recipe_version}-{size_code}-GW" if cake_code and size_code else ""
 
     sk1, sk2 = st.columns(2)
     with sk1:
