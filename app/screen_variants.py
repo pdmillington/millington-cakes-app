@@ -135,6 +135,51 @@ def screen_variants():
                             f"· peso {f.get('ref_weight_g') or '—'}g"
                         )
 
+        st.divider()
+        st.caption(
+            "Busca por texto dentro del SKU — útil para revisar variantes de "
+            "cliente específico (ej. 'MD' para Mentidero) y comprobar que el "
+            "número de versión en el SKU coincide con la versión real de la "
+            "receta (el autocompletado antiguo siempre ponía '-01-', diera "
+            "igual la versión real)."
+        )
+        find_sku_text = st.text_input(
+            "Texto en el SKU", placeholder="ej. MD", key="var_find_sku_text"
+        ).strip()
+        if find_sku_text:
+            try:
+                sku_found = db.find_variants_by_sku_text(find_sku_text)
+            except Exception as e:
+                sku_found = None
+                st.error(f"Error al buscar: {e}")
+            if sku_found is not None:
+                if not sku_found:
+                    st.info(f"Ningún SKU contiene `{find_sku_text}`.")
+                else:
+                    st.warning(f"{len(sku_found)} variante(s) encontradas:")
+                    for f in sku_found:
+                        r = f.get("recipes") or {}
+                        dep = "🚫 deprecada" if r.get("deprecated") else "activa"
+                        recipe_version = (r.get("version") or "01").strip().zfill(2)
+                        mismatches = []
+                        for field in ("sku_ws", "sku_gw"):
+                            sku_val = f.get(field)
+                            if sku_val:
+                                parts = sku_val.split("-")
+                                if len(parts) >= 2 and parts[1] != recipe_version:
+                                    mismatches.append(f"{field}=`{sku_val}` (dice v{parts[1]})")
+                        flag = (
+                            f"  ⚠️ **versión no coincide con la receta (v{recipe_version})**: "
+                            + ", ".join(mismatches)
+                            if mismatches else ""
+                        )
+                        st.markdown(
+                            f"- **{r.get('name', '?')}** (v{recipe_version}, {dep}) — "
+                            f"formato `{f.get('format')}`, código `{f.get('size_code') or '—'}` — "
+                            f"SKU WS `{f.get('sku_ws') or '—'}` · SKU GW `{f.get('sku_gw') or '—'}`"
+                            f"{flag}"
+                        )
+
     recipes      = db.get_recipes()
     recipe_by_id = {r["id"]: r for r in recipes}
     recipe_names = sorted([r["name"] for r in recipes], key=str.lower)

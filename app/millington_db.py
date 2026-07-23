@@ -724,6 +724,33 @@ def find_variants_by_size_code(size_code: str) -> list[dict]:
     return result.data or []
 
 
+def find_variants_by_sku_text(text: str) -> list[dict]:
+    """
+    Return every product_variants row whose sku_ws or sku_gw contains the
+    given text (case-insensitive substring match), across ALL recipes —
+    including deprecated ones and sub-recipes.
+
+    Diagnostic helper: e.g. searching "MD" surfaces every client-specific
+    (Mentidero) variant so you can check whether the version segment baked
+    into its SKU text still matches the recipe's actual current version —
+    the SKU auto-suggestion used to hardcode "-01-" regardless of the
+    recipe's real version, so older saved SKUs may be stale even though new
+    ones are now generated correctly.
+    """
+    sb   = get_client()
+    like = f"%{text.strip()}%"
+    result = (
+        sb.table("product_variants")
+        .select(
+            "id, recipe_id, format, size_code, sku_ws, sku_gw, ref_weight_g, "
+            "recipes(name, version, deprecated, is_sub_recipe, cake_codes(code))"
+        )
+        .or_(f"sku_ws.ilike.{like},sku_gw.ilike.{like}")
+        .execute()
+    )
+    return result.data or []
+
+
 def save_variant(record: dict) -> dict:
     sb = get_client()
     record["updated_at"] = "now()"
@@ -1569,7 +1596,8 @@ def get_all_variants_full_with_approval() -> list[dict]:
             "ws_price_ex_vat, ws_price_approved, ws_price_approved_at, "
             "rt_price_inc_vat, rt_price_approved, rt_price_approved_at, "
             "ws_price_updated_at, rt_price_updated_at, "
-            "size_description"
+            "size_description, ref_diameter_cm, ref_weight_g, "
+            "sku_ws, sku_gw"
         )
         .execute()
     )

@@ -16,6 +16,7 @@ from core.constants import FORMAT_TIER_CODES
 from core.settings import load_settings
 from core.pricing_engine import calc_ingredient_cost, calc_labour_cost
 from ui.components import missing_prices_warning
+from screen_calculator import _pick_variant_weight
 
 def screen_analysis(recipe_id: str | None = None):
     """
@@ -83,10 +84,69 @@ def screen_analysis(recipe_id: str | None = None):
     ref_oven_hours = float(recipe.get("ref_oven_hours") or 1.0)
     size_type      = recipe.get("size_type", "diameter")
     ref_diameter   = float(recipe.get("ref_diameter_cm") or 22)
+    has_individual = bool(recipe.get("has_individual"))
+    has_bocado     = bool(recipe.get("has_bocado"))
+
+    # ── Format selector — a recipe may be sold as its standard size and/or
+    #    as individual/bocado formats, each with their own reference weight.
+    #    Without this, the breakdown below always used the *standard* recipe
+    #    reference size even when someone wanted the individual/bocado cost,
+    #    which silently fell back to the global default weight (100g/30g)
+    #    for any recipe that hadn't had its own weight set. ─────────────────
+    format_labels = ["Estándar"]
+    if has_individual:
+        format_labels.append("Individual")
+    if has_bocado:
+        format_labels.append("Bocado")
+
+    if len(format_labels) > 1:
+        format_choice = st.radio(
+            "Formato", format_labels, horizontal=True,
+            key=f"ana_format_{recipe.get('id', '')}"
+        )
+    else:
+        format_choice = "Estándar"
+    fmt_key = {"Estándar": "standard", "Individual": "individual", "Bocado": "bocado"}[format_choice]
+
+    # ── Ingredient cost — load lines once, then compute the scale factor for
+    #    the chosen format before costing anything ─────────────────────────
+    lines = db.get_recipe_lines(recipe["id"])
+
+    # Build component cost map + component labour cost for any component
+    # recipe lines (shared helper — see db.build_component_context()).
+    component_map, component_labour_cost = db.build_component_context(
+        lines, s.default_labour_rate
+    )
+
+    scale = 1.0
+    used_weight_g = None
+    if fmt_key != "standard":
+        try:
+            variants_for_fmt = [
+                v for v in db.get_variants_for_recipe(recipe["id"])
+                if v.get("format") == fmt_key
+            ]
+        except Exception:
+            variants_for_fmt = []
+
+        if fmt_key == "individual":
+            default_w = float(recipe.get("individual_weight_g") or s.individual_weight_g)
+        else:
+            default_w = float(recipe.get("bocado_weight_g") or s.bocado_weight_g)
+
+        used_weight_g = _pick_variant_weight(
+            variants_for_fmt, default_w,
+            widget_key=f"ana_variant_weight_{recipe.get('id', '')}_{fmt_key}"
+        )
+
+        weight_result = db.estimate_recipe_weight(lines)
+        base_weight_g = float(weight_result.get("weight_g") or 0)
+        scale = used_weight_g / base_weight_g if base_weight_g > 0 else 0
 
     # Reference info display
-    ref_desc = ""
-    if size_type == "diameter":
+    if fmt_key != "standard":
+        ref_desc = f"{used_weight_g:.0f}g ({format_choice.lower()})"
+    elif size_type == "diameter":
         ref_desc = f"{ref_diameter:.0f}cm diameter"
         if recipe.get("ref_height_cm"):
             ref_desc += f" × {recipe['ref_height_cm']:.0f}cm tall"
@@ -99,19 +159,22 @@ def screen_analysis(recipe_id: str | None = None):
                f"Batch reference: {ref_batch_size:.0f} cakes · "
                f"{ref_prep_hours:.1f}h prep · {ref_oven_hours:.1f}h oven")
 
-    # ── Ingredient cost at reference size ─────────────────────────────────────
-    lines = db.get_recipe_lines(recipe["id"])
+    result             = calc_ingredient_cost(lines, ing_map, component_map=component_map)
+    ingredient_cost    = result.total * scale
+    ing_breakdown_raw  = result.breakdown
+    missing_prices     = result.missing_prices
+    component_labour_cost = component_labour_cost * scale
 
-    # Build component cost map + component labour cost for any component
-    # recipe lines (shared helper — see db.build_component_context()).
-    component_map, component_labour_cost = db.build_component_context(
-        lines, s.default_labour_rate
-    )
-
-    result          = calc_ingredient_cost(lines, ing_map, component_map=component_map)
-    ingredient_cost = result.total          # scale is 1.0 — analysis always uses reference size
-    ing_breakdown   = result.breakdown
-    missing_prices  = result.missing_prices
+    # Scaled copy for display — the raw breakdown is always at full recipe
+    # reference size, so individual/bocado views need amounts and line costs
+    # scaled down to match the actual portion being costed.
+    if scale != 1.0:
+        ing_breakdown = [
+            {**row, "amount": row["amount"] * scale, "line_cost": row["line_cost"] * scale}
+            for row in ing_breakdown_raw
+        ]
+    else:
+        ing_breakdown = ing_breakdown_raw
 
     if missing_prices:
         missing_prices_warning(missing_prices)
@@ -136,9 +199,25 @@ def screen_analysis(recipe_id: str | None = None):
                 qty = float(pl.get("quantity") or 1)
                 packaging_cost += (cpu * qty) / units_per_pack
 
-    # ── Labour cost — wholesale and retail ────────────────────────────────────    
-    ws = calc_labour_cost(s.ws_batch_large, ref_batch_size, ref_prep_hours, ref_oven_hours, s)
-    rt = calc_labour_cost(s.rt_batch_large, ref_batch_size, ref_prep_hours, ref_oven_hours, s)
+    # ── Labour cost — wholesale and retail ────────────────────────────────────
+    # Batch/prep/oven reference values depend on format, same as the
+    # repricing screen — individual/bocado use their own small-batch prep
+    # and oven hours (falling back to the standard recipe's if unset).
+    if fmt_key == "standard":
+        lab_ref_batch  = ref_batch_size
+        lab_prep_hours = ref_prep_hours
+        lab_oven_hours = ref_oven_hours
+    elif fmt_key == "individual":
+        lab_ref_batch  = float(s.ws_batch_individual)
+        lab_prep_hours = float(recipe.get("small_batch_prep_hours") or ref_prep_hours)
+        lab_oven_hours = float(recipe.get("small_batch_oven_hours") or ref_oven_hours)
+    else:
+        lab_ref_batch  = float(s.ws_batch_bocado)
+        lab_prep_hours = float(recipe.get("bocado_batch_prep_hours") or ref_prep_hours)
+        lab_oven_hours = float(recipe.get("bocado_batch_oven_hours") or ref_oven_hours)
+
+    ws = calc_labour_cost(s.ws_batch(fmt_key), lab_ref_batch, lab_prep_hours, lab_oven_hours, s)
+    rt = calc_labour_cost(s.rt_batch(fmt_key), lab_ref_batch, lab_prep_hours, lab_oven_hours, s)
     ws_labour, ws_oven = ws.labour_cost, ws.oven_cost
     rt_labour, rt_oven = rt.labour_cost, rt.oven_cost
 
@@ -157,7 +236,7 @@ def screen_analysis(recipe_id: str | None = None):
             p for p in live_prices
             if p["channel"] in ("WS", "MD")
             and any(f"-{fc}-" in p["sku_code"]
-                    for fc in FORMAT_TIER_CODES['Standard'])
+                    for fc in FORMAT_TIER_CODES[format_choice])
         ]
         if not matches:
             return None, None
@@ -169,7 +248,7 @@ def screen_analysis(recipe_id: str | None = None):
             p for p in live_prices
             if p["channel"] == "GW"
             and any(f"-{fc}-" in p["sku_code"]
-                    for fc in FORMAT_TIER_CODES['Standard'])
+                    for fc in FORMAT_TIER_CODES[format_choice])
         ]
         if not matches:
             return None, None
@@ -219,7 +298,8 @@ def screen_analysis(recipe_id: str | None = None):
         st.warning("Install plotly to see charts: `pip install plotly`")
 
     # ── Row 1: Wholesale and retail cost breakdown ────────────────────────────
-    st.markdown("### Cost breakdown at reference size")
+    breakdown_size_note = ref_desc if fmt_key != "standard" else "reference size"
+    st.markdown(f"### Cost breakdown — {breakdown_size_note}")
 
     col1, col2 = st.columns(2)
 
@@ -329,7 +409,7 @@ def screen_analysis(recipe_id: str | None = None):
 
     # ── Ingredient breakdown table ────────────────────────────────────────────
     st.markdown("### Ingredient cost breakdown")
-    st.caption("At reference size · sorted by cost descending")
+    st.caption(f"At {breakdown_size_note} · sorted by cost descending")
 
     if ing_breakdown:
         ing_breakdown.sort(key=lambda x: x["line_cost"], reverse=True)
@@ -360,7 +440,7 @@ def screen_analysis(recipe_id: str | None = None):
 
     # ── Labour cost breakdown ─────────────────────────────────────────────────
     st.markdown("### Labour cost breakdown")
-    st.caption(f"Wholesale batch of {s.ws_batch_large} · rate € {s.default_labour_rate:.2f}/hr · oven € {s.default_oven_rate:.2f}/hr")
+    st.caption(f"Wholesale batch of {s.ws_batch(fmt_key)} · rate € {s.default_labour_rate:.2f}/hr · oven € {s.default_oven_rate:.2f}/hr")
 
     lh1, lh2, lh3 = st.columns([4, 1, 1])
     lh1.markdown("**Source**")
@@ -369,20 +449,20 @@ def screen_analysis(recipe_id: str | None = None):
 
     if ws_labour > 0:
         lc1, lc2, lc3 = st.columns([4, 1, 1])
-        lc1.write(f"Recipe prep ({ref_prep_hours:.2f}h ref × batch factor {ws.qty_factor:.4f})")
+        lc1.write(f"Recipe prep ({lab_prep_hours:.2f}h ref × batch factor {ws.qty_factor:.4f})")
         lc2.write("—")
         lc3.write(f"€ {ws_labour:.4f}")
 
     if ws_oven > 0:
         lc1, lc2, lc3 = st.columns([4, 1, 1])
-        lc1.write(f"Recipe oven ({ref_oven_hours:.2f}h ref × batch factor {ws.qty_factor:.4f})")
+        lc1.write(f"Recipe oven ({lab_oven_hours:.2f}h ref × batch factor {ws.qty_factor:.4f})")
         lc2.write("—")
         lc3.write(f"€ {ws_oven:.4f}")
 
     for line in lines:
         if line.get("is_component_line"):
             lpkg   = float(line.get("component_labour_per_kg") or 0)
-            amount = float(line.get("amount") or 0)
+            amount = float(line.get("amount") or 0) * scale
             name   = line.get("ingredient_name", "")
             comp_cost = (lpkg * s.default_labour_rate / 1000.0) * amount
             lc1, lc2, lc3 = st.columns([4, 1, 1])

@@ -80,23 +80,15 @@ def _price_matrix():
         ws_changed = (ws_working != ws_approved) if (ws_working and ws_approved) else bool(ws_working and not ws_approved)
         rt_changed = (rt_working != rt_approved) if (rt_working and rt_approved) else bool(rt_working and not rt_approved)
 
-        # Include size in recipe label for multi-size standard variants
-        variant_d  = _f(v.get("ref_diameter_cm"))
-        size_label = (
-            v.get("size_description") or
-            (f"{variant_d:.0f}cm" if variant_d else "")
-        )
-        recipe_label = (
-            f"{recipe.get('name', '')} ({size_label})"
-            if size_label and fmt == "standard"
-            else recipe.get("name", "")
-        )
+        recipe_label = _variant_label(v, recipe, fmt)
+        sku_display  = _variant_sku(v)
 
         rows.append({
             "_variant_id":      v.get("id"),
             "_ws_changed":      ws_changed,
             "_rt_changed":      rt_changed,
             "Recipe":           recipe_label,
+            "SKU":              sku_display,
             "Format":           FORMAT_DISPLAY.get(fmt, fmt),
             "_fmt":             fmt,
             "WS working (€)":   ws_working or 0.0,
@@ -152,7 +144,7 @@ def _price_matrix():
 
     # Columns for editor — exclude internal fields
     edit_cols = [
-        "Recipe", "Format",
+        "Recipe", "SKU", "Format",
         "WS working (€)", "WS approved (€)", "WS approved date",
         "RT working (€)", "RT approved (€)", "RT approved date",
     ]
@@ -168,7 +160,7 @@ def _price_matrix():
         width='stretch',
         hide_index=True,
         disabled=[
-            "Recipe", "Format",
+            "Recipe", "SKU", "Format",
             "WS approved (€)", "WS approved date",
             "RT approved (€)", "RT approved date",
         ],
@@ -301,8 +293,12 @@ def _client_prices():
             # Component/sub-recipe or deprecated recipe — not sold directly,
             # shouldn't be offered as a client-price target.
             continue
-        fmt    = FORMAT_DISPLAY.get(v["format"], v["format"])
-        label  = f"{recipe.get('name', '')} — {fmt}"
+        fmt   = v.get("format", "standard")
+        fmt_d = FORMAT_DISPLAY.get(fmt, fmt)
+        label = f"{_variant_label(v, recipe, fmt)} — {fmt_d}"
+        sku   = _variant_sku(v)
+        if sku != "—":
+            label += f" [{sku}]"
         var_options[label] = v["id"]
 
     # ── Existing client prices ────────────────────────────────────────────────
@@ -423,6 +419,34 @@ def _client_prices():
 # =============================================================================
 # Helpers
 # =============================================================================
+
+def _variant_label(v: dict, recipe: dict, fmt: str) -> str:
+    """
+    Recipe name with a size/weight suffix so two variants of the same
+    recipe+format (e.g. a standard 100g individual and a heavier
+    client-specific 130g one) are distinguishable in the table without
+    needing a separate size column. Individual/bocado use the variant's
+    own weight; standard uses diameter or a free-text size description —
+    same convention as the repricing table.
+    """
+    if fmt in ("individual", "bocado"):
+        w = _f(v.get("ref_weight_g"))
+        size_label = f"{w:.0f}g" if w else ""
+    else:
+        variant_d  = _f(v.get("ref_diameter_cm"))
+        size_label = v.get("size_description") or (f"{variant_d:.0f}cm" if variant_d else "")
+    return f"{recipe.get('name', '')} ({size_label})" if size_label else recipe.get("name", "")
+
+
+def _variant_sku(v: dict) -> str:
+    """Compact single-column SKU display — shows both channel SKUs when
+    they differ, so this doesn't require two separate SKU columns."""
+    ws = (v.get("sku_ws") or "").strip()
+    gw = (v.get("sku_gw") or "").strip()
+    if ws and gw and ws != gw:
+        return f"{ws} / {gw}"
+    return ws or gw or "—"
+
 
 def _f(val) -> float | None:
     try:
