@@ -699,6 +699,31 @@ def get_variants_for_recipe(recipe_id: str) -> list[dict]:
     return result.data or []
 
 
+def find_variants_by_size_code(size_code: str) -> list[dict]:
+    """
+    Return every product_variants row using a given size code, across ALL
+    recipes — including deprecated ones and sub-recipes.
+
+    Diagnostic helper: the "Añadir tamaño" dialog in Variantes only lists
+    codes already used by the CURRENTLY SELECTED (non-deprecated) recipe, so
+    if a size code is rejected as "already exists" but doesn't appear there,
+    the conflicting row is usually sitting on a recipe that isn't visible in
+    the normal pickers (most often a deprecated/replaced recipe version).
+    This searches the raw table directly so that row can be found.
+    """
+    sb = get_client()
+    result = (
+        sb.table("product_variants")
+        .select(
+            "id, recipe_id, format, size_code, sku_ws, sku_gw, ref_weight_g, "
+            "recipes(name, version, deprecated, is_sub_recipe, cake_codes(code))"
+        )
+        .eq("size_code", size_code.strip().upper())
+        .execute()
+    )
+    return result.data or []
+
+
 def save_variant(record: dict) -> dict:
     sb = get_client()
     record["updated_at"] = "now()"

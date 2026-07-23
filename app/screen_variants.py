@@ -102,6 +102,39 @@ def screen_variants():
         "receta por nivel."
     )
 
+    with st.expander("🔍 Buscar un código de tamaño (diagnóstico)"):
+        st.caption(
+            "Si al añadir un tamaño te dice que un código 'ya existe' pero no "
+            "lo ves en la lista de la receta, es probable que esté en una "
+            "receta antigua o deprecada, invisible en los selectores normales. "
+            "Búscalo aquí — mira en todas las recetas, incluidas las deprecadas."
+        )
+        find_code = st.text_input(
+            "Código de tamaño", placeholder="ej. LI", key="var_find_code"
+        ).strip().upper()
+        if find_code:
+            try:
+                found = db.find_variants_by_size_code(find_code)
+            except Exception as e:
+                found = None
+                st.error(f"Error al buscar: {e}")
+            if found is not None:
+                if not found:
+                    st.success(f"Ningún variante usa el código `{find_code}` — está libre.")
+                else:
+                    st.warning(f"{len(found)} variante(s) usan `{find_code}`:")
+                    for f in found:
+                        r = f.get("recipes") or {}
+                        dep = "🚫 deprecada" if r.get("deprecated") else "activa"
+                        sub = " · sub-receta" if r.get("is_sub_recipe") else ""
+                        code = (r.get("cake_codes") or {}).get("code", "?")
+                        st.markdown(
+                            f"- **{r.get('name', '?')}** ({code}-{r.get('version','?')}, {dep}{sub}) "
+                            f"— formato `{f.get('format')}` — "
+                            f"SKU WS `{f.get('sku_ws') or '—'}` · SKU GW `{f.get('sku_gw') or '—'}` "
+                            f"· peso {f.get('ref_weight_g') or '—'}g"
+                        )
+
     recipes      = db.get_recipes()
     recipe_by_id = {r["id"]: r for r in recipes}
     recipe_names = sorted([r["name"] for r in recipes], key=str.lower)
