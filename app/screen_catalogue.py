@@ -311,6 +311,15 @@ def screen_catalogue():
             help="Si no se incluyen, se añade una nota indicando que "
                  "las fichas están disponibles bajo petición."
         )
+        frozen_delivery = st.checkbox(
+            "❄️ Entrega congelada", value=True,
+            key="cat_frozen_delivery",
+            help="Conservación/vida útil de este canal de distribución — no es "
+                 "un dato de receta. Cuando está marcado, las fichas y las "
+                 "condiciones de pedido indican conservación en congelador "
+                 "(-18°C, máx. 3 meses; descongelar en frigorífico y consumir "
+                 "en 24h). Si no, se muestra la conservación refrigerada."
+        )
 
     # ── Resolve final prices ───────────────────────────────────────────────────
     # If client_name is set, fetch their overrides and apply.
@@ -525,6 +534,7 @@ def screen_catalogue():
                     recipe_by_id    = recipe_by_id,
                     photo_overrides = photo_overrides,
                     intro_grid      = intro_grid_items,
+                    frozen_delivery = frozen_delivery,
                 )
                 fname = (
                     f"millington_catalogo"
@@ -609,6 +619,7 @@ def _generate_pdf(
     recipe_by_id: dict = None,
     photo_overrides: dict = None,
     intro_grid: list = None,
+    frozen_delivery: bool = True,
 ) -> bytes:
     from reportlab.platypus import (
         SimpleDocTemplate, Table, TableStyle, Paragraph,
@@ -903,9 +914,16 @@ def _generate_pdf(
              f"Se realizará un cargo adicional de {del_c:.0f} euros para "
              f"entregas si el valor total del pedido es inferior a "
              f"{del_t:.0f} euros."),
-            ("Entrega refrigerada",
-             "Todos los productos serán entregados en vehículos refrigerados "
-             "para garantizar la frescura y calidad."),
+            ("Entrega congelada", (
+                "Todos los productos serán entregados congelados en vehículos "
+                "con congelación adecuada para garantizar su conservación. "
+                "Conservar en congelador a -18°C o inferior durante un máximo "
+                "de 3 meses. Descongelar en frigorífico entre 0 y 5°C y "
+                "consumir en un plazo de 24 horas. No volver a congelar."
+             )) if frozen_delivery else ("Entrega refrigerada", (
+                "Todos los productos serán entregados en vehículos refrigerados "
+                "para garantizar la frescura y calidad."
+             )),
             ("Plazos",
              f"Para asegurar la mejor calidad y servicio, les pedimos que "
              f"realicen sus pedidos con un mínimo de {lead} días de "
@@ -1005,6 +1023,7 @@ def _generate_pdf(
                 grey         = colors.HexColor("#6b7280"),
                 border_col   = colors.HexColor("#9ca3af"),
                 photo_path   = photo_path,
+                frozen_delivery = frozen_delivery,
             )
 
     # ── Page callbacks ─────────────────────────────────────────────────────────
@@ -1078,6 +1097,7 @@ def _add_ficha_page(
     grey,
     border_col,
     photo_path: str | None = None,
+    frozen_delivery: bool = True,
 ):
     """
     Add one ficha page to the story.
@@ -1087,6 +1107,11 @@ def _add_ficha_page(
     When photo_path is provided, renders a two-column layout:
       left (~10.5 cm): company box + ficha content
       right (~5 cm):   product photo
+
+    Conservación/vida útil is driven by frozen_delivery, not by the variant's
+    own storage_instructions/shelf_life_hours — this is a property of the
+    distribution channel this catalogue represents (wholesale, delivered
+    frozen or refrigerated), not of the recipe itself.
     """
     from reportlab.platypus import Table, TableStyle, Spacer, HRFlowable, Image
     from reportlab.lib import colors
@@ -1111,8 +1136,14 @@ def _add_ficha_page(
     weight_str = f"{int(weight_g)} g" if weight_g else "—"
     description  = variant.get("description_es") or ""
     packaging    = variant.get("packaging_desc") or "Caja de cartón"
-    storage      = variant.get("storage_instructions") or "Refrigerada entre 0 - 5°C"
-    shelf_life   = int(variant.get("shelf_life_hours") or 24)
+    if frozen_delivery:
+        storage    = ("Conservar congelado a -18°C o inferior durante un máximo "
+                      "de 3 meses. Descongelar en frigorífico entre 0 y 5°C y "
+                      "consumir en un plazo de 24 horas. No volver a congelar.")
+        shelf_life_str = "3 meses congelado · 24 horas tras descongelar"
+    else:
+        storage    = variant.get("storage_instructions") or "Refrigerada entre 0 - 5°C"
+        shelf_life_str = f"{int(variant.get('shelf_life_hours') or 24)} horas"
     label_text   = variant.get("ingredient_label_es") or ""
 
     # Fetch allergen declaration
@@ -1170,7 +1201,7 @@ def _add_ficha_page(
         f"<b>Puede contener:</b> {puede}.",
         f"<b>Embalaje:</b> {packaging}",
         f"<b>Conservación:</b> {storage}",
-        f"<b>Vida útil:</b> {shelf_life} horas",
+        f"<b>Vida útil:</b> {shelf_life_str}",
     ]
 
     company_box = _ficha_box(
