@@ -231,12 +231,19 @@ def screen_analysis(recipe_id: str | None = None):
     if err := st.session_state.pop("_current_prices_error", None):
         st.warning(f"⚠️ No se pudieron cargar precios actuales: `{err}`")
 
+    # FORMAT_TIER_CODES is keyed by the English format names used on the
+    # calculator screen ("Standard", …), whereas this screen shows Spanish
+    # labels ("Estándar", …) — map via fmt_key rather than the display label.
+    tier_codes = FORMAT_TIER_CODES[
+        {"standard": "Standard", "individual": "Individual", "bocado": "Bocado"}[fmt_key]
+    ]
+
     def find_ws_price():
         matches = [
             p for p in live_prices
             if p["channel"] in ("WS", "MD")
             and any(f"-{fc}-" in p["sku_code"]
-                    for fc in FORMAT_TIER_CODES[format_choice])
+                    for fc in tier_codes)
         ]
         if not matches:
             return None, None
@@ -248,7 +255,7 @@ def screen_analysis(recipe_id: str | None = None):
             p for p in live_prices
             if p["channel"] == "GW"
             and any(f"-{fc}-" in p["sku_code"]
-                    for fc in FORMAT_TIER_CODES[format_choice])
+                    for fc in tier_codes)
         ]
         if not matches:
             return None, None

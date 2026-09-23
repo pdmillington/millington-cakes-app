@@ -40,7 +40,7 @@ FORMAT_DISPLAY = {
 
 COMPANY_NAME    = "Millington Cakes, S.L."
 COMPANY_CIF     = "B13998596"
-COMPANY_ADDRESS = "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid"
+COMPANY_ADDRESS = "Nave 303, Calle de los Reyes Católicos 6, 28108 Alcobendas, Madrid"
 
 # Thermal label roll sizes (width_mm, height_mm) — Munbyn label stock.
 # 4×6" is the roll currently in use; the others are here so you can

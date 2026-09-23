@@ -1028,7 +1028,7 @@ def _generate_pdf(
 
     # ── Page callbacks ─────────────────────────────────────────────────────────
     address_line = (
-        "Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid  ·  "
+        "Nave 303, Calle de los Reyes Católicos 6, 28108 Alcobendas, Madrid  ·  "
         "637 773 669  ·  www.millingtons.es"
     )
 
@@ -1209,7 +1209,7 @@ def _add_ficha_page(
         content=[
             "<b>Millington Cakes</b>",
             "<b>CIF: B13998596</b>",
-            "<i>Calle de la Granja 100, Nave 5-6, 28108 Alcobendas, Madrid</i>",
+            "<i>Nave 303, Calle de los Reyes Católicos 6, 28108 Alcobendas, Madrid</i>",
         ],
         title_bg=border_col,
         box_bg=box_bg,
