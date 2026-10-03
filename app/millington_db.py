@@ -1857,13 +1857,21 @@ def parse_ventas_excel(file_bytes: bytes) -> list[dict]:
                              'total_inc_vat': 0.0, 'units': 0.0}
             data[key][field] = val
  
-    # Only return months that have actual revenue (skip future zero months)
+    # Return every completed month from the first month with revenue onwards.
+    # A genuinely zero month in the middle (e.g. a closed August) must still
+    # get a row — otherwise it looks "not uploaded" to the freshness check.
+    # The current month (incomplete) and future months (zero in the export)
+    # are excluded.
     today = date.today()
-    return [
-        v for v in data.values()
-        if v['ventas_ex_vat'] != 0 or v['total_inc_vat'] != 0
-        if not (v['year'] == today.year and v['month'] == today.month)
-    ]
+    past  = sorted(k for k in data if k < (today.year, today.month))
+    first = next(
+        (k for k in past
+         if data[k]['ventas_ex_vat'] != 0 or data[k]['total_inc_vat'] != 0),
+        None,
+    )
+    if first is None:
+        return []
+    return [data[k] for k in past if k >= first]
  
 def parse_productos_excel(file_bytes: bytes) -> list[dict]:
     """
@@ -1974,6 +1982,33 @@ def upsert_monthly_revenue(rows: list[dict]) -> int:
     return len(payload)
  
  
+def find_suspicious_drops(
+    new_totals: dict[tuple[int, int], float],
+    existing_totals: dict[tuple[int, int], float],
+    ratio: float = 0.5,
+    min_existing: float = 0.0,
+) -> list[dict]:
+    """
+    Compare per-month totals about to be uploaded against what is already
+    stored and flag months that fall sharply — the signature of an export
+    whose date range started or ended mid-month (a partial month would
+    otherwise silently overwrite a good full-month figure).
+
+    A month is flagged when it already exists, the stored value is at least
+    `min_existing`, and the new value is below `ratio` × the stored value.
+    Returns [{year, month, existing, new}] sorted by month.
+    """
+    flagged = []
+    for key, new in new_totals.items():
+        old = existing_totals.get(key)
+        if old is None or old < min_existing or old <= 0:
+            continue
+        if new < old * ratio:
+            flagged.append({'year': key[0], 'month': key[1],
+                            'existing': old, 'new': new})
+    return sorted(flagged, key=lambda f: (f['year'], f['month']))
+
+
 def get_monthly_revenue(year: int | None = None) -> list[dict]:
     """
     Return all monthly revenue rows, optionally filtered by year.

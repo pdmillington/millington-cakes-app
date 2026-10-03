@@ -884,6 +884,89 @@ def _tab_ingredients():
 # Tab 4 — Data Management
 # =============================================================================
 
+# A month is held back for confirmation when its new total falls below this
+# share of the stored one (and the stored one is big enough to matter).
+# Guards against exports whose date range starts/ends mid-month.
+_DROP_RATIO         = 0.5
+_DROP_MIN_REVENUE   = 200.0   # € ex-VAT
+_DROP_MIN_UNITS     = 50.0
+
+
+def _find_upload_drops(parsed: dict[str, list[dict]]) -> list[dict]:
+    """Months in the parsed uploads that fall sharply vs. what is stored."""
+    drops: list[dict] = []
+
+    if "ventas" in parsed:
+        existing = {(r["year"], r["month"]): float(r["ventas_ex_vat"])
+                    for r in db.get_monthly_revenue()}
+        new = {(r["year"], r["month"]): float(r["ventas_ex_vat"])
+               for r in parsed["ventas"]}
+        for d in db.find_suspicious_drops(new, existing, _DROP_RATIO, _DROP_MIN_REVENUE):
+            drops.append({**d, "kind": "Ingresos (€)"})
+
+    if "productos" in parsed:
+        new_units: dict[tuple, float] = defaultdict(float)
+        for r in parsed["productos"]:
+            new_units[(r["year"], r["month"])] += float(r["units"])
+        # Query month by month (not the whole table) to stay clear of the
+        # API's row limit as the history grows.
+        existing_units = {
+            (y, m): sum(float(p["units"]) for p in db.get_monthly_products(y, m))
+            for (y, m) in new_units
+        }
+        for d in db.find_suspicious_drops(new_units, existing_units, _DROP_RATIO, _DROP_MIN_UNITS):
+            drops.append({**d, "kind": "Unidades"})
+
+    return drops
+
+
+def _commit_upload(parsed: dict[str, list[dict]]) -> None:
+    if "ventas" in parsed:
+        n = db.upsert_monthly_revenue(parsed["ventas"])
+        st.success(f"✓ Ingresos: {n} meses subidos")
+    if "productos" in parsed:
+        n = db.upsert_monthly_products(parsed["productos"])
+        st.success(f"✓ Productos: {n} filas de producto/mes subidas")
+
+
+def _render_pending_upload() -> None:
+    """Show held-back uploads and let the user confirm or discard them."""
+    pending = st.session_state.get("pending_upload")
+    if not pending:
+        return
+
+    st.warning(
+        "⚠️ **Subida en pausa — no se ha guardado nada.** Estos meses bajan "
+        "mucho respecto a lo que ya hay guardado. Suele pasar cuando el rango "
+        "de fechas del informe de Holded empieza o termina a mitad de mes "
+        "(el mes parcial sobrescribiría el mes completo)."
+    )
+    st.dataframe(
+        pd.DataFrame([{
+            "Mes":        _month_label(d["year"], d["month"]),
+            "Dato":       d["kind"],
+            "Guardado":   round(d["existing"], 2),
+            "En el fichero": round(d["new"], 2),
+            "Variación":  f"{(d['new'] / d['existing'] - 1) * 100:+.0f}%",
+        } for d in pending["drops"]]),
+        hide_index=True, width='stretch',
+    )
+    st.caption(
+        "Si el descenso es real (p. ej. un mes cerrado), sube de todos modos. "
+        "Si no, cancela y vuelve a exportar desde Holded empezando el día 1 del mes."
+    )
+
+    c1, c2, _ = st.columns([1.5, 1, 3])
+    if c1.button("Subir de todos modos", type="primary", key="pending_upload_confirm"):
+        _commit_upload(pending["rows"])
+        st.session_state.pop("pending_upload", None)
+        st.cache_data.clear()
+        st.rerun()
+    if c2.button("Cancelar", key="pending_upload_cancel"):
+        st.session_state.pop("pending_upload", None)
+        st.rerun()
+
+
 def _tab_data():
     st.markdown("### Gestión de datos — subida de ficheros de Holded")
 
@@ -924,22 +1007,20 @@ def _tab_data():
 
     if st.button("⬆️ Subir ficheros de ventas", type="primary",
                  disabled=(file_ventas is None and file_productos is None)):
-        errors = []
+        errors  = []
+        parsed  = {}
 
+        # Parse both files first, write nothing yet — so a suspicious file
+        # can be held back before it overwrites good data.
         if file_ventas:
             try:
-                rows = db.parse_ventas_excel(file_ventas.read())
-                n    = db.upsert_monthly_revenue(rows)
-                st.success(f"✓ Ingresos: {n} meses subidos "
-                           f"({rows[0]['year'] if rows else '?'}–{rows[-1]['year'] if rows else '?'})")
+                parsed["ventas"] = db.parse_ventas_excel(file_ventas.read())
             except Exception as e:
                 errors.append(f"Fichero de Ventas: {e}")
 
         if file_productos:
             try:
-                rows = db.parse_productos_excel(file_productos.read())
-                n    = db.upsert_monthly_products(rows)
-                st.success(f"✓ Productos: {n} filas de producto/mes subidas")
+                parsed["productos"] = db.parse_productos_excel(file_productos.read())
             except Exception as e:
                 errors.append(f"Fichero de Productos: {e}")
 
@@ -947,8 +1028,15 @@ def _tab_data():
             st.error(err)
 
         if not errors:
-            st.cache_data.clear()
-            st.rerun()
+            drops = _find_upload_drops(parsed)
+            if drops:
+                st.session_state["pending_upload"] = {"rows": parsed, "drops": drops}
+            else:
+                _commit_upload(parsed)
+                st.cache_data.clear()
+                st.rerun()
+
+    _render_pending_upload()
 
     st.divider()
 
