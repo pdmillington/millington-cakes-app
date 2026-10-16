@@ -1,4 +1,5 @@
 
+import pandas as pd
 import streamlit as st
 from math import pi
 import millington_db as db
@@ -7,6 +8,7 @@ from core.settings import load_settings
 from core.pricing_engine import (
     calc_ingredient_cost, calc_labour_cost,
     AnchorPoint, InterpolatedCostResult, calc_interpolated_cost,
+    interpolate_margin, build_price_points,
 )
 from ui.components import missing_prices_warning, cost_breakdown_metrics, weight_estimate_expander
 
@@ -36,6 +38,83 @@ def _pick_variant_weight(variants: list, default_weight: float, widget_key: str)
         labels, key=widget_key
     )
     return float(with_weight[labels.index(choice)]["ref_weight_g"])
+
+
+def _render_price_basis(*, channel, size_note, target_w, cost_per_unit,
+                        packaging_cost, margin_res, applied_margin,
+                        settings_margin, price_ex, price_notes, price_points,
+                        current_price_hidden):
+    """
+    Show, in plain terms, how the suggested price was reached: which fixed
+    prices it was anchored to, what margin each of them carries, and how the
+    margin for the requested size was derived from them.
+    """
+    with st.expander("How this price was derived", expanded=True):
+        has_margin = margin_res is not None and margin_res.margin is not None
+
+        st.markdown(f"**1. Size → weight.** {size_note} → **≈ {target_w:.0f} g**.")
+
+        if has_margin:
+            st.markdown(
+                f"**2. Margin.** The fixed (approved) {channel.lower()} prices below each "
+                f"carry a margin (price ÷ cost). For this size the margin is "
+                f"**{margin_res.summary}** → **{applied_margin:.2f}×**."
+            )
+        else:
+            st.markdown(
+                f"**2. Margin.** No approved {channel.lower()} price exists for this recipe, "
+                f"so the **settings margin {settings_margin:.1f}×** is used."
+            )
+
+        pack = f" (includes €{packaging_cost:.2f} packaging)" if packaging_cost else ""
+        st.markdown(
+            f"**3. Price.** cost € {cost_per_unit:.2f}{pack} × {applied_margin:.2f}× "
+            f"= **€ {price_ex:.2f}** ex-VAT."
+        )
+
+        if price_points:
+            lo = margin_res.lower if has_margin else None
+            hi = margin_res.upper if has_margin else None
+            rows = []
+            for p in price_points:
+                if has_margin and margin_res.method == "interpolated":
+                    role = ("◀ lower bound" if p is lo else "upper bound ▶" if p is hi else "")
+                elif has_margin and p is lo:
+                    role = "used"
+                else:
+                    role = ""
+                rows.append({
+                    "Size":                   p.label,
+                    "Weight (g)":             round(p.weight_g),
+                    "Cost (€)":               round(p.cost, 2),
+                    f"Approved price (€)":    round(p.price, 2),
+                    "Margin":                 f"{p.margin:.2f}×",
+                    "Role":                   role,
+                })
+            rows.append({
+                "Size":                "▶ this request",
+                "Weight (g)":          round(target_w),
+                "Cost (€)":            round(cost_per_unit, 2),
+                "Approved price (€)":  round(price_ex, 2),
+                "Margin":              f"{applied_margin:.2f}×",
+                "Role":                "suggested",
+            })
+            rows.sort(key=lambda r: r["Weight (g)"])
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+            st.caption(
+                "Margins are interpolated by weight (power law), the same way labour is. "
+                "Sizes outside the priced range use the nearest margin. Diameters are "
+                "converted to weight with the recipe's volume ratio. "
+                + ("Retail prices are shown ex-VAT. " if channel == "Retail" else "")
+            )
+
+        for n in price_notes:
+            st.caption(f"⚠️ {n}")
+        if current_price_hidden:
+            st.caption(
+                "The price list's standard entry is for the reference size, so it "
+                "isn't compared against this size."
+            )
 
 
 def screen_calculator():
@@ -93,17 +172,19 @@ def screen_calculator():
     bocado_prep_hours = float(recipe.get("bocado_batch_prep_hours") or 0.0)
     bocado_oven_hours = float(recipe.get("bocado_batch_oven_hours") or 0.0)
 
-    # Pre-compute reference weight for Individual/Bocado ingredient scaling
-    if has_individual or has_bocado:
-        _lines_for_weight = db.get_recipe_lines(recipe["id"])
-        _weight_result    = db.estimate_recipe_weight(_lines_for_weight)
-        ref_weight_g      = _weight_result["weight_g"]
-        _weight_notes     = _weight_result["notes"]
-        _weight_excl      = _weight_result["excluded"]
-    else:
-        ref_weight_g  = 0.0
-        _weight_notes = []
-        _weight_excl  = []
+    # Reference weight estimated from the recipe lines. Used to scale
+    # Individual/Bocado ingredient cost, and to place every size on the weight
+    # axis when interpolating margins between fixed price points.
+    _lines_for_weight = db.get_recipe_lines(recipe["id"])
+    _weight_result    = db.estimate_recipe_weight(_lines_for_weight)
+    ref_weight_g      = _weight_result["weight_g"]
+    _weight_notes     = _weight_result["notes"]
+    _weight_excl      = _weight_result["excluded"]
+
+    # The standard cake's weight is whatever its ingredients add up to — there
+    # is no separate stored "exact" weight. (The old weight mode fell back to a
+    # 1 kg default instead, which skewed every anchor.)
+    std_ref_weight_g = ref_weight_g
 
     # ── Section 2: Channel ────────────────────────────────────────────────────
     st.markdown("### 2 — Price channel")
@@ -210,7 +291,7 @@ def screen_calculator():
 
         else:
             # Custom weight — interpolate between bocado / individual / standard
-            _std_ref_g = ref_weight_kg * 1000 if ref_weight_kg > 0 else ref_weight_g
+            _std_ref_g = std_ref_weight_g
             _default_w = max(ind_weight * 1.5, 100.0) if ind_weight else 150.0
             target_weight_interp = st.number_input(
                 "Target weight (g)",
@@ -390,11 +471,12 @@ def screen_calculator():
 
         if using_interpolation:
             # --- Interpolated path: power-law between anchor formats ----------
-            std_ref_weight_g = ref_weight_kg * 1000 if ref_weight_kg > 0 else ref_weight_g
+            # (cost only — the margin comes from the approved price points,
+            # see interpolate_margin() below, and is shared by every mode)
             if std_ref_weight_g <= 0:
                 st.error(
-                    "Cannot interpolate: reference weight is 0. "
-                    "Set ref_weight_kg in the recipe editor."
+                    "Cannot interpolate: the recipe has no ingredient weights, "
+                    "so its weight can't be estimated."
                 )
                 return
             # Component labour scales linearly with weight (same as
@@ -402,18 +484,6 @@ def screen_calculator():
             # for interpolation purposes it's folded into the per-gram rate
             # rather than power-law scaled like prep/oven labour below.
             ingredient_cost_per_g = (ing_result.total + component_labour_cost) / std_ref_weight_g
-
-            all_variants    = db.get_all_variants_full()
-            recipe_variants = [v for v in all_variants if v.get("recipe_id") == recipe["id"]]
-
-            def _approved(fmt):
-                key = "ws_price_approved" if channel == "Wholesale" else "rt_price_approved"
-                for v in recipe_variants:
-                    if (v.get("format") or "").lower() == fmt.lower():
-                        p = v.get(key)
-                        if p:
-                            return float(p)
-                return None
 
             if has_bocado:
                 r = calc_labour_cost(
@@ -427,7 +497,7 @@ def screen_calculator():
                     label="bocado", weight_g=boc_weight,
                     labour_cost=r.labour_cost, oven_cost=r.oven_cost,
                     ingredient_cost=ingredient_cost_per_g * boc_weight,
-                    approved_price=_approved("bocado"),
+                    approved_price=None,
                 ))
 
             if has_individual:
@@ -442,7 +512,7 @@ def screen_calculator():
                     label="individual", weight_g=ind_weight,
                     labour_cost=r.labour_cost, oven_cost=r.oven_cost,
                     ingredient_cost=ingredient_cost_per_g * ind_weight,
-                    approved_price=_approved("individual"),
+                    approved_price=None,
                 ))
 
             r = calc_labour_cost(batch_size, labour_ref_batch, labour_ref_prep, labour_ref_oven, s)
@@ -450,7 +520,7 @@ def screen_calculator():
                 label="standard", weight_g=std_ref_weight_g,
                 labour_cost=r.labour_cost, oven_cost=r.oven_cost,
                 ingredient_cost=ing_result.total + component_labour_cost,
-                approved_price=_approved("standard"),
+                approved_price=None,
             ))
 
             interp_result   = calc_interpolated_cost(target_weight_interp, anchors, ingredient_cost_per_g)
@@ -477,10 +547,77 @@ def screen_calculator():
         # ── Totals ────────────────────────────────────────────────────────────
         cost_per_unit = ingredient_cost + labour_cost + oven_cost + packaging_cost
 
-        if interp_result and interp_result.implied_margin is not None:
-            price_per_unit = cost_per_unit * interp_result.implied_margin
+        # ── Margin: interpolated between the fixed (approved) price points ────
+        # Same for every mode. A requested size gets the margin that sits
+        # between the two nearest priced sizes, applied to its own cost.
+        _is_ws = channel == "Wholesale"
+        _labour_params = {
+            "standard":   (s.ws_batch_large if _is_ws else s.rt_batch_large,
+                           ref_batch_size, ref_prep_hours, ref_oven_hours),
+            "individual": (s.ws_batch_individual if _is_ws else s.rt_batch_individual,
+                           s.ws_batch_individual,
+                           small_prep_hours or ref_prep_hours,
+                           small_oven_hours or ref_oven_hours),
+            "bocado":     (s.ws_batch_bocado if _is_ws else s.rt_batch_bocado,
+                           s.ws_batch_bocado,
+                           bocado_prep_hours or ref_prep_hours,
+                           bocado_oven_hours or ref_oven_hours),
+        }
+        try:
+            _recipe_variants = [v for v in db.get_all_variants_full()
+                                if v.get("recipe_id") == recipe["id"]]
+        except Exception:
+            _recipe_variants = []
+
+        price_points, price_notes = build_price_points(
+            _recipe_variants,
+            channel=channel, s=s, vat_multiplier=VAT_MULTIPLIER,
+            unit_cost_ref=ing_result.total + component_labour_cost,
+            est_weight_g=std_ref_weight_g,
+            ref_diameter=ref_diameter, ref_height=ref_height,
+            size_type=size_type,
+            labour=_labour_params,
+            default_weight={
+                "individual": float(recipe.get("individual_weight_g") or s.individual_weight_g),
+                "bocado":     float(recipe.get("bocado_weight_g") or s.bocado_weight_g),
+            },
+        )
+
+        # Where the requested size sits on the weight axis, and how we got there
+        if using_interpolation:
+            target_w, size_note = target_weight_interp, "weight entered directly"
+        elif selected_format == "Standard":
+            target_w = std_ref_weight_g * scale
+            if size_type == "diameter":
+                size_note = (
+                    f"{target_diameter:.0f} cm × {target_height:.0f} cm is {scale:.3f}× the "
+                    f"volume of the {ref_diameter:.0f} cm × {ref_height:.0f} cm reference cake "
+                    f"({std_ref_weight_g:.0f} g, from its ingredients)"
+                ) if ref_height and target_height else (
+                    f"{target_diameter:.0f} cm is {scale:.3f}× the area of the "
+                    f"{ref_diameter:.0f} cm reference cake ({std_ref_weight_g:.0f} g, from its ingredients)"
+                )
+            else:
+                size_note = f"{scale:.3f}× the reference cake ({std_ref_weight_g:.0f} g, from its ingredients)"
+        elif selected_format == "Individual":
+            target_w, size_note = ind_weight, "individual variant weight"
         else:
-            price_per_unit = cost_per_unit * margin
+            target_w, size_note = boc_weight, "bocado variant weight"
+
+        margin_res = interpolate_margin(target_w, price_points) if target_w > 0 else None
+        if _is_ws:
+            settings_margin = margin
+        else:
+            settings_margin = (
+                s.rt_margin_large      if selected_format == "Standard"
+                else s.rt_margin_individual if selected_format == "Individual"
+                else s.rt_margin_bocado
+            )
+        if margin_res and margin_res.margin is not None:
+            applied_margin = margin_res.margin
+        else:
+            applied_margin = settings_margin
+        price_per_unit = cost_per_unit * applied_margin
 
         # ── Live price lookup (not applicable for custom weight sizes) ────────
         if not using_interpolation:
@@ -514,6 +651,17 @@ def screen_calculator():
             current_ws_ex = current_ws_sku = None
             current_gw_ex = current_gw_sku = None
 
+        # The price list's standard entry belongs to the reference size. Showing
+        # it next to the cost of a different size (e.g. €15 for the 22 cm cake
+        # against the cost of a 15 cm one) gives a meaningless "× cost".
+        current_price_hidden = (
+            selected_format == "Standard" and not using_interpolation
+            and abs(scale - 1.0) > 0.005
+        )
+        if current_price_hidden:
+            current_ws_ex = current_ws_sku = None
+            current_gw_ex = current_gw_sku = None
+
         # ── Display results ───────────────────────────────────────────────────
         st.markdown("---")
         if using_interpolation:
@@ -525,20 +673,14 @@ def screen_calculator():
 
         missing_prices_warning(missing_prices)
 
-        # Interpolation margin info
-        if interp_result:
-            for w in interp_result.warnings:
-                st.warning(w)
-            if interp_result.implied_margin is not None:
-                st.info(
-                    f"Margin: {interp_result.margin_source} → "
-                    f"**{interp_result.implied_margin:.2f}×**"
-                )
-            else:
-                st.warning(
-                    f"Margin unavailable ({interp_result.margin_source}). "
-                    f"Falling back to settings margin {margin:.1f}×."
-                )
+        # Where the margin came from (full workings in "How this price was derived")
+        if margin_res and margin_res.margin is not None:
+            st.info(f"Margin **{applied_margin:.2f}×** — {margin_res.summary}")
+        else:
+            st.warning(
+                f"No approved prices to interpolate from — using the settings "
+                f"margin {settings_margin:.1f}× instead."
+            )
 
         st.metric("Cost per unit", f"€ {cost_per_unit:.2f}")
         st.divider()
@@ -548,9 +690,9 @@ def screen_calculator():
             c1, c2 = st.columns(2)
             with c1:
                 _margin_label = (
-                    f"{interp_result.implied_margin:.2f}× (interpolated)"
-                    if interp_result and interp_result.implied_margin is not None
-                    else f"{margin:.1f}× (settings)"
+                    f"{applied_margin:.2f}× (from approved prices)"
+                    if margin_res and margin_res.margin is not None
+                    else f"{applied_margin:.1f}× (settings)"
                 )
                 st.metric(
                     "Suggested wholesale (ex-VAT)",
@@ -587,15 +729,8 @@ def screen_calculator():
 
         else:
             # ── Retail view ───────────────────────────────────────────────────
-            if interp_result and interp_result.implied_margin is not None:
-                rt_margin_used = interp_result.implied_margin
-            else:
-                rt_margin_used = (
-                    s.rt_margin_large      if selected_format == "Standard"
-                    else s.rt_margin_individual if selected_format == "Individual"
-                    else s.rt_margin_bocado
-                )
-            rt_price_ex  = cost_per_unit * rt_margin_used
+            rt_margin_used = applied_margin
+            rt_price_ex    = cost_per_unit * rt_margin_used
             rt_price_inc = rt_price_ex * VAT_MULTIPLIER
 
             c1, c2 = st.columns(2)
@@ -638,12 +773,23 @@ def screen_calculator():
                 col_g.metric("Total cost",           f"€ {cost_per_unit * order_qty:.2f}")
                 col_h.metric("Total retail (inc-VAT)", f"€ {rt_price_inc * order_qty:.2f}")
 
+        # ── How the price was derived ─────────────────────────────────────────
+        st.divider()
+        _render_price_basis(
+            channel=channel, size_note=size_note, target_w=target_w,
+            cost_per_unit=cost_per_unit, packaging_cost=packaging_cost,
+            margin_res=margin_res, applied_margin=applied_margin,
+            settings_margin=settings_margin, price_ex=price_per_unit,
+            price_notes=price_notes, price_points=price_points,
+            current_price_hidden=current_price_hidden,
+        )
+
         # ── Cost breakdown ────────────────────────────────────────────────────
         st.divider()
         cost_breakdown_metrics(ingredient_cost, labour_cost, oven_cost, packaging_cost)
 
         if interp_result:
-            with st.expander("Interpolation detail"):
+            with st.expander("Cost interpolation detail"):
                 lo = interp_result.lower_anchor
                 hi = interp_result.upper_anchor
                 lo_total = lo.ingredient_cost + lo.labour_cost + lo.oven_cost
@@ -664,22 +810,7 @@ def screen_calculator():
 - Labour: €{interp_result.labour_cost:.4f} (power-law)
 - Oven: €{interp_result.oven_cost:.4f} (power-law)
 
-**Margin:** {interp_result.margin_source}
-                """)
-                st.markdown("**All anchors:**")
-                for a in sorted(anchors, key=lambda x: x.weight_g):
-                    a_total    = a.ingredient_cost + a.labour_cost + a.oven_cost
-                    price_str  = f"€{a.approved_price:.2f}" if a.approved_price else "—"
-                    implied_m  = (
-                        f"{a.approved_price / a_total:.2f}×"
-                        if a.approved_price and a_total > 0 else "—"
-                    )
-                    st.caption(
-                        f"**{a.label}** {a.weight_g:.0f}g  |  "
-                        f"cost €{a_total:.4f}  |  "
-                        f"approved {price_str}  |  "
-                        f"implied margin {implied_m}"
-                    )
+""")
         else:
             with st.expander("Labour calculation detail"):
                 st.markdown(f"""
@@ -701,7 +832,7 @@ def screen_calculator():
 - Labour: **€ {labour_cost:.4f}** · Oven: **€ {oven_cost:.4f}**
 - Packaging: **€ {packaging_cost:.4f}**
   (÷ {units_per_pack} units per pack)
-- Margin: **{margin:.1f}×** ({channel})
+- Margin: **{applied_margin:.2f}×** ({channel}) — see "How this price was derived"
 - Ingredient scale: **{scale:.5f}×**
                 """)
 

@@ -390,3 +390,167 @@ def calc_interpolated_cost(
         upper_anchor    = hi,
         warnings        = warnings,
     )
+
+
+# =============================================================================
+# Margin interpolation across fixed price points
+# =============================================================================
+#
+# Every approved variant price is a "price point": a known size (in grams of
+# finished product), the per-unit cost of that size, and the price fixed for
+# it. The margin at each point is price / cost. A requested size that has no
+# price of its own gets the margin interpolated between the two nearest priced
+# sizes (power law in weight), applied to that size's own cost.
+#
+# Diameter cakes are placed on the weight axis with the recipe's volume ratio,
+# the same ratio the calculator uses to scale their ingredient cost.
+
+@dataclass
+class PricePoint:
+    label:    str
+    weight_g: float
+    cost:     float          # per-unit cost at this size, excluding packaging
+    price:    float          # approved price, ex-VAT, for the channel
+    fmt:      str = ""
+
+    @property
+    def margin(self) -> float:
+        return self.price / self.cost if self.cost > 0 else 0.0
+
+
+@dataclass
+class MarginResult:
+    margin:   float | None   # None → no usable price points
+    method:   str            # exact | interpolated | below_range | above_range | single | none
+    lower:    PricePoint | None
+    upper:    PricePoint | None
+    summary:  str
+    points:   list[PricePoint] = field(default_factory=list)   # sorted by weight
+
+
+def interpolate_margin(target_weight_g: float,
+                       points: list[PricePoint]) -> MarginResult:
+    """
+    Margin for `target_weight_g`, interpolated between the two priced sizes
+    that bracket it. Outside the priced range the nearest margin is used
+    (no extrapolation), and the result says so.
+    """
+    usable = sorted(
+        (p for p in points if p.price > 0 and p.cost > 0 and p.weight_g > 0),
+        key=lambda p: p.weight_g,
+    )
+    if not usable:
+        return MarginResult(None, "none", None, None,
+                            "no approved prices at any size for this recipe/channel", [])
+
+    if len(usable) == 1:
+        p = usable[0]
+        return MarginResult(p.margin, "single", p, p,
+                            f"only one priced size ({p.label}, {p.margin:.2f}×) — using its margin",
+                            usable)
+
+    # Exact hit on a priced size (within 0.5% of its weight)
+    near = [p for p in usable if abs(p.weight_g - target_weight_g) <= 0.005 * p.weight_g]
+    if len(near) == 1:
+        p = near[0]
+        return MarginResult(p.margin, "exact", p, p,
+                            f"matches priced size {p.label} ({p.margin:.2f}×)", usable)
+
+    first, last = usable[0], usable[-1]
+    if target_weight_g < first.weight_g:
+        return MarginResult(first.margin, "below_range", first, first,
+                            f"smaller than the smallest priced size ({first.label}) — "
+                            f"using its margin {first.margin:.2f}×", usable)
+    if target_weight_g > last.weight_g:
+        return MarginResult(last.margin, "above_range", last, last,
+                            f"larger than the largest priced size ({last.label}) — "
+                            f"using its margin {last.margin:.2f}×", usable)
+
+    lo, hi = first, last
+    for a, b in zip(usable, usable[1:]):
+        if a.weight_g <= target_weight_g <= b.weight_g:
+            lo, hi = a, b
+            break
+
+    margin = _power_law_interp(target_weight_g, lo.weight_g, lo.margin,
+                               hi.weight_g, hi.margin)
+    return MarginResult(margin, "interpolated", lo, hi,
+                        f"interpolated between {lo.label} ({lo.margin:.2f}×) "
+                        f"and {hi.label} ({hi.margin:.2f}×)", usable)
+
+
+def build_price_points(
+    variants:        list[dict],
+    *,
+    channel:         str,                 # "Wholesale" | "Retail"
+    s:               AppSettings,
+    vat_multiplier:  float,
+    unit_cost_ref:   float,               # ingredients + component labour for the whole recipe
+    est_weight_g:    float,               # that recipe's weight, from its ingredients
+    ref_diameter:    float,
+    ref_height:      float,
+    size_type:       str,
+    labour:          dict[str, tuple],    # fmt → (batch_size, ref_batch, prep_h, oven_h)
+    default_weight:  dict[str, float],    # fmt → recipe default weight (g)
+) -> tuple[list[PricePoint], list[str]]:
+    """
+    One PricePoint per variant that has an approved price for the channel.
+    Each point's cost is what the calculator itself gives for that variant.
+    Weights come from the ingredients (`est_weight_g` is the standard cake's
+    weight); a diameter is turned into a weight with the recipe's volume ratio.
+    Returns (points, notes) — notes list priced variants that could not be
+    placed on the weight axis, and why.
+    """
+    key    = "ws_price_approved" if channel == "Wholesale" else "rt_price_approved"
+    points: list[PricePoint] = []
+    notes:  list[str] = []
+
+    for v in variants:
+        raw = v.get(key)
+        try:
+            price = float(raw or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        if price <= 0:
+            continue
+        if channel == "Retail":
+            price = price / vat_multiplier        # stored inc-VAT; margins are ex-VAT
+
+        fmt  = (v.get("format") or "standard").lower()
+        code = (v.get("size_code") or "").strip()
+        tag  = f" [{code}]" if code else ""
+        batch, ref_batch, prep_h, oven_h = labour.get(fmt, labour["standard"])
+
+        if fmt in ("individual", "bocado"):
+            w = float(v.get("ref_weight_g") or default_weight.get(fmt) or 0)
+            if w <= 0 or est_weight_g <= 0:
+                notes.append(f"{fmt} variant{tag} has no weight — not used")
+                continue
+            scale, factor, label = w / est_weight_g, 1.0, f"{fmt} {w:.0f}g{tag}"
+        else:
+            d = float(v.get("ref_diameter_cm") or 0)
+            if size_type == "diameter" and d > 0 and ref_diameter > 0:
+                scale = (d / ref_diameter) ** 2
+                vh = float(v.get("ref_height_cm") or 0)
+                if vh and ref_height:
+                    scale *= vh / ref_height
+                w, factor = est_weight_g * scale, d / ref_diameter
+                label = f"{d:.0f} cm{tag}"
+            elif float(v.get("ref_weight_g") or 0) > 0 and est_weight_g > 0:
+                w = float(v["ref_weight_g"])
+                scale, factor = w / est_weight_g, 1.0
+                label = f"standard {w:.0f}g{tag}"
+            else:
+                notes.append(f"standard variant{tag or ''} ({v.get('size_description') or 'no size'}) "
+                             "has no diameter/weight to place it — not used")
+                continue
+            if w <= 0:
+                notes.append(f"standard variant{tag} has no reference weight — not used")
+                continue
+
+        lab = calc_labour_cost(batch, ref_batch, prep_h, oven_h, s,
+                               size_labour_factor=factor)
+        cost = unit_cost_ref * scale + lab.labour_cost + lab.oven_cost
+        points.append(PricePoint(label, w, cost, price, fmt))
+
+    return points, notes
