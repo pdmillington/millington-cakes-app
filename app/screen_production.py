@@ -67,6 +67,109 @@ def _label_size_picker(key: str):
 
 
 # =============================================================================
+# Responsible person, change reasons and history (audit trail)
+# =============================================================================
+# Records are never deleted. A mistake is corrected with a recorded edit (who,
+# why, previous value kept) or the record is voided ("anulado") — see
+# millington_db.AUDIT TRAIL and migrations/2026-11-18_audit_trail.sql.
+
+RESTORE_REASONS = ["Anulado por error", "Otro"]
+
+
+def _local_time(ts) -> str:
+    """UTC timestamp from the database → local Madrid time, for display."""
+    from zoneinfo import ZoneInfo
+    try:
+        return (datetime.fromisoformat(str(ts)).astimezone(ZoneInfo("Europe/Madrid"))
+                .strftime("%Y-%m-%d %H:%M"))
+    except (TypeError, ValueError):
+        return str(ts)[:16].replace("T", " ")
+
+
+def _person_select(label: str, key: str, current: str | None = None):
+    """
+    Pick a named person. Starts empty on purpose so nobody is credited by
+    default. A former team member stays selectable when editing their records.
+    """
+    names = db.get_staff_names()
+    if current and current not in names:
+        names = names + [current]
+    index = names.index(current) if current in names else None
+    return st.selectbox(label, names, index=index,
+                        placeholder="— seleccionar —", key=key)
+
+
+def _change_form(key: str, reasons: list[str], who_label: str = "Modificado por"):
+    """Who is making a change and why. Returns (who, reason, ready)."""
+    c1, c2 = st.columns(2)
+    with c1:
+        who = _person_select(who_label, f"{key}_who")
+    with c2:
+        category = st.selectbox("Motivo", reasons, index=None,
+                                placeholder="— seleccionar —", key=f"{key}_why")
+    detail = st.text_input("Detalle (obligatorio si el motivo es «Otro»)",
+                           key=f"{key}_detail")
+    ready = bool(who and category and (category != "Otro" or detail.strip()))
+    return who, db.format_reason(category, detail), ready
+
+
+def _render_history(table: str, record_id: str):
+    revisions = db.get_revisions(table, record_id)
+    if not revisions:
+        return
+    actions = {"edit": "Corrección", "void": "Anulado", "restore": "Restaurado"}
+    with st.expander(f"🕘 Historial de cambios ({len(revisions)})"):
+        for r in revisions:
+            st.markdown(
+                f"**{_local_time(r['changed_at'])}** · "
+                f"{actions.get(r['action'], r['action'])} · {r['changed_by']} · "
+                f"_{r['reason']}_"
+            )
+            for line in db.describe_changes(r.get("changes") or {}):
+                st.caption(f"• {line}")
+
+
+@st.dialog("🚫 Anular registro")
+def _dialog_void_record(table: str, record: dict, description: str):
+    st.write(f"¿Anular {description}?")
+    st.caption(
+        "No se elimina: queda marcado como anulado — con quién, cuándo y por qué — "
+        "y sigue constando en los registros y en el informe. Su número no se reutiliza."
+    )
+    who, reason, ready = _change_form(f"void_{record['id']}", db.VOID_REASONS, "Anulado por")
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("🚫 Anular", type="primary", use_container_width=True, disabled=not ready):
+            try:
+                db.void_record(table, record["id"], who, reason)
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+    with b2:
+        if st.button("Cancelar", use_container_width=True):
+            st.rerun()
+
+
+@st.dialog("↩️ Restaurar registro anulado")
+def _dialog_restore_record(table: str, record: dict, description: str):
+    st.write(f"¿Restaurar {description}?")
+    st.caption(f"Anulado el {_local_time(record.get('voided_at'))} por "
+               f"{record.get('voided_by') or '—'}: {record.get('void_reason') or '—'}")
+    who, reason, ready = _change_form(f"restore_{record['id']}", RESTORE_REASONS, "Restaurado por")
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("↩️ Restaurar", type="primary", use_container_width=True, disabled=not ready):
+            try:
+                db.restore_record(table, record["id"], who, reason)
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
+    with b2:
+        if st.button("Cancelar", use_container_width=True):
+            st.rerun()
+
+
+# =============================================================================
 # Main screen
 # =============================================================================
 
@@ -76,6 +179,13 @@ def screen_production():
         "Registra cada producción, obtén tu número de lote y genera las etiquetas "
         "para etiquetar cada producto antes de la entrega."
     )
+
+    if not db.audit_schema_ready():
+        st.error(
+            "⚠️ Falta aplicar la migración de base de datos "
+            "`migrations/2026-11-18_audit_trail.sql` (Supabase → SQL editor). "
+            "Hasta entonces no se pueden registrar elaboraciones ni corregir o anular registros."
+        )
 
     tab1, tab2, tab3, tab4 = st.tabs([
         "📦 Recepción de materias primas",
@@ -289,8 +399,13 @@ def _tab_component_log():
 
     st.divider()
 
+    elaborated_by = _person_select("Elaborado por", "comp_log_by")
+    _comp_ready = amount_g > 0 and bool(elaborated_by) and db.audit_schema_ready()
+    if amount_g > 0 and not elaborated_by:
+        st.caption("Indica quién ha realizado la elaboración para poder guardar.")
+
     if st.button("💾 Guardar elaboración de componente", type="primary",
-                 disabled=(amount_g <= 0)):
+                 disabled=not _comp_ready):
         try:
             run = db.save_component_production_run(
                 recipe_id         = component["id"],
@@ -300,6 +415,7 @@ def _tab_component_log():
                 notes             = notes.strip() or None,
                 ing_refs          = comp_ing_refs,
                 pcc_log           = pcc_log,
+                elaborated_by     = elaborated_by,
             )
             st.session_state["last_comp_run"] = run
             st.session_state["comp_log_n_refs"] = 3
@@ -336,7 +452,8 @@ def _tab_component_log():
             kg = (run.get("amount_produced_g") or 0) / 1000
             st.markdown(
                 f"`{run['lote_number']}` — **{run['recipe_name']}** — "
-                f"{run['production_date']} — {kg:.2f} kg"
+                f"{run['production_date']} — {kg:.2f} kg — "
+                f"{run.get('elaborated_by') or '—'}"
             )
 
 
@@ -696,7 +813,12 @@ def _tab_log():
     st.divider()
 
     # ── Save ──────────────────────────────────────────────────────────────────
-    if st.button("💾 Guardar registro y obtener número de lote", type="primary"):
+    elaborated_by = _person_select("Elaborado por", "prod_by")
+    if not elaborated_by:
+        st.caption("Indica quién ha realizado la elaboración para poder guardar.")
+
+    if st.button("💾 Guardar registro y obtener número de lote", type="primary",
+                 disabled=not (elaborated_by and db.audit_schema_ready())):
         try:
             run = db.save_production_run(
                 recipe_id    = recipe["id"],
@@ -709,6 +831,7 @@ def _tab_log():
                 notes        = notes.strip() or None,
                 ing_refs     = ing_refs,
                 pcc_log      = pcc_log,
+                elaborated_by= elaborated_by,
             )
             if selected_comp_run_ids:
                 db.link_component_runs(run["id"], selected_comp_run_ids)
@@ -755,25 +878,32 @@ def _tab_log():
     _show_recent_runs()
 
 
-@st.dialog("✏️ Editar registro de producción")
+@st.dialog("✏️ Corregir registro de producción")
 def _dialog_edit_run(run: dict):
-    fmt_opts   = ["standard", "individual", "bocado"]
-    fmt_labels = [FORMAT_DISPLAY[f] for f in fmt_opts]
-    cur_fmt    = run.get("format", "standard")
-    cur_idx    = fmt_opts.index(cur_fmt) if cur_fmt in fmt_opts else 0
+    is_comp  = run.get("format") == "component" or bool(run.get("is_component_run"))
+    cur_fmt  = run.get("format", "standard")
+    fmt_opts = ["component"] if is_comp else ["standard", "individual", "bocado"]
+    if cur_fmt not in fmt_opts:
+        fmt_opts.append(cur_fmt)
+    fmt_name = lambda f: {**FORMAT_DISPLAY, "component": "Componente"}.get(f, f)
 
     st.markdown(f"Lote: `{run['lote_number']}`")
+    st.caption("Los cambios quedan registrados: el valor anterior se conserva en el historial.")
+    _render_history("production_runs", run["id"])
+
     ec1, ec2, ec3 = st.columns(3)
     with ec1:
         raw      = str(run.get("production_date", ""))[:10]
         new_date = st.date_input("Fecha", value=date.fromisoformat(raw) if raw else date.today())
     with ec2:
-        new_qty  = st.number_input("Unidades", min_value=1, value=int(run.get("quantity") or 1), step=1)
+        new_qty  = st.number_input("Gramos producidos" if is_comp else "Unidades",
+                                   min_value=1, value=int(run.get("quantity") or 1), step=1)
     with ec3:
-        new_fmt  = fmt_opts[fmt_labels.index(
-            st.selectbox("Formato", fmt_labels, index=cur_idx)
-        )]
+        new_fmt  = st.selectbox("Formato", fmt_opts, index=fmt_opts.index(cur_fmt),
+                                format_func=fmt_name, disabled=is_comp)
 
+    new_by    = _person_select("Elaborado por", f"dedit_by_{run['id']}",
+                               current=run.get("elaborated_by"))
     new_notes = st.text_area("Notas / incidencias", value=run.get("notes") or "", height=70)
 
     st.markdown("**Referencias de ingredientes**")
@@ -801,46 +931,46 @@ def _dialog_edit_run(run: dict):
             new_refs.append({"ingredient_name": ing.strip(), "albaran_ref": alb.strip() or None})
 
     st.divider()
+    who, reason, ready = _change_form(f"dedit_{run['id']}", db.EDIT_REASONS)
     sb1, sb2 = st.columns(2)
     with sb1:
-        if st.button("💾 Guardar cambios", type="primary", use_container_width=True):
-            db.update_production_run(run["id"], {
+        if st.button("💾 Guardar corrección", type="primary", use_container_width=True,
+                     disabled=not ready):
+            updates = {
                 "production_date": new_date.isoformat(),
                 "quantity":        new_qty,
                 "format":          new_fmt,
                 "notes":           new_notes.strip() or None,
-            })
-            db.replace_production_ingredient_refs(run["id"], new_refs)
-            st.rerun()
+            }
+            if is_comp:
+                updates["amount_produced_g"] = new_qty
+            if new_by:
+                updates["elaborated_by"] = new_by
+            try:
+                db.amend_production_run(run["id"], updates, new_refs, who, reason)
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
     with sb2:
         if st.button("Cancelar", use_container_width=True):
             st.rerun()
 
 
-@st.dialog("🗑️ Confirmar eliminación")
-def _dialog_delete_run(run: dict):
-    st.write(f"¿Eliminar el registro **{run['lote_number']}** ({run['recipe_name']})?")
-    st.caption("Esta acción no se puede deshacer.")
-    d1, d2 = st.columns(2)
-    with d1:
-        if st.button("✅ Eliminar", type="primary", use_container_width=True):
-            db.delete_production_run(run["id"])
-            st.rerun()
-    with d2:
-        if st.button("Cancelar", use_container_width=True):
-            st.rerun()
 
-
-def _build_production_export_xlsx(runs: list[dict]) -> bytes:
+def _build_production_export_xlsx(runs: list[dict], revisions: list[dict] | None = None) -> bytes:
     """
     Excel workbook with every production record:
-      Registros                 — one row per run
-      Ingredientes y albaranes  — one row per ingredient/albarán reference
-      PCC                       — one row per critical-control-point step
+      Registros                 — one row per run, everything in one place: PCC steps
+                                  and ingredient lots summarised in a cell
+                                  (voided runs flagged, not hidden)
+      Ingredientes y albaranes  — the same ingredient references, one per row (for filtering)
+      PCC                       — the same PCC steps, one per row (for filtering)
+      Historial de cambios      — every correction / voiding of production runs
+                                  and goods receipts: who, when, why, what changed
     """
     import json
     import openpyxl
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     def _d(value):
@@ -852,13 +982,17 @@ def _build_production_export_xlsx(runs: list[dict]) -> bytes:
     def _yes_no(v):
         return "" if v is None else ("Sí" if v else "No")
 
+    fmt_name = {**FORMAT_DISPLAY, "component": "Componente"}
+
     wb = openpyxl.Workbook()
 
     ws = wb.active
     ws.title = "Registros"
     ws.append(["Lote", "Fecha", "Producto", "Formato", "Cantidad", "Unidad",
-               "Producido (g)", "Componente", "Temp. horno (°C)",
-               "Tiempo horno (min)", "Notas", "Creado"])
+               "Producido (g)", "Componente", "Elaborado por", "Temp. horno (°C)",
+               "Tiempo horno (min)", "Pasos PCC", "PCC conformes", "Ingredientes y lotes",
+               "Notas", "Estado", "Anulado el", "Anulado por", "Motivo de anulación",
+               "Creado"])
 
     ws_ing = wb.create_sheet("Ingredientes y albaranes")
     ws_ing.append(["Lote", "Fecha", "Producto", "Ingrediente", "Albarán"])
@@ -868,32 +1002,65 @@ def _build_production_export_xlsx(runs: list[dict]) -> bytes:
                    "Tiempo (min)", "Límite crítico temp. (°C)", "Cumple límite"])
 
     for r in runs:
-        fecha = _d(r.get("production_date"))
-        base  = [r.get("lote_number"), fecha, r.get("recipe_name")]
-        ws.append(base[:2] + [
-            r.get("recipe_name"),
-            {**FORMAT_DISPLAY, "component": "Componente"}.get(r.get("format", ""), r.get("format") or ""),
-            r.get("quantity"), r.get("quantity_unit"),
-            r.get("amount_produced_g"),
-            "Sí" if r.get("is_component_run") else "No",
-            r.get("oven_temp_c"), r.get("bake_time_min"),
-            r.get("notes"),
-            str(r.get("created_at") or "")[:19].replace("T", " "),
-        ])
-
-        for ref in sorted(r.get("ingredient_refs") or [],
-                          key=lambda x: x.get("ingredient_name") or ""):
-            ws_ing.append(base + [ref.get("ingredient_name"), ref.get("albaran_ref")])
+        fecha  = _d(r.get("production_date"))
+        base   = [r.get("lote_number"), fecha, r.get("recipe_name")]
+        voided = bool(r.get("voided_at"))
 
         raw = r.get("pcc_log")
         try:
             steps = json.loads(raw) if isinstance(raw, str) else (raw or [])
         except ValueError:
             steps = []
-        for step in steps if isinstance(steps, list) else []:
-            # Two layouts exist: older (time_min / critical_limit_met) and
-            # newer (time_achieved_min / critical_limit_temp_c / ok).
-            met = step.get("critical_limit_met", step.get("ok"))
+        steps = steps if isinstance(steps, list) else []
+        # Two layouts exist: older (time_min / critical_limit_met) and
+        # newer (time_achieved_min / critical_limit_temp_c / ok).
+        met_flags = [s.get("critical_limit_met", s.get("ok")) for s in steps]
+
+        def _step_text(s, met):
+            mins = s.get("time_min", s.get("time_achieved_min"))
+            bits = [f"{s.get('step_name') or '?'}:"]
+            if s.get("temp_achieved_c") is not None:
+                bits.append(f"{s['temp_achieved_c']:g}°C")
+            if mins:
+                bits.append(f"{mins:g} min")
+            return " ".join(bits) + (" ✓" if met is True else " ✗" if met is False else "")
+
+        pcc_text = "; ".join(_step_text(s, m) for s, m in zip(steps, met_flags))
+        if not steps:
+            pcc_ok = ""
+        elif any(m is False for m in met_flags):
+            pcc_ok = "No"
+        elif all(m is True for m in met_flags):
+            pcc_ok = "Sí"
+        else:
+            pcc_ok = "Sin dato"
+        refs_text = "; ".join(
+            f"{x.get('ingredient_name')} — {x['albaran_ref']}" if x.get("albaran_ref")
+            else str(x.get("ingredient_name"))
+            for x in sorted(r.get("ingredient_refs") or [],
+                            key=lambda x: x.get("ingredient_name") or "")
+        )
+
+        ws.append(base + [
+            fmt_name.get(r.get("format", ""), r.get("format") or ""),
+            r.get("quantity"), r.get("quantity_unit"),
+            r.get("amount_produced_g"),
+            "Sí" if r.get("is_component_run") else "No",
+            r.get("elaborated_by"),
+            r.get("oven_temp_c"), r.get("bake_time_min"),
+            pcc_text or None, pcc_ok or None, refs_text or None,
+            r.get("notes"),
+            "ANULADO" if voided else "Vigente",
+            _local_time(r["voided_at"]) if voided else None,
+            r.get("voided_by"), r.get("void_reason"),
+            _local_time(r.get("created_at")),
+        ])
+
+        for ref in sorted(r.get("ingredient_refs") or [],
+                          key=lambda x: x.get("ingredient_name") or ""):
+            ws_ing.append(base + [ref.get("ingredient_name"), ref.get("albaran_ref")])
+
+        for step, met in zip(steps, met_flags):
             ws_pcc.append(base + [
                 step.get("step_name"),
                 step.get("temp_achieved_c"),
@@ -902,17 +1069,39 @@ def _build_production_export_xlsx(runs: list[dict]) -> bytes:
                 _yes_no(met),
             ])
 
+    ws_hist = wb.create_sheet("Historial de cambios")
+    ws_hist.append(["Registro", "Identificador", "Revisión", "Fecha y hora",
+                    "Realizado por", "Acción", "Motivo", "Cambios"])
+    actions = {"edit": "Corrección", "void": "Anulado", "restore": "Restaurado"}
+    for rev in revisions or []:
+        head = (rev.get("before_state") or {}).get("header") or {}
+        if rev.get("record_table") == "goods_receipts":
+            kind = "Recepción"
+            ident = (f"{head.get('supplier') or '?'} · {str(head.get('receipt_date') or '')[:10]}"
+                     f" · {head.get('albaran_ref') or 'sin albarán'}")
+        else:
+            kind, ident = "Producción", head.get("lote_number") or rev.get("record_id")
+        ws_hist.append([
+            kind, ident, rev.get("revision_no"), _local_time(rev.get("changed_at")),
+            rev.get("changed_by"), actions.get(rev.get("action"), rev.get("action")),
+            rev.get("reason"), "\n".join(db.describe_changes(rev.get("changes") or {})),
+        ])
+    if not revisions:
+        ws_hist.append(["(sin cambios registrados)"])
+
     for sheet in wb.worksheets:
         for cell in sheet[1]:
             cell.font = Font(bold=True)
             cell.fill = PatternFill("solid", fgColor="E5E7EB")
         sheet.freeze_panes = "A2"
         for i, col in enumerate(sheet.columns, 1):
-            width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
-            sheet.column_dimensions[get_column_letter(i)].width = min(max(width + 2, 10), 50)
+            width = max((len(str(c.value).split("\n")[0]) for c in col if c.value is not None), default=8)
+            sheet.column_dimensions[get_column_letter(i)].width = min(max(width + 2, 10), 60)
         if sheet.title == "Registros":
             for row in sheet.iter_rows(min_row=2, min_col=2, max_col=2):
                 row[0].number_format = "yyyy-mm-dd"
+    for row in ws_hist.iter_rows(min_row=2, min_col=8, max_col=8):
+        row[0].alignment = Alignment(wrap_text=True, vertical="top")
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -925,14 +1114,17 @@ def _show_recent_runs():
     # ── Full export (every record, not just the ones listed below) ────────────
     with st.expander("⬇️ Descargar todos los registros (Excel)"):
         st.caption(
-            "Un fichero con todos los registros de producción: lotes, "
-            "ingredientes y albaranes, y control de PCC."
+            "Un fichero con todos los registros de producción (también los anulados, "
+            "marcados). La hoja «Registros» tiene una fila por lote con el PCC y los "
+            "ingredientes resumidos; las hojas de detalle sirven para filtrar. Incluye "
+            "el historial de correcciones."
         )
         if st.button("Preparar fichero", key="prod_export_prepare"):
             with st.spinner("Preparando…"):
                 all_runs = db.get_all_production_runs()
                 st.session_state["prod_export"] = (
-                    _build_production_export_xlsx(all_runs), len(all_runs)
+                    _build_production_export_xlsx(all_runs, db.get_all_revisions()),
+                    len(all_runs),
                 )
         export = st.session_state.get("prod_export")
         if export:
@@ -944,9 +1136,13 @@ def _show_recent_runs():
                 key="prod_export_download",
             )
 
-    show_all = st.checkbox("Mostrar todos los registros", value=False, key="prod_show_all")
+    f1, f2 = st.columns(2)
+    show_all    = f1.checkbox("Mostrar todos los registros", value=False, key="prod_show_all")
+    show_voided = f2.checkbox("Mostrar anulados", value=False, key="prod_show_voided")
+    audit_ok    = db.audit_schema_ready()
     try:
-        runs = db.get_production_runs(limit=500 if show_all else 30)
+        runs = db.get_production_runs(limit=500 if show_all else 30,
+                                      include_voided=show_voided)
     except Exception:
         st.caption("Sin registros todavía.")
         return
@@ -955,18 +1151,21 @@ def _show_recent_runs():
         st.caption("Sin registros todavía.")
         return
 
-    h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([2, 1.5, 1, 0.7, 1, 1, 0.5, 0.5])
-    h1.markdown("**Lote**"); h2.markdown("**Producto**"); h3.markdown("**Formato**")
-    h4.markdown("**Uds**");  h5.markdown("**Fecha**");   h6.markdown("**PDF**")
+    widths = [2, 1.4, 1, 0.7, 1, 1.4, 0.7, 0.5, 0.5]
+    hs = st.columns(widths)
+    for h, label in zip(hs, ["Lote", "Producto", "Formato", "Uds", "Fecha", "Elaborado por", "PDF"]):
+        h.markdown(f"**{label}**")
 
     for run in runs:
-        c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2, 1.5, 1, 0.7, 1, 1, 0.5, 0.5])
+        voided = bool(run.get("voided_at"))
+        c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns(widths)
         c1.code(run["lote_number"], language=None)
-        c2.write(run["recipe_name"])
-        c3.write(FORMAT_DISPLAY.get(run.get("format", ""), "—"))
+        c2.markdown(f"🚫 ~~{run['recipe_name']}~~" if voided else run["recipe_name"])
+        c3.write({**FORMAT_DISPLAY, "component": "Componente"}.get(run.get("format", ""), "—"))
         c4.write(str(run["quantity"]))
         c5.write(str(run["production_date"])[:10])
-        with c6:
+        c6.write(run.get("elaborated_by") or "—")
+        with c7:
             try:
                 pdf_bytes = _generate_log_pdf(run)
                 st.download_button(
@@ -977,12 +1176,20 @@ def _show_recent_runs():
                 )
             except Exception:
                 st.write("—")
-        with c7:
-            if st.button("✏️", key=f"edit_{run['id']}", help="Editar"):
-                _dialog_edit_run(run)
-        with c8:
-            if st.button("🗑️", key=f"del_{run['id']}", help="Eliminar"):
-                _dialog_delete_run(run)
+        desc = f"el registro **{run['lote_number']}** ({run['recipe_name']})"
+        if voided:
+            with c8:
+                if st.button("↩️", key=f"restore_{run['id']}", help="Restaurar", disabled=not audit_ok):
+                    _dialog_restore_record("production_runs", run, desc)
+            st.caption(f"Anulado el {_local_time(run['voided_at'])} por "
+                       f"{run.get('voided_by') or '—'}: {run.get('void_reason') or '—'}")
+        else:
+            with c8:
+                if st.button("✏️", key=f"edit_{run['id']}", help="Corregir", disabled=not audit_ok):
+                    _dialog_edit_run(run)
+            with c9:
+                if st.button("🚫", key=f"del_{run['id']}", help="Anular", disabled=not audit_ok):
+                    _dialog_void_record("production_runs", run, desc)
 
 
 
@@ -1317,6 +1524,12 @@ def _generate_log_pdf(run: dict) -> bytes:
     # Lote callout
     story.append(Paragraph("Número de lote", ps("Lh", size=9, color=mid, sa=0)))
     story.append(Paragraph(run["lote_number"], ps("Ln", font=bold_font, size=20, sa=8)))
+    if run.get("voided_at"):
+        story.append(Paragraph(
+            f"ANULADO el {_local_time(run['voided_at'])} por {run.get('voided_by') or '—'} — "
+            f"{run.get('void_reason') or '—'}",
+            ps("Vd", font=bold_font, size=11, color=colors.HexColor("#b91c1c"), sa=8),
+        ))
 
     # Main details table
     prod_date = str(run.get("production_date", ""))[:10]
@@ -1325,6 +1538,7 @@ def _generate_log_pdf(run: dict) -> bytes:
         ["Formato",             FORMAT_DISPLAY.get(run.get("format", ""), "—")],
         ["Fecha elaboración",   prod_date],
         ["Unidades producidas", str(run.get("quantity", "—"))],
+        ["Elaborado por",       run.get("elaborated_by") or "—"],
     ]
     tbl = Table(details, colWidths=[5.5*cm, 11*cm])
     tbl.setStyle(TableStyle([
@@ -1939,10 +2153,7 @@ def _tab_reception():
             "Nº albarán", placeholder="Ref. albarán / factura", key="rec_albaran"
         )
 
-    _SIGNERS = ["Christine Millington", "Blanca Sánchez"]
-    received_by = st.selectbox(
-        "Recibido por", _SIGNERS, key="rec_by"
-    )
+    received_by = _person_select("Recibido por", "rec_by")
 
     st.divider()
 
@@ -2134,6 +2345,8 @@ def _tab_reception():
     # ── Validation & Save ──────────────────────────────────────────────────────
     if st.button("💾 Guardar registro de recepción", type="primary", key="rec_save"):
         errors = []
+        if not received_by:
+            errors.append("Indica quién ha recibido la mercancía.")
         if not supplier.strip():
             errors.append("El proveedor es obligatorio.")
         if not items_data:
@@ -2153,7 +2366,7 @@ def _tab_reception():
                     receipt_date=rec_date,
                     supplier=supplier.strip(),
                     albaran_ref=albaran.strip() or None,
-                    received_by=received_by.strip() or None,
+                    received_by=received_by.strip(),
                     items=items_data,
                     notes=notes.strip() or None,
                 )
@@ -2197,11 +2410,12 @@ def _tab_reception():
     _show_recent_receipts()
 
 
-@st.dialog("✏️ Editar recepción de mercancía")
+@st.dialog("✏️ Corregir recepción de mercancía")
 def _dialog_edit_receipt(r: dict):
     st.markdown(f"Proveedor: **{r['supplier']}** · {str(r['receipt_date'])[:10]}")
+    st.caption("Los cambios quedan registrados: el valor anterior se conserva en el historial.")
+    _render_history("goods_receipts", r["id"])
 
-    _SIGNERS = ["Christine Millington", "Blanca Sánchez"]
     rc1, rc2 = st.columns(2)
     with rc1:
         raw = str(r.get("receipt_date", ""))[:10]
@@ -2209,9 +2423,8 @@ def _dialog_edit_receipt(r: dict):
         new_supplier = st.text_input("Proveedor", value=r.get("supplier", ""))
     with rc2:
         new_albaran  = st.text_input("Nº albarán", value=r.get("albaran_ref") or "")
-        cur_rb       = r.get("received_by") or _SIGNERS[0]
-        rb_idx       = _SIGNERS.index(cur_rb) if cur_rb in _SIGNERS else 0
-        new_rb       = st.selectbox("Recibido por", _SIGNERS, index=rb_idx)
+        new_rb       = _person_select("Recibido por", f"redit_by_{r['id']}",
+                                      current=r.get("received_by"))
     new_notes = st.text_area("Observaciones", value=r.get("notes") or "", height=60)
 
     st.markdown("**Productos recibidos**")
@@ -2249,40 +2462,36 @@ def _dialog_edit_receipt(r: dict):
             })
 
     st.divider()
+    who, reason, ready = _change_form(f"redit_{r['id']}", db.EDIT_REASONS)
     b1, b2 = st.columns(2)
     with b1:
-        if st.button("💾 Guardar cambios", type="primary", use_container_width=True):
-            db.update_goods_receipt(r["id"], {
+        if st.button("💾 Guardar corrección", type="primary", use_container_width=True,
+                     disabled=not ready):
+            header = {
                 "receipt_date": new_date.isoformat(),
                 "supplier":     new_supplier.strip(),
                 "albaran_ref":  new_albaran.strip() or None,
-                "received_by":  new_rb,
                 "notes":        new_notes.strip() or None,
-            }, new_items)
-            st.rerun()
+            }
+            if new_rb:
+                header["received_by"] = new_rb
+            try:
+                db.amend_goods_receipt(r["id"], header, new_items, who, reason)
+                st.rerun()
+            except Exception as e:
+                st.error(str(e))
     with b2:
         if st.button("Cancelar", use_container_width=True):
             st.rerun()
 
 
-@st.dialog("🗑️ Confirmar eliminación")
-def _dialog_delete_receipt(r: dict):
-    st.write(f"¿Eliminar la recepción de **{r['supplier']}** del {str(r['receipt_date'])[:10]}?")
-    st.caption("Esta acción no se puede deshacer.")
-    d1, d2 = st.columns(2)
-    with d1:
-        if st.button("✅ Eliminar", type="primary", use_container_width=True):
-            db.delete_goods_receipt(r["id"])
-            st.rerun()
-    with d2:
-        if st.button("Cancelar", use_container_width=True):
-            st.rerun()
-
 
 def _show_recent_receipts():
     st.markdown("### Recepciones recientes")
+    show_voided = st.checkbox("Mostrar anulados", value=False, key="rec_show_voided")
+    audit_ok    = db.audit_schema_ready()
     try:
-        receipts = db.get_goods_receipts(limit=100)
+        receipts = db.get_goods_receipts(limit=100, include_voided=show_voided)
     except Exception:
         st.caption("Sin registros todavía.")
         return
@@ -2296,14 +2505,17 @@ def _show_recent_receipts():
     h4.markdown("**Prods**"); h5.markdown("**Estado**");   h6.markdown("**PDF**")
 
     for r in receipts:
+        voided     = bool(r.get("voided_at"))
         n_items    = len(r.get("items", []))
         n_rejected = sum(1 for it in r.get("items", []) if not it.get("accepted", True))
         c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([1.2, 2, 1.5, 0.7, 0.7, 0.8, 0.5, 0.5])
         c1.write(str(r["receipt_date"])[:10])
-        c2.write(r["supplier"])
+        c2.markdown(f"🚫 ~~{r['supplier']}~~" if voided else r["supplier"])
         c3.write(r.get("albaran_ref") or "—")
         c4.write(str(n_items))
-        if n_rejected:
+        if voided:
+            c5.markdown("🚫")
+        elif n_rejected:
             c5.markdown(f"❌ {n_rejected}")
         else:
             c5.markdown("✅")
@@ -2318,12 +2530,20 @@ def _show_recent_receipts():
                 )
             except Exception:
                 st.write("—")
-        with c7:
-            if st.button("✏️", key=f"rec_edit_{r['id']}", help="Editar"):
-                _dialog_edit_receipt(r)
-        with c8:
-            if st.button("🗑️", key=f"rec_del_{r['id']}", help="Eliminar"):
-                _dialog_delete_receipt(r)
+        desc = f"la recepción de **{r['supplier']}** del {str(r['receipt_date'])[:10]}"
+        if voided:
+            with c7:
+                if st.button("↩️", key=f"rec_restore_{r['id']}", help="Restaurar", disabled=not audit_ok):
+                    _dialog_restore_record("goods_receipts", r, desc)
+            st.caption(f"Anulada el {_local_time(r['voided_at'])} por "
+                       f"{r.get('voided_by') or '—'}: {r.get('void_reason') or '—'}")
+        else:
+            with c7:
+                if st.button("✏️", key=f"rec_edit_{r['id']}", help="Corregir", disabled=not audit_ok):
+                    _dialog_edit_receipt(r)
+            with c8:
+                if st.button("🚫", key=f"rec_del_{r['id']}", help="Anular", disabled=not audit_ok):
+                    _dialog_void_record("goods_receipts", r, desc)
 
 
 # =============================================================================
@@ -2393,6 +2613,14 @@ def _generate_receipt_pdf(receipt: dict) -> bytes:
         "APPCC — Plan de Proveedores  ·  ELD R7-01",
         ps("Sub", size=9, color=mid, sa=10, align=TA_CENTER),
     ))
+
+    if receipt.get("voided_at"):
+        story.append(Paragraph(
+            f"ANULADA el {_local_time(receipt['voided_at'])} por {receipt.get('voided_by') or '—'} — "
+            f"{receipt.get('void_reason') or '—'}",
+            ps("Vd", font=bold_font, size=11, color=colors.HexColor("#b91c1c"), sa=10,
+               align=TA_CENTER),
+        ))
 
     # ── Summary table ─────────────────────────────────────────────────────────
     receipt_date = str(receipt.get("receipt_date", ""))[:10]

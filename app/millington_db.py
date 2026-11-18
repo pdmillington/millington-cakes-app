@@ -2247,10 +2247,12 @@ def save_production_run(
     pcc_log:           list[dict] | None = None,
     is_component_run:  bool = False,
     amount_produced_g: float | None = None,
+    elaborated_by:     str | None = None,
 ) -> dict:
     """
     Insert a production run + ingredient refs.
     Returns the saved run dict (with lote_number and id).
+    elaborated_by is the person responsible for the elaboration.
     """
     import json as _json
     if ing_refs is None:
@@ -2273,6 +2275,8 @@ def save_production_run(
         "is_component_run":  is_component_run,
         "amount_produced_g": amount_produced_g,
     }
+    if elaborated_by is not None:
+        run_row["elaborated_by"] = elaborated_by.strip() or None
     result = (
         sb.table("production_runs")
           .insert(run_row)
@@ -2293,8 +2297,11 @@ def save_production_run(
     return saved
  
  
-def get_production_runs(limit: int = 30) -> list[dict]:
-    """Return recent production runs, newest first."""
+def get_production_runs(limit: int = 30, include_voided: bool = False) -> list[dict]:
+    """
+    Return recent production runs, newest first. Voided (anulado) runs are
+    left out unless include_voided=True.
+    """
     sb   = get_client()
     rows = (
         sb.table("production_runs")
@@ -2305,6 +2312,8 @@ def get_production_runs(limit: int = 30) -> list[dict]:
           .execute()
           .data or []
     )
+    if not include_voided:
+        rows = [r for r in rows if not r.get("voided_at")]
     # Attach ingredient refs to each run
     if rows:
         run_ids = [r["id"] for r in rows]
@@ -2493,10 +2502,11 @@ def get_production_runs_for_recipe(recipe_id: str, limit: int = 1) -> list[dict]
           .eq("recipe_id", recipe_id)
           .order("production_date", desc=True)
           .order("created_at",      desc=True)
-          .limit(limit)
+          .limit(limit + 10)          # spare rows: voided runs are skipped below
           .execute()
           .data or []
     )
+    rows = [r for r in rows if not r.get("voided_at")][:limit]
     if rows:
         run_ids = [r["id"] for r in rows]
         refs    = (
@@ -2513,16 +2523,286 @@ def get_production_runs_for_recipe(recipe_id: str, limit: int = 1) -> list[dict]
             row["ingredient_refs"] = refs_by_run.get(row["id"], [])
     return rows
  
-def update_production_run(run_id: str, updates: dict) -> None:
-    """Update editable fields on an existing production run."""
+# =============================================================================
+# AUDIT TRAIL — responsible person, void instead of delete, revision history
+# =============================================================================
+#
+# Production runs and goods receipts are official records, so they are never
+# deleted. A mistaken record is VOIDED (it stays, struck through, with who/why)
+# and a correction is an EDIT that keeps the previous version. Every edit, void
+# and restore writes a row to record_revisions: who, when, why, what changed,
+# and the full before/after state (header + child rows).
+#
+# The database also refuses deletes and any change to the revisions — see
+# migrations/2026-11-18_audit_trail.sql.
+#
+# Limits (by design, stated on the report):
+#   - "who" is the person selected in the app (there is one shared login);
+#   - changes made directly in the database editor are not logged;
+#   - history starts when the migration was applied.
+
+DEFAULT_STAFF      = ["Christine Millington", "Blanca Sánchez"]
+EDIT_REASONS       = ["Error de transcripción", "Dato omitido", "Dato incorrecto", "Otro"]
+VOID_REASONS       = ["Registro duplicado", "Creado por error",
+                      "No se llegó a producir / recibir", "Otro"]
+
+# record table → (child table, foreign key in child, key used in the snapshot)
+_AUDIT_TABLES = {
+    "production_runs": ("production_ingredient_refs", "production_run_id", "ingredient_refs"),
+    "goods_receipts":  ("goods_receipt_items",        "receipt_id",        "items"),
+}
+
+_VOLATILE_FIELDS = {"id", "created_at", "updated_at"}
+
+CHANGE_FIELD_LABELS = {
+    "production_date": "Fecha", "quantity": "Unidades", "format": "Formato",
+    "notes": "Notas", "elaborated_by": "Elaborado por",
+    "ingredient_refs": "Ingredientes / lotes",
+    "receipt_date": "Fecha", "supplier": "Proveedor", "albaran_ref": "Nº albarán",
+    "received_by": "Recibido por", "items": "Productos recibidos",
+    "voided_at": "Anulado el", "voided_by": "Anulado por", "void_reason": "Motivo de anulación",
+}
+
+
+# ---- pure helpers (no database) ---------------------------------------------
+
+def format_reason(category: str | None, detail: str | None) -> str:
+    """Join a reason category and free-text detail: 'Otro: texto'."""
+    category, detail = (category or "").strip(), (detail or "").strip()
+    return f"{category}: {detail}" if category and detail else (category or detail)
+
+
+def _norm(v):
+    """Compare values the way a person would: '' == None, 5 == 5.0, trim text."""
+    if isinstance(v, str):
+        return v.strip() or None
+    if isinstance(v, bool) or v is None:
+        return v
+    if isinstance(v, (int, float)):
+        return float(v)
+    return v
+
+
+def _fmt_ref(r: dict) -> str:
+    name = (r.get("ingredient_name") or "").strip()
+    alb  = (r.get("albaran_ref") or "").strip()
+    return f"{name} — {alb}" if alb else name
+
+
+def _fmt_item(i: dict) -> str:
+    qty  = i.get("quantity")
+    parts = [
+        (i.get("product_name") or "?").strip(),
+        f"lote {i['supplier_lot'].strip()}" if (i.get("supplier_lot") or "").strip() else "sin lote",
+        f"{float(qty):g} {i.get('quantity_unit') or ''}".strip() if qty is not None else "sin cantidad",
+    ]
+    if i.get("temp_measured_c") is not None:
+        lim = f" (límite {float(i['temp_limit_c']):g}°C)" if i.get("temp_limit_c") is not None else ""
+        parts.append(f"{float(i['temp_measured_c']):g}°C{lim}")
+    if i.get("packaging_ok") is False:
+        parts.append("envase NO conforme")
+    if i.get("labelling_ok") is False:
+        parts.append("etiquetado NO conforme")
+    if i.get("accepted") is False:
+        reason = (i.get("rejection_reason") or "").strip()
+        parts.append("RECHAZADO" + (f" ({reason})" if reason else ""))
+    return " · ".join(parts)
+
+
+def diff_states(before: dict, after: dict) -> dict:
+    """
+    What changed between two snapshots, as {field: [old, new]}. Header fields
+    compare by value; child rows (ingredient refs / receipt items) compare as
+    sorted lists of readable strings. Empty dict = nothing changed.
+    """
+    changes: dict = {}
+    bh, ah = before.get("header") or {}, after.get("header") or {}
+    for k in sorted(set(bh) | set(ah)):
+        if k in _VOLATILE_FIELDS:
+            continue
+        if _norm(bh.get(k)) != _norm(ah.get(k)):
+            changes[k] = [bh.get(k), ah.get(k)]
+    for key, fmt in (("ingredient_refs", _fmt_ref), ("items", _fmt_item)):
+        if key in before or key in after:
+            b = sorted(fmt(x) for x in before.get(key) or [])
+            a = sorted(fmt(x) for x in after.get(key) or [])
+            if b != a:
+                changes[key] = [b, a]
+    return changes
+
+
+def describe_changes(changes: dict) -> list[str]:
+    """Human-readable lines for a `changes` dict (history view and export)."""
+    def show(v):
+        return "—" if v in (None, "") else str(v)
+
+    lines = []
+    for field, (old, new) in (changes or {}).items():
+        label = CHANGE_FIELD_LABELS.get(field, field)
+        if isinstance(old, list) or isinstance(new, list):
+            old, new = old or [], new or []
+            removed = [x for x in old if x not in new]
+            added   = [x for x in new if x not in old]
+            bits = [f"− {x}" for x in removed] + [f"+ {x}" for x in added]
+            lines.append(f"{label}: " + "; ".join(bits) if bits else f"{label}: reordenado")
+        else:
+            lines.append(f"{label}: {show(old)} → {show(new)}")
+    return lines
+
+
+# ---- staff ------------------------------------------------------------------
+
+def get_staff(active_only: bool = False) -> list[dict]:
+    """People who can be named as responsible. Falls back to the default list
+    until the audit-trail migration has created the staff_members table."""
+    try:
+        rows = get_client().table("staff_members").select("*").order("name").execute().data or []
+    except Exception:
+        rows = [{"id": None, "name": n, "active": True} for n in DEFAULT_STAFF]
+    return [r for r in rows if r.get("active", True)] if active_only else rows
+
+
+def get_staff_names() -> list[str]:
+    return [r["name"] for r in get_staff(active_only=True)]
+
+
+def add_staff_member(name: str) -> None:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Escribe un nombre.")
+    get_client().table("staff_members").upsert(
+        {"name": name, "active": True}, on_conflict="name"
+    ).execute()
+
+
+def set_staff_active(staff_id: str, active: bool) -> None:
+    get_client().table("staff_members").update({"active": active}).eq("id", staff_id).execute()
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def audit_schema_ready() -> bool:
+    """True once migrations/2026-11-18_audit_trail.sql has been applied."""
+    try:
+        sb = get_client()
+        sb.table("staff_members").select("id").limit(1).execute()
+        sb.table("record_revisions").select("id").limit(1).execute()
+        sb.table("production_runs").select("elaborated_by, voided_at").limit(1).execute()
+        sb.table("goods_receipts").select("voided_at").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+# ---- snapshots and the audited write -----------------------------------------
+
+def _snapshot(table: str, record_id: str) -> dict | None:
+    child_table, fk, key = _AUDIT_TABLES[table]
+    sb   = get_client()
+    rows = sb.table(table).select("*").eq("id", record_id).limit(1).execute().data or []
+    if not rows:
+        return None
+    children = sb.table(child_table).select("*").eq(fk, record_id).execute().data or []
+    return {"header": rows[0], key: children}
+
+
+def _restore_snapshot(table: str, snap: dict) -> None:
+    """Best-effort rollback to a snapshot (used if a change can't be fully applied)."""
+    child_table, fk, key = _AUDIT_TABLES[table]
+    sb  = get_client()
+    rid = snap["header"]["id"]
+    sb.table(table).update(
+        {k: v for k, v in snap["header"].items() if k not in ("id", "created_at")}
+    ).eq("id", rid).execute()
+    sb.table(child_table).delete().eq(fk, rid).execute()
+    for child in snap[key]:
+        sb.table(child_table).insert({k: v for k, v in child.items() if k != "id"}).execute()
+
+
+def _next_revision_no(table: str, record_id: str) -> int:
+    last = (
+        get_client().table("record_revisions")
+          .select("revision_no")
+          .eq("record_table", table).eq("record_id", record_id)
+          .order("revision_no", desc=True).limit(1)
+          .execute().data or []
+    )
+    return (last[0]["revision_no"] + 1) if last else 1
+
+
+def _audited_change(table: str, record_id: str, action: str,
+                    changed_by: str, reason: str, apply_fn) -> dict | None:
+    """
+    Run `apply_fn` (which performs the actual write) and record the change.
+
+    Returns the revision row, or None if nothing actually changed. If the write
+    or the history entry fails, the record is put back as it was and an error
+    is raised, so a change is never left in place without its history.
+    """
+    changed_by, reason = (changed_by or "").strip(), (reason or "").strip()
+    if not changed_by:
+        raise ValueError("Indica quién realiza el cambio.")
+    if not reason:
+        raise ValueError("Indica el motivo del cambio.")
+
+    before = _snapshot(table, record_id)
+    if before is None:
+        raise ValueError("El registro no existe.")
+    voided = bool(before["header"].get("voided_at"))
+    if action in ("edit", "void") and voided:
+        raise ValueError("El registro está anulado: restáuralo antes de modificarlo.")
+    if action == "restore" and not voided:
+        raise ValueError("El registro no está anulado.")
+
+    try:
+        apply_fn()
+    except Exception as e:
+        try:
+            _restore_snapshot(table, before)
+        except Exception as e2:
+            raise RuntimeError(
+                f"El cambio falló a medias y no se pudo deshacer ({e2}). "
+                "Revisa el registro manualmente."
+            ) from e
+        raise
+
+    after   = _snapshot(table, record_id)
+    changes = diff_states(before, after)
+    if not changes:
+        return None
+
+    row = {
+        "record_table": table, "record_id": str(record_id),
+        "revision_no":  _next_revision_no(table, record_id),
+        "action":       action,
+        "changed_by":   changed_by, "reason": reason,
+        "changes":      changes, "before_state": before, "after_state": after,
+    }
+    try:
+        saved = get_client().table("record_revisions").insert(row).execute().data or [row]
+    except Exception as e:
+        try:
+            _restore_snapshot(table, before)
+        except Exception as e2:
+            raise RuntimeError(
+                f"No se pudo guardar el historial ({e}) ni deshacer el cambio ({e2}). "
+                "Revisa el registro manualmente."
+            ) from e
+        raise RuntimeError(
+            f"No se pudo guardar el historial del cambio, así que se ha revertido: {e}"
+        ) from e
+    return saved[0]
+
+
+# ---- production runs -----------------------------------------------------------
+
+def _update_production_run(run_id: str, updates: dict) -> None:
     import json as _json
     if "pcc_log" in updates and not isinstance(updates["pcc_log"], str):
         updates["pcc_log"] = _json.dumps(updates["pcc_log"])
     get_client().table("production_runs").update(updates).eq("id", run_id).execute()
 
 
-def replace_production_ingredient_refs(run_id: str, refs: list[dict]) -> None:
-    """Delete and re-insert ingredient refs for a production run."""
+def _replace_production_ingredient_refs(run_id: str, refs: list[dict]) -> None:
     sb = get_client()
     sb.table("production_ingredient_refs").delete().eq("production_run_id", run_id).execute()
     for ref in refs:
@@ -2534,15 +2814,20 @@ def replace_production_ingredient_refs(run_id: str, refs: list[dict]) -> None:
             }).execute()
 
 
-def delete_production_run(run_id: str) -> None:
-    """Delete a single production run and its ingredient refs."""
-    sb = get_client()
-    sb.table("production_ingredient_refs").delete().eq("production_run_id", run_id).execute()
-    sb.table("production_runs").delete().eq("id", run_id).execute()
+def amend_production_run(run_id: str, updates: dict, new_refs: list[dict] | None,
+                         changed_by: str, reason: str) -> dict | None:
+    """Correct a production run, keeping the previous version in its history."""
+    def apply():
+        if updates:
+            _update_production_run(run_id, dict(updates))
+        if new_refs is not None:
+            _replace_production_ingredient_refs(run_id, new_refs)
+    return _audited_change("production_runs", run_id, "edit", changed_by, reason, apply)
 
 
-def update_goods_receipt(receipt_id: str, header: dict, items: list[dict]) -> None:
-    """Update a goods receipt header and replace its items."""
+# ---- goods receipts -------------------------------------------------------------
+
+def _update_goods_receipt(receipt_id: str, header: dict, items: list[dict]) -> None:
     sb = get_client()
     sb.table("goods_receipts").update(header).eq("id", receipt_id).execute()
     sb.table("goods_receipt_items").delete().eq("receipt_id", receipt_id).execute()
@@ -2552,31 +2837,66 @@ def update_goods_receipt(receipt_id: str, header: dict, items: list[dict]) -> No
         sb.table("goods_receipt_items").insert(row).execute()
 
 
-def delete_goods_receipt(receipt_id: str) -> None:
-    """Delete a single goods receipt and its items."""
-    sb = get_client()
-    sb.table("goods_receipt_items").delete().eq("receipt_id", receipt_id).execute()
-    sb.table("goods_receipts").delete().eq("id", receipt_id).execute()
+def amend_goods_receipt(receipt_id: str, header: dict, items: list[dict],
+                        changed_by: str, reason: str) -> dict | None:
+    """Correct a goods receipt, keeping the previous version in its history."""
+    def apply():
+        _update_goods_receipt(receipt_id, dict(header), items)
+    return _audited_change("goods_receipts", receipt_id, "edit", changed_by, reason, apply)
 
 
-def delete_production_runs_before(cutoff_date) -> int:
-    """
-    Delete all production runs (and their ingredient refs) with
-    production_date strictly before cutoff_date. Returns the count deleted.
-    """
-    sb = get_client()
-    iso = cutoff_date.isoformat() if hasattr(cutoff_date, "isoformat") else str(cutoff_date)
-    # Fetch IDs first so we can cascade-delete refs
-    run_ids = [
-        r["id"] for r in (
-            sb.table("production_runs").select("id").lt("production_date", iso).execute().data or []
+# ---- void / restore (both tables) -------------------------------------------------
+
+def void_record(table: str, record_id: str, voided_by: str, reason: str) -> dict | None:
+    """'Anular': the record stays, flagged as void, with who, when and why."""
+    from datetime import datetime, timezone
+    when = datetime.now(timezone.utc).isoformat()
+    def apply():
+        get_client().table(table).update({
+            "voided_at": when, "voided_by": (voided_by or "").strip(),
+            "void_reason": (reason or "").strip(),
+        }).eq("id", record_id).execute()
+    return _audited_change(table, record_id, "void", voided_by, reason, apply)
+
+
+def restore_record(table: str, record_id: str, restored_by: str, reason: str) -> dict | None:
+    """Undo a void (for a record voided by mistake). Recorded in the history."""
+    def apply():
+        get_client().table(table).update({
+            "voided_at": None, "voided_by": None, "void_reason": None,
+        }).eq("id", record_id).execute()
+    return _audited_change(table, record_id, "restore", restored_by, reason, apply)
+
+
+# ---- reading the history ------------------------------------------------------------
+
+def get_revisions(table: str, record_id: str) -> list[dict]:
+    """Revisions of one record, oldest first."""
+    try:
+        return (
+            get_client().table("record_revisions").select("*")
+              .eq("record_table", table).eq("record_id", str(record_id))
+              .order("revision_no").execute().data or []
         )
-    ]
-    if not run_ids:
-        return 0
-    sb.table("production_ingredient_refs").delete().in_("production_run_id", run_ids).execute()
-    sb.table("production_runs").delete().lt("production_date", iso).execute()
-    return len(run_ids)
+    except Exception:
+        return []
+
+
+def get_all_revisions() -> list[dict]:
+    """Every revision of every record (paged past the API row cap), oldest first."""
+    try:
+        sb, page, rows, start = get_client(), 1000, [], 0
+        while True:
+            batch = (
+                sb.table("record_revisions").select("*").order("changed_at")
+                  .range(start, start + page - 1).execute().data or []
+            )
+            rows += batch
+            if len(batch) < page:
+                return rows
+            start += page
+    except Exception:
+        return []
 
 
 # -----------------------------------------------------------------------------
@@ -2591,6 +2911,7 @@ def save_component_production_run(
     notes:             str | None = None,
     ing_refs:          list[dict] | None = None,
     pcc_log:           list[dict] | None = None,
+    elaborated_by:     str | None = None,
 ) -> dict:
     """Save a component recipe production run."""
     return save_production_run(
@@ -2605,22 +2926,24 @@ def save_component_production_run(
         pcc_log           = pcc_log,
         is_component_run  = True,
         amount_produced_g = amount_produced_g,
+        elaborated_by     = elaborated_by,
     )
 
 
 def get_component_production_runs(limit: int = 50) -> list[dict]:
     """Return recent component production runs for use in pickers."""
     sb = get_client()
-    return (
+    rows = (
         sb.table("production_runs")
-          .select("id, lote_number, recipe_id, recipe_name, production_date, amount_produced_g")
+          .select("*")
           .eq("is_component_run", True)
           .order("production_date", desc=True)
           .order("created_at",     desc=True)
-          .limit(limit)
+          .limit(limit + 10)          # spare rows: voided runs are skipped below
           .execute()
           .data or []
     )
+    return [r for r in rows if not r.get("voided_at")][:limit]
 
 
 def link_component_runs(final_run_id: str, component_run_ids: list[str]) -> None:
@@ -2904,12 +3227,13 @@ def get_albaran_by_lote(limit: int = 300) -> dict[str, str]:
     sb = get_client()
     receipts = (
         sb.table("goods_receipts")
-          .select("id, albaran_ref")
+          .select("*")
           .order("receipt_date", desc=True)
           .limit(limit)
           .execute()
           .data or []
     )
+    receipts = [r for r in receipts if not r.get("voided_at")]
     if not receipts:
         return {}
     albaran_by_receipt = {
@@ -2933,8 +3257,11 @@ def get_albaran_by_lote(limit: int = 300) -> dict[str, str]:
     return lookup
 
 
-def get_goods_receipts(limit: int = 30) -> list[dict]:
-    """Return recent goods receipts, newest first, with items attached."""
+def get_goods_receipts(limit: int = 30, include_voided: bool = False) -> list[dict]:
+    """
+    Return recent goods receipts, newest first, with items attached. Voided
+    (anulado) receipts are left out unless include_voided=True.
+    """
     sb   = get_client()
     rows = (
         sb.table("goods_receipts")
@@ -2945,6 +3272,8 @@ def get_goods_receipts(limit: int = 30) -> list[dict]:
           .execute()
           .data or []
     )
+    if not include_voided:
+        rows = [r for r in rows if not r.get("voided_at")]
     if not rows:
         return rows
     receipt_ids = [r["id"] for r in rows]

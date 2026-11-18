@@ -378,6 +378,38 @@ def screen_settings():
 
     st.divider()
 
+    # ── Staff (responsible persons) ───────────────────────────────────────────
+    st.markdown("### Personal")
+    st.caption(
+        "Personas que pueden figurar como responsables de una recepción, "
+        "elaboración, corrección o anulación. Quien deja el equipo se desactiva "
+        "(no se borra): sigue constando en los registros antiguos."
+    )
+    staff = db.get_staff()
+    if not db.audit_schema_ready():
+        st.warning("Falta aplicar la migración `migrations/2026-11-18_audit_trail.sql` "
+                   "para poder editar esta lista.")
+    for person in staff:
+        if person.get("id") is None:
+            st.write(f"• {person['name']}")
+            continue
+        active = st.checkbox(person["name"], value=person.get("active", True),
+                             key=f"staff_active_{person['id']}")
+        if active != person.get("active", True):
+            db.set_staff_active(person["id"], active)
+            st.rerun()
+    sc1, sc2 = st.columns([3, 1])
+    new_person = sc1.text_input("Añadir persona", key="staff_new",
+                                label_visibility="collapsed", placeholder="Nombre y apellidos")
+    if sc2.button("Añadir", key="staff_add", disabled=not db.audit_schema_ready()):
+        try:
+            db.add_staff_member(new_person)
+            st.rerun()
+        except Exception as e:
+            st.error(str(e))
+
+    st.divider()
+
     # ── Data ──────────────────────────────────────────────────────────────────
     st.markdown("### Data")
     st.caption("Connected to Supabase")
