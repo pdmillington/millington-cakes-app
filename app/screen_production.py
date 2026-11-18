@@ -831,8 +831,118 @@ def _dialog_delete_run(run: dict):
             st.rerun()
 
 
+def _build_production_export_xlsx(runs: list[dict]) -> bytes:
+    """
+    Excel workbook with every production record:
+      Registros                 — one row per run
+      Ingredientes y albaranes  — one row per ingredient/albarán reference
+      PCC                       — one row per critical-control-point step
+    """
+    import json
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    def _d(value):
+        try:
+            return datetime.fromisoformat(str(value)[:10]).date()
+        except (TypeError, ValueError):
+            return value
+
+    def _yes_no(v):
+        return "" if v is None else ("Sí" if v else "No")
+
+    wb = openpyxl.Workbook()
+
+    ws = wb.active
+    ws.title = "Registros"
+    ws.append(["Lote", "Fecha", "Producto", "Formato", "Cantidad", "Unidad",
+               "Producido (g)", "Componente", "Temp. horno (°C)",
+               "Tiempo horno (min)", "Notas", "Creado"])
+
+    ws_ing = wb.create_sheet("Ingredientes y albaranes")
+    ws_ing.append(["Lote", "Fecha", "Producto", "Ingrediente", "Albarán"])
+
+    ws_pcc = wb.create_sheet("PCC")
+    ws_pcc.append(["Lote", "Fecha", "Producto", "Paso", "Temp. alcanzada (°C)",
+                   "Tiempo (min)", "Límite crítico temp. (°C)", "Cumple límite"])
+
+    for r in runs:
+        fecha = _d(r.get("production_date"))
+        base  = [r.get("lote_number"), fecha, r.get("recipe_name")]
+        ws.append(base[:2] + [
+            r.get("recipe_name"),
+            {**FORMAT_DISPLAY, "component": "Componente"}.get(r.get("format", ""), r.get("format") or ""),
+            r.get("quantity"), r.get("quantity_unit"),
+            r.get("amount_produced_g"),
+            "Sí" if r.get("is_component_run") else "No",
+            r.get("oven_temp_c"), r.get("bake_time_min"),
+            r.get("notes"),
+            str(r.get("created_at") or "")[:19].replace("T", " "),
+        ])
+
+        for ref in sorted(r.get("ingredient_refs") or [],
+                          key=lambda x: x.get("ingredient_name") or ""):
+            ws_ing.append(base + [ref.get("ingredient_name"), ref.get("albaran_ref")])
+
+        raw = r.get("pcc_log")
+        try:
+            steps = json.loads(raw) if isinstance(raw, str) else (raw or [])
+        except ValueError:
+            steps = []
+        for step in steps if isinstance(steps, list) else []:
+            # Two layouts exist: older (time_min / critical_limit_met) and
+            # newer (time_achieved_min / critical_limit_temp_c / ok).
+            met = step.get("critical_limit_met", step.get("ok"))
+            ws_pcc.append(base + [
+                step.get("step_name"),
+                step.get("temp_achieved_c"),
+                step.get("time_min", step.get("time_achieved_min")),
+                step.get("critical_limit_temp_c"),
+                _yes_no(met),
+            ])
+
+    for sheet in wb.worksheets:
+        for cell in sheet[1]:
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill("solid", fgColor="E5E7EB")
+        sheet.freeze_panes = "A2"
+        for i, col in enumerate(sheet.columns, 1):
+            width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
+            sheet.column_dimensions[get_column_letter(i)].width = min(max(width + 2, 10), 50)
+        if sheet.title == "Registros":
+            for row in sheet.iter_rows(min_row=2, min_col=2, max_col=2):
+                row[0].number_format = "yyyy-mm-dd"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def _show_recent_runs():
     st.markdown("### Registros recientes")
+
+    # ── Full export (every record, not just the ones listed below) ────────────
+    with st.expander("⬇️ Descargar todos los registros (Excel)"):
+        st.caption(
+            "Un fichero con todos los registros de producción: lotes, "
+            "ingredientes y albaranes, y control de PCC."
+        )
+        if st.button("Preparar fichero", key="prod_export_prepare"):
+            with st.spinner("Preparando…"):
+                all_runs = db.get_all_production_runs()
+                st.session_state["prod_export"] = (
+                    _build_production_export_xlsx(all_runs), len(all_runs)
+                )
+        export = st.session_state.get("prod_export")
+        if export:
+            st.download_button(
+                f"📥 Descargar registros_produccion.xlsx ({export[1]} registros)",
+                data=export[0],
+                file_name=f"registros_produccion_{date.today().isoformat()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="prod_export_download",
+            )
 
     show_all = st.checkbox("Mostrar todos los registros", value=False, key="prod_show_all")
     try:

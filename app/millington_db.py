@@ -2323,6 +2323,48 @@ def get_production_runs(limit: int = 30) -> list[dict]:
     return rows
  
  
+def get_all_production_runs() -> list[dict]:
+    """
+    Every production run, newest first, with ingredient refs attached.
+
+    Unlike get_production_runs() this has no limit: it pages through the table
+    so the result isn't silently cut off at the API's row cap. Used for the
+    full export.
+    """
+    sb, page, rows, start = get_client(), 1000, [], 0
+    while True:
+        batch = (
+            sb.table("production_runs")
+              .select("*")
+              .order("production_date", desc=True)
+              .order("lote_number",     desc=True)
+              .range(start, start + page - 1)
+              .execute()
+              .data or []
+        )
+        rows += batch
+        if len(batch) < page:
+            break
+        start += page
+
+    refs_by_run: dict[str, list] = {}
+    ids = [r["id"] for r in rows]
+    for i in range(0, len(ids), 100):       # chunk: keeps the request URL short
+        chunk = ids[i:i + 100]
+        refs = (
+            sb.table("production_ingredient_refs")
+              .select("*")
+              .in_("production_run_id", chunk)
+              .execute()
+              .data or []
+        )
+        for ref in refs:
+            refs_by_run.setdefault(ref["production_run_id"], []).append(ref)
+    for row in rows:
+        row["ingredient_refs"] = refs_by_run.get(row["id"], [])
+    return rows
+
+
 def get_production_run(run_id: str) -> dict | None:
     """Return a single production run with ingredient refs."""
     sb   = get_client()
