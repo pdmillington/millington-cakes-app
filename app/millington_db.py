@@ -3366,6 +3366,41 @@ def get_albaran_by_lote(limit: int = 300) -> dict[str, str]:
     return lookup
 
 
+def get_all_goods_receipts() -> list[dict]:
+    """Every goods receipt (voided ones included), newest first, with items.
+    Pages past the API row cap; used by the monthly report."""
+    sb, page, rows, start = get_client(), 1000, [], 0
+    while True:
+        batch = (
+            sb.table("goods_receipts").select("*")
+              .order("receipt_date", desc=True).order("created_at", desc=True)
+              .range(start, start + page - 1).execute().data or []
+        )
+        rows += batch
+        if len(batch) < page:
+            break
+        start += page
+    items_by_receipt: dict[str, list] = {}
+    ids = [r["id"] for r in rows]
+    for i in range(0, len(ids), 100):            # chunk: keeps the request URL short
+        for it in (sb.table("goods_receipt_items").select("*")
+                     .in_("receipt_id", ids[i:i + 100]).execute().data or []):
+            items_by_receipt.setdefault(it["receipt_id"], []).append(it)
+    for row in rows:
+        row["items"] = items_by_receipt.get(row["id"], [])
+    return rows
+
+
+def get_component_links(run_ids: list[str]) -> list[dict]:
+    """Component runs linked to the given final runs
+    ({production_run_id, component_run_id})."""
+    sb, out = get_client(), []
+    for i in range(0, len(run_ids), 100):
+        out += (sb.table("production_run_component_refs").select("*")
+                  .in_("production_run_id", run_ids[i:i + 100]).execute().data or [])
+    return out
+
+
 def get_goods_receipts(limit: int = 30, include_voided: bool = False) -> list[dict]:
     """
     Return recent goods receipts, newest first, with items attached. Voided

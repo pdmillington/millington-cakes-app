@@ -187,11 +187,12 @@ def screen_production():
             "Hasta entonces no se pueden registrar elaboraciones ni corregir o anular registros."
         )
 
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📦 Recepción de materias primas",
         "🔧 Elaboración de componentes",
         "📋 Registro de producción final",
         "🏷️ Imprimir etiquetas",
+        "📑 Informe mensual",
     ])
 
     with tab1:
@@ -205,6 +206,10 @@ def screen_production():
 
     with tab4:
         _tab_labels()
+
+    with tab5:
+        import monthly_report
+        monthly_report.render_tab()
 
 
 # =============================================================================
