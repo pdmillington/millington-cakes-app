@@ -989,8 +989,8 @@ def _build_production_export_xlsx(runs: list[dict], revisions: list[dict] | None
     ws = wb.active
     ws.title = "Registros"
     ws.append(["Lote", "Fecha", "Producto", "Formato", "Cantidad", "Unidad",
-               "Producido (g)", "Componente", "Elaborado por", "Temp. horno (°C)",
-               "Tiempo horno (min)", "Pasos PCC", "PCC conformes", "Ingredientes y lotes",
+               "Producido (g)", "Componente", "Elaborado por",
+               "Temperatura y tiempo", "PCC conformes", "Ingredientes y lotes",
                "Notas", "Estado", "Anulado el", "Anulado por", "Motivo de anulación",
                "Creado"])
 
@@ -1026,6 +1026,14 @@ def _build_production_export_xlsx(runs: list[dict], revisions: list[dict] | None
             return " ".join(bits) + (" ✓" if met is True else " ✗" if met is False else "")
 
         pcc_text = "; ".join(_step_text(s, m) for s, m in zip(steps, met_flags))
+        if not pcc_text and (r.get("oven_temp_c") is not None or r.get("bake_time_min")):
+            # Early runs (May 2026) recorded oven values on the run itself, no PCC log.
+            bits = ["Horno:"]
+            if r.get("oven_temp_c") is not None:
+                bits.append(f"{r['oven_temp_c']:g}°C")
+            if r.get("bake_time_min"):
+                bits.append(f"{r['bake_time_min']:g} min")
+            pcc_text = " ".join(bits)
         if not steps:
             pcc_ok = ""
         elif any(m is False for m in met_flags):
@@ -1047,7 +1055,6 @@ def _build_production_export_xlsx(runs: list[dict], revisions: list[dict] | None
             r.get("amount_produced_g"),
             "Sí" if r.get("is_component_run") else "No",
             r.get("elaborated_by"),
-            r.get("oven_temp_c"), r.get("bake_time_min"),
             pcc_text or None, pcc_ok or None, refs_text or None,
             r.get("notes"),
             "ANULADO" if voided else "Vigente",

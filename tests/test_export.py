@@ -19,6 +19,8 @@ def _runs():
          "pcc_log": '[{"step_name": "Baño maría", "temp_achieved_c": 75, "time_achieved_min": 10, '
                     '"critical_limit_temp_c": 70, "ok": false}]'},        # newer layout, failed
         {**base, "id": "c", "lote_number": "L3", "ingredient_refs": [], "pcc_log": None},
+        {**base, "id": "d", "lote_number": "L4", "ingredient_refs": [], "pcc_log": None,
+         "oven_temp_c": 180, "bake_time_min": 15},                           # early run, no PCC log
     ]
 
 
@@ -30,11 +32,12 @@ def _sheet(runs, name="Registros"):
 
 
 def test_registros_has_pcc_and_ingredients_on_the_same_row():
-    a, b, c = _sheet(_runs())
-    assert a["Pasos PCC"] == "Horneado: 180°C 45 min ✓" and a["PCC conformes"] == "Sí"
+    a, b, c, d = _sheet(_runs())
+    assert a["Temperatura y tiempo"] == "Horneado: 180°C 45 min ✓" and a["PCC conformes"] == "Sí"
     assert a["Ingredientes y lotes"] == "Harina; Mantequilla — ALB2"
-    assert b["Pasos PCC"] == "Baño maría: 75°C 10 min ✗" and b["PCC conformes"] == "No"
-    assert c["Pasos PCC"] is None and c["PCC conformes"] is None
+    assert b["Temperatura y tiempo"] == "Baño maría: 75°C 10 min ✗" and b["PCC conformes"] == "No"
+    assert c["Temperatura y tiempo"] is None and c["PCC conformes"] is None
+    assert d["Temperatura y tiempo"] == "Horno: 180°C 15 min" and d["PCC conformes"] is None
 
 
 def test_detail_sheets_still_have_one_row_per_step_and_reference():
