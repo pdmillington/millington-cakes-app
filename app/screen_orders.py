@@ -15,7 +15,7 @@ import pandas as pd
 import streamlit as st
 
 import millington_db as db
-from millington_db       import _UNIT_PURCHASE
+from millington_db       import _UNIT_PURCHASE, _count_key
 from shopify_api         import get_open_orders, last_synced as shopify_synced
 from holded_api          import get_estimates, estimates_last_synced
 from core.settings       import load_settings
@@ -443,10 +443,11 @@ def _tab_compras(
             _unit_norm = {"kg": "g", "l": "ml", "litre": "ml", "litro": "ml"}
             # For known unit-purchase ingredients, get their purchase unit
             def _purchase_unit(ing: dict) -> str:
-                name_lower = (ing.get("name") or "").lower()
-                for key, (p_unit, _) in _UNIT_PURCHASE.items():
-                    if key in name_lower:
-                        return p_unit
+                # Only genuine count ingredients (pack_unit "units", or unknown)
+                # are bought in a different unit; kg-priced fruit stays in g.
+                key = _count_key(ing.get("name"), ing.get("pack_unit"))
+                if key in _UNIT_PURCHASE:
+                    return _UNIT_PURCHASE[key][0]
                 raw = (ing.get("pack_unit") or "g").lower().strip()
                 return _unit_norm.get(raw, raw)
 

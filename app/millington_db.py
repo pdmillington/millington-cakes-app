@@ -117,24 +117,63 @@ _UNIT_IGNORE = {
     "canela en rama",
 }
 
-def _to_label_grams(name: str, amount: float) -> float:
+# pack_units that mean the recipe amount is a measured quantity (grams / ml),
+# never a count of items.
+_MEASURED_UNITS = {"g", "kg", "ml", "l"}
+
+# Fallback only, for ingredient records with no pack_unit set: an amount
+# at or below this is assumed to be a count of items, above it grams.
+_LEGACY_MAX_COUNT = 50
+
+
+def _count_key(name: str, pack_unit: str | None, amount: float | None = None) -> str | None:
+    """
+    Decide whether a recipe amount is a COUNT of a known item (eggs, apples...)
+    and, if so, return its key in _UNIT_WEIGHTS_G; otherwise None.
+
+    The ingredient's pack_unit is the source of truth:
+      - "units"               -> amounts are counts
+      - "g"/"kg"/"ml"/"l"     -> amounts are measured (80 = 80g, never 80 items),
+                                 whatever the ingredient is called
+      - missing/unknown       -> legacy guess from the name, treating an amount
+                                 above _LEGACY_MAX_COUNT as grams
+    """
+    unit = (pack_unit or "").lower().strip()
+    if unit in _MEASURED_UNITS:
+        return None
+    name_lower = (name or "").lower()
+    key = next((k for k in _UNIT_WEIGHTS_G if k in name_lower), None)
+    if key is None:
+        return None
+    if unit != "units" and amount is not None and amount > _LEGACY_MAX_COUNT:
+        return None
+    return key
+
+
+def _is_unit_ignored(name: str, pack_unit: str | None) -> bool:
+    """True for count-style ingredients excluded from weight (vanilla pods...)."""
+    if (pack_unit or "").lower().strip() in _MEASURED_UNITS:
+        return False
+    name_lower = (name or "").lower()
+    return any(key in name_lower for key in _UNIT_IGNORE)
+
+
+def _to_label_grams(name: str, amount: float, pack_unit: str | None = None) -> float:
     """
     Convert a raw ingredient amount to grams for label weight ordering.
-    Unit-based ingredients (eggs, lemons etc.) are multiplied by their
+    Count-based ingredients (eggs etc., see _count_key) are multiplied by their
     standard gram equivalent from _UNIT_WEIGHTS_G.
     Ingredients in _UNIT_IGNORE return 0 (excluded from weight ordering).
     All others are assumed to already be in grams.
+    Pass pack_unit whenever it is known; without it the name-based fallback
+    in _count_key is used.
     """
     if amount is None:
         return 0.0
-    name_lower = (name or "").lower()
-    for key, weight in _UNIT_WEIGHTS_G.items():
-        if key in name_lower:
-            # If amount > 50 it is almost certainly already in grams, not units
-            if amount > 50:
-                return float(amount)
-            return amount * weight
-    if any(key in name_lower for key in _UNIT_IGNORE):
+    key = _count_key(name, pack_unit, amount)
+    if key is not None:
+        return amount * _UNIT_WEIGHTS_G[key]
+    if _is_unit_ignored(name, pack_unit):
         return 0.0
     return float(amount)
 
@@ -143,14 +182,15 @@ def estimate_recipe_weight(lines: list[dict]) -> dict:
     Estimate the finished weight of a recipe in grams by summing
     ingredient amounts.
 
-    Recipe amounts are ALWAYS in grams or units — pack_unit on the
-    ingredient record describes the purchase pack and is irrelevant here.
-
-    Rules:
-      - All numeric amounts: add directly as grams
-      - Unit ingredients with known weight (eggs, apples): multiply
-      - Unit ingredients in _UNIT_IGNORE: skip silently
-      - All other unit ingredients: exclude and flag
+    Each line's ingredient_unit (the ingredient's pack_unit) says how to read
+    its amount:
+      - "units": a count. Known items (eggs, apples) are multiplied by their
+        standard weight; vanilla pods etc. are ignored; anything else is
+        excluded and flagged.
+      - "g"/"kg"/"ml"/"l": the amount is already grams/ml and is added
+        directly. 80 of "Naranja" priced per kg is 80g, not 80 oranges.
+      - missing: legacy name/size heuristic (see _count_key); small unknown
+        amounts are flagged rather than added.
     """
     total_g  = 0.0
     excluded = []
@@ -159,36 +199,30 @@ def estimate_recipe_weight(lines: list[dict]) -> dict:
     for line in lines:
         ing_name = (line.get("ingredient_name") or "").strip()
         amount   = float(line.get("amount") or 0)
+        unit     = (line.get("ingredient_unit") or "").lower().strip()
 
         if not ing_name or amount <= 0:
             continue
 
-        name_lower = ing_name.lower()
+        key = _count_key(ing_name, unit, amount)
 
-        # Check if this is a known unit ingredient
-        matched_weight = next(
-            (w for key, w in _UNIT_WEIGHTS_G.items()
-             if key in name_lower),
-            None
-        )
-
-        if matched_weight is not None:
-            # Unit ingredient with known weight — e.g. eggs
-            grams = amount * matched_weight
+        if key is not None:
+            # Count of an item with a known weight — e.g. eggs
+            weight = _UNIT_WEIGHTS_G[key]
+            grams  = amount * weight
             total_g += grams
             notes.append(
-                f"{ing_name}: {amount:.0f} × "
-                f"{matched_weight:.0f}g = {grams:.0f}g"
+                f"{ing_name}: {amount:.0f} × {weight:.0f}g = {grams:.0f}g"
             )
-        elif any(key in name_lower for key in _UNIT_IGNORE):
-            # Known unit ingredients to ignore (lemons, limes etc.)
+        elif _is_unit_ignored(ing_name, unit):
             pass
-        elif amount < 20:
-            # Small amounts likely to be unit-based (e.g. 1 vanilla pod,
-            # 4 gelatine sheets) — flag rather than add raw
+        elif unit == "units":
+            # Counted ingredient with no known weight (e.g. gelatine sheets)
+            excluded.append(f"{ing_name} ({amount:.0f})")
+        elif unit not in _MEASURED_UNITS and amount < 20:
+            # Unit unknown and amount small: probably a count — flag it
             excluded.append(f"{ing_name} ({amount:.0f})")
         else:
-            # Treat as grams directly
             total_g += amount
 
     return {
@@ -286,12 +320,13 @@ def get_recipe_ingredients_for_shopping() -> list[dict]:
 
         # Known unit-count ingredients (lemons, eggs etc.): convert recipe
         # count to a practical purchase unit (kg for fruit, dozens for eggs).
-        ing_name_lower = (ing.get("name") or "").lower()
-        purchase_key   = next(
-            (k for k in _UNIT_PURCHASE if k in ing_name_lower), None
-        )
-        is_unit_ignore = any(key in ing_name_lower for key in _UNIT_IGNORE)
         raw_amount     = float(row.get("amount") or 0)
+        # Only a genuine count (pack_unit "units", or unknown + small amount)
+        # is converted; 80g of an orange priced per kg stays 80g.
+        purchase_key   = _count_key(ing.get("name"), ing.get("pack_unit"), raw_amount)
+        if purchase_key is not None and purchase_key not in _UNIT_PURCHASE:
+            purchase_key = None
+        is_unit_ignore = _is_unit_ignored(ing.get("name"), ing.get("pack_unit"))
 
         if purchase_key:
             p_unit, p_factor = _UNIT_PURCHASE[purchase_key]
@@ -954,7 +989,7 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
         .select(
             "amount, sort_order, component_recipe_id, "
             "ingredients("
-            "  id, name, label_name_es, label_name_es_2, label_name_es_2_pct, "
+            "  id, name, pack_unit, label_name_es, label_name_es_2, label_name_es_2_pct, "
             "  label_name_es_3, label_name_es_3_pct, "
             "  is_sub_recipe, allergen_override, allergen_notes, "
             + ", ".join(ALLERGEN_FIELDS) + ", "
@@ -1023,6 +1058,7 @@ def _get_recipe_lines_with_allergens(recipe_id: str) -> list[dict]:
                 "sort_order":           row.get("sort_order", 0),
                 "ingredient_id":        ing.get("id"),
                 "ingredient_name":      ing.get("name", ""),
+                "ingredient_unit":      ing.get("pack_unit"),
                 "label_name_es":        ing_label,
                 "label_name_es_2":      ing.get("label_name_es_2"),
                 "label_name_es_2_pct":  ing.get("label_name_es_2_pct"),
@@ -1182,9 +1218,10 @@ def get_allergen_declaration(
                 # sub-recipe's own reference batch. Scale by
                 # (amount_used / sub_recipe_total_g) — not by amount directly,
                 # which would give grams² (the bug being fixed here).
+                # ingredient_names entries are already in grams (converted
+                # above), so sum them directly — no second unit conversion.
                 sub_total_g = sum(
-                    _to_label_grams(s[0], s[1])
-                    for s in sub_result["ingredient_names"]
+                    s[1] or 0 for s in sub_result["ingredient_names"]
                 ) or amount
                 sub_scale = amount / sub_total_g if sub_total_g else 1.0
                 for sub_ing in sub_result["ingredient_names"]:
@@ -1217,7 +1254,7 @@ def get_allergen_declaration(
                 or name
             )
             if label_name:
-                grams        = _to_label_grams(name, amount)
+                grams        = _to_label_grams(name, amount, line.get("ingredient_unit"))
                 eff          = _effective_allergens(line)
                 has_allergen = any(v > 0 for v in eff.values())
                 comp2        = line.get("label_name_es_2")
@@ -2430,7 +2467,7 @@ def get_key_ingredients_for_recipe(recipe_id: str) -> list[dict]:
         for line in lines:
             name       = line["ingredient_name"]
             raw_amount = line["amount"] * scale
-            amount     = _to_label_grams(name, raw_amount)
+            amount     = _to_label_grams(name, raw_amount, line.get("ingredient_unit"))
 
             if line["is_sub_recipe"]:
                 comp_id = line.get("component_recipe_id")
@@ -2439,7 +2476,7 @@ def get_key_ingredients_for_recipe(recipe_id: str) -> list[dict]:
                     continue
                 sub_lines   = _get_recipe_lines_with_allergens(sub["id"])
                 sub_total_g = sum(
-                    _to_label_grams(l["ingredient_name"], l["amount"])
+                    _to_label_grams(l["ingredient_name"], l["amount"], l.get("ingredient_unit"))
                     for l in sub_lines
                 ) or amount
                 sub_scale   = amount / sub_total_g
