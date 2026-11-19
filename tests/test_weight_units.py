@@ -43,3 +43,35 @@ def test_label_grams():
     assert db._to_label_grams("Naranja", 40, "g") == 40
     assert db._to_label_grams("Huevos", 4, "units") == 200
     assert db._to_label_grams("Vainilla rama", 1, None) == 0
+
+
+# ── check_weight_consistency ────────────────────────────────────────────────
+
+def test_weight_recipe_flags_large_gap():
+    r = {"size_type": "weight", "ref_weight_kg": 0.35}
+    assert db.check_weight_consistency(r, [], 451)          # +29%
+    assert not db.check_weight_consistency(r, [], 370)      # +5.7%
+
+
+def test_weight_recipe_flags_grams_in_kg_field():
+    r = {"size_type": "weight", "ref_weight_kg": 1500}
+    assert not db.check_weight_consistency(r, [], 1480)
+    msgs = db.check_weight_consistency(r, [], 1188)
+    assert msgs and "grams entered in the kg field" in msgs[0]
+
+
+def test_diameter_variant_scaled_to_its_size():
+    r = {"size_type": "diameter", "ref_diameter_cm": 22, "ref_height_cm": 5}
+    # est 1440g at 22cm; a 14cm cake is (14/22)^2 = 0.405x -> ~583g
+    ok  = {"format": "standard", "ref_weight_g": 580, "ref_diameter_cm": 14}
+    bad = {"format": "standard", "ref_weight_g": 400, "ref_diameter_cm": 14}
+    assert not db.check_weight_consistency(r, [ok], 1440)
+    assert db.check_weight_consistency(r, [bad], 1440)
+
+
+def test_variants_without_diameter_or_non_standard_are_skipped():
+    r = {"size_type": "diameter", "ref_diameter_cm": 22}
+    vs = [{"format": "standard", "ref_weight_g": 100},
+          {"format": "individual", "ref_weight_g": 100, "ref_diameter_cm": 22}]
+    assert db.check_weight_consistency(r, vs, 1440) == []
+    assert db.check_weight_consistency(r, vs, 0) == []

@@ -231,6 +231,78 @@ def estimate_recipe_weight(lines: list[dict]) -> dict:
         "notes":    notes,
     }
 
+# Estimated vs defined weight: flag when they differ by more than this fraction.
+WEIGHT_CHECK_TOLERANCE = 0.10
+
+
+def check_weight_consistency(
+    recipe: dict,
+    variants: list[dict],
+    est_g: float,
+    tolerance: float = WEIGHT_CHECK_TOLERANCE,
+) -> list[str]:
+    """
+    Compare the weight estimated from the recipe's ingredients with the weights
+    the user has defined, and return a message for each that differs by more
+    than `tolerance` (relative to the defined weight). Empty list = consistent
+    or nothing comparable.
+
+    Checks:
+      - weight-type recipe: ref_weight_kg vs the estimate.
+      - diameter-type recipe: each standard variant with both ref_weight_g and
+        ref_diameter_cm, with the estimate scaled to that size (volume if a
+        height is known, otherwise area), vs the variant's weight.
+
+    Note the estimate is raw ingredient weight, so baked goods can legitimately
+    sit a little under it (water loss); a large gap usually means a wrong
+    amount, a wrong unit, or a wrongly defined weight.
+    """
+    if not est_g or est_g <= 0:
+        return []
+
+    msgs: list[str] = []
+
+    def _compare(label: str, defined_g: float, expected_g: float, hint: str = "") -> None:
+        if defined_g <= 0 or expected_g <= 0:
+            return
+        diff = (expected_g - defined_g) / defined_g
+        if abs(diff) > tolerance:
+            msgs.append(
+                f"{label}: ingredients suggest ≈{expected_g:.0f}g but "
+                f"{defined_g:.0f}g is defined ({diff:+.0%}).{hint}"
+            )
+
+    size_type = recipe.get("size_type")
+
+    if size_type == "weight":
+        ref_kg = float(recipe.get("ref_weight_kg") or 0)
+        hint = ""
+        if ref_kg > 50:
+            hint = " Reference weight looks like grams entered in the kg field."
+            ref_kg = ref_kg / 1000
+        _compare("Recipe reference weight", ref_kg * 1000, est_g, hint)
+
+    elif size_type == "diameter":
+        ref_d = float(recipe.get("ref_diameter_cm") or 0)
+        ref_h = float(recipe.get("ref_height_cm") or 0)
+        if ref_d > 0:
+            for v in variants:
+                if v.get("format") != "standard":
+                    continue
+                w = float(v.get("ref_weight_g") or 0)
+                d = float(v.get("ref_diameter_cm") or 0)
+                if w <= 0 or d <= 0:
+                    continue
+                h = float(v.get("ref_height_cm") or 0) or ref_h
+                if ref_h > 0 and h > 0:
+                    scale = (d ** 2 * h) / (ref_d ** 2 * ref_h)
+                else:
+                    scale = d ** 2 / ref_d ** 2
+                label = f"Variant “{v.get('size_description') or v.get('size_code') or d}”"
+                _compare(label, w, est_g * scale)
+
+    return msgs
+
 # -----------------------------------------------------------------------------
 # Connection
 # -----------------------------------------------------------------------------

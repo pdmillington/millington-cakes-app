@@ -181,6 +181,22 @@ def screen_calculator():
     _weight_notes     = _weight_result["notes"]
     _weight_excl      = _weight_result["excluded"]
 
+    # Cross-check the ingredient-based estimate against any weights defined on
+    # the recipe / its variants, and ask the user to look if they disagree.
+    _weight_flags = db.check_weight_consistency(
+        recipe,
+        [v for vs in recipe_variants_by_fmt.values() for v in vs],
+        ref_weight_g,
+    )
+    if _weight_flags:
+        st.warning(
+            "⚠️ **Weight check** — the weight estimated from the ingredients "
+            "differs from a defined weight by more than "
+            f"{db.WEIGHT_CHECK_TOLERANCE:.0%}. Check the recipe amounts and "
+            "units, or the defined weight:\n\n"
+            + "\n".join(f"- {m}" for m in _weight_flags)
+        )
+
     # The standard cake's weight is whatever its ingredients add up to — there
     # is no separate stored "exact" weight. (The old weight mode fell back to a
     # 1 kg default instead, which skewed every anchor.)
